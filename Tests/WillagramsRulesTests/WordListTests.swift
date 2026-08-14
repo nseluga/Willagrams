@@ -24,7 +24,7 @@ struct WordListTests {
 
     @Test("No entry contains a non-letter, and none is shorter than two letters")
     func entriesAreCleanLetters() throws {
-        let url = try #require(Bundle.module.url(forResource: "dictionary", withExtension: "txt"))
+        let url = try #require(EnableWordList.bundledURL)
         let text = try String(contentsOf: url, encoding: .utf8)
         let offenders = text.split(separator: "\n").filter { line in
             line.count < 2 || line.contains(where: { !($0.isLetter && $0.isLowercase && $0.isASCII) })

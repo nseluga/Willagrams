@@ -18,9 +18,17 @@ public struct EnableWordList: WordList {
 
     public var count: Int { words.count }
 
+    /// Where the bundled list lives.
+    ///
+    /// Exposed because `Bundle.module` inside a test target resolves to *that*
+    /// target's bundle, not this one — a test cannot look the file up itself.
+    public static var bundledURL: URL? {
+        Bundle.module.url(forResource: "dictionary", withExtension: "txt")
+    }
+
     /// Loads the list bundled with the package.
     public init() throws {
-        guard let url = Bundle.module.url(forResource: "dictionary", withExtension: "txt") else {
+        guard let url = Self.bundledURL else {
             throw WordListError.resourceMissing
         }
         try self.init(contentsOf: url)

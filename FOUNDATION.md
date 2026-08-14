@@ -42,8 +42,9 @@ lanes add files without touching `project.pbxproj`.
 
 - task: Define the core placement contracts in Contracts.swift
   done when:
-    - `Sources/WillagramsRules/Contracts.swift` declares, public and `Sendable`: `struct Coord: Hashable, Codable { let row: Int; let col: Int }` (signed, unbounded); `struct Tile: Identifiable, Hashable, Codable { let id: UUID; let letter: Character }`; `struct Placement: Hashable, Codable { let tileID: UUID; let coord: Coord }`; `struct PlayerID: Hashable, Codable { let rawValue: String }`; `enum Direction: Codable { case across, down }`; `struct BoardWord: Hashable { let text: String; let origin: Coord; let direction: Direction }`; `enum PlacementError: Error, Equatable { case occupied(Coord); case tileNotInHand(UUID) }`
+    - `Sources/WillagramsRules/Contracts.swift` declares, public and `Sendable`: `struct Coord: Hashable, Codable { let row: Int; let col: Int }` (signed, unbounded); `struct Tile: Identifiable, Hashable, Codable { let id: UUID; let letter: Character }`; `struct Placement: Hashable, Codable { let tile: Tile; let coord: Coord; var tileID: UUID }`; `struct PlayerID: Hashable, Codable { let rawValue: String }`; `enum Direction: Codable { case across, down }`; `struct BoardWord: Hashable { let text: String; let origin: Coord; let direction: Direction }`; `enum PlacementError: Error, Equatable { case occupied(Coord); case tileNotInHand(UUID) }`
     - `struct Board: Codable, Sendable` exposes `private(set) var placements: [Coord: Tile]`, `mutating func place(_ tile: Tile, at coord: Coord) throws`, `mutating func remove(at coord: Coord) -> Tile?`, and `func tile(at coord: Coord) -> Tile?`
+    - `Board.placementList: [Placement]` returns every placed tile sorted by (row, col), so two encodings of one board are byte-identical
     - `place` into an occupied coord throws `PlacementError.occupied(coord)` and leaves `placements` unchanged
     - A fixture encodes a 3-tile `Board` to JSON and decodes it back to an equal value, and asserts negative-coordinate placement round-trips
   risk: a field added or renamed here breaks board, match, and shell at once —
@@ -106,7 +107,8 @@ lanes add files without touching `project.pbxproj`.
 
 - task: Define the MatchMessage wire contract
   done when:
-    - `enum MatchMessage: Codable, Sendable, Equatable` declares `start(seed: UInt64, startingHandSize: Int, countdownSeconds: Int)`, `drawRequest(player: PlayerID)`, `grant(player: PlayerID, tiles: [Tile])`, `swapRequest(player: PlayerID, returning: Tile)`, `swapGrant(player: PlayerID, tiles: [Tile], returned: Tile)`, `poolExhausted`, `win(player: PlayerID, placements: [Placement], tiles: [Tile])`, `resign(player: PlayerID)`, and `rejected(reason: RejectionReason)`
+    - `enum WireFormat { static let current = 1 }`; a checked-in `Tests/WillagramsRulesTests/Fixtures/wire-v1.json` decodes into every case, so a renamed case or label fails at test time rather than in a shipped match
+    - `enum MatchMessage: Codable, Sendable, Equatable` declares `start(version: Int, seed: UInt64, startingHandSize: Int, countdownSeconds: Int)`, `drawRequest(player: PlayerID)`, `grant(player: PlayerID, tiles: [Tile])`, `swapRequest(player: PlayerID, returning: Tile)`, `swapGrant(player: PlayerID, tiles: [Tile], returned: Tile)`, `poolExhausted`, `win(player: PlayerID, placements: [Placement])`, `resign(player: PlayerID)`, and `rejected(reason: RejectionReason)`
     - `enum RejectionReason: Codable, Sendable, Equatable` declares `poolEmpty`, `notEnoughTilesToSwap`, `notYourTurn`, `unknownPlayer`
     - A fixture round-trips every case through `JSONEncoder`/`JSONDecoder` and asserts equality, including `win` carrying 21 placements
     - An encoded `win` message with 144 placements stays under 16KB, GameKit's reliable-send payload ceiling

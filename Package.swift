@@ -9,6 +9,6 @@ let package = Package(
     ],
     targets: [
         .target(name: "WillagramsRules", resources: [.process("Resources")]),
-        .testTarget(name: "WillagramsRulesTests", dependencies: ["WillagramsRules"]),
+        .testTarget(name: "WillagramsRulesTests", dependencies: ["WillagramsRules"], resources: [.process("Fixtures")]),
     ]
 )

@@ -66,12 +66,19 @@ public struct Tile: Identifiable, Hashable, Codable, Sendable {
 }
 
 /// A tile bound to a cell. The wire form of a placed tile.
+/// One tile at one square — the wire form of a board.
+///
+/// Carries the whole `Tile` rather than its id, so a board can be drawn from
+/// placements alone. Sending ids beside a separate tile array meant the
+/// receiver had to join the two, and nothing stopped them disagreeing.
 public struct Placement: Hashable, Codable, Sendable {
-    public let tileID: UUID
+    public let tile: Tile
     public let coord: Coord
 
-    public init(tileID: UUID, coord: Coord) {
-        self.tileID = tileID
+    public var tileID: UUID { tile.id }
+
+    public init(tile: Tile, coord: Coord) {
+        self.tile = tile
         self.coord = coord
     }
 }
@@ -136,5 +143,16 @@ public struct Board: Codable, Sendable, Equatable {
     @discardableResult
     public mutating func remove(at coord: Coord) -> Tile? {
         placements.removeValue(forKey: coord)
+    }
+
+    /// The board as a sendable list, in a fixed order.
+    ///
+    /// Dictionary iteration order is not stable between runs, so sending one
+    /// unsorted would make two encodings of the same board differ. Sorted here
+    /// once rather than in each lane that needs it.
+    public var placementList: [Placement] {
+        placements
+            .map { Placement(tile: $0.value, coord: $0.key) }
+            .sorted { ($0.coord.row, $0.coord.col) < ($1.coord.row, $1.coord.col) }
     }
 }

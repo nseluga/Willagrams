@@ -1,5 +1,11 @@
 import Foundation
 
+/// The wire format this build speaks. Bump only when `MatchMessage` changes
+/// shape, and add a golden fixture for the new version in the same commit.
+public enum WireFormat {
+    public static let current = 1
+}
+
 /// Why the host turned down a request.
 public enum RejectionReason: Codable, Sendable, Equatable {
     case poolEmpty
@@ -19,7 +25,11 @@ public enum RejectionReason: Codable, Sendable, Equatable {
 /// stops rather than an error anyone sees.
 public enum MatchMessage: Codable, Sendable, Equatable {
     /// Host opens the match. The seed makes the shuffle replayable.
-    case start(seed: UInt64, startingHandSize: Int, countdownSeconds: Int)
+    ///
+    /// `version` is the wire format, not the app version — bump it only when
+    /// this enum changes shape, and refuse a match whose host sends a version
+    /// this build does not know.
+    case start(version: Int, seed: UInt64, startingHandSize: Int, countdownSeconds: Int)
 
     /// "I have placed everything" — a request for everyone to take one.
     case drawRequest(player: PlayerID)
@@ -36,7 +46,11 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     case poolExhausted
 
     /// A win, with the board behind it so the end screen can show both.
-    case win(player: PlayerID, placements: [Placement], tiles: [Tile])
+    ///
+    /// `placements` is `Board.placementList` — every tile the winner played,
+    /// letters included. Tiles still in hand are not sent: a winning board has
+    /// none, and unplaced scratch tiles are nobody else's business.
+    case win(player: PlayerID, placements: [Placement])
 
     case resign(player: PlayerID)
 
