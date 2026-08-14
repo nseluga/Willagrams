@@ -1,8 +1,0 @@
-{
-  "name": "willagrams",
-  "type": "module",
-  "private": true,
-  "scripts": {
-    "test": "node test.js"
-  }
-}
