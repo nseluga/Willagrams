@@ -97,6 +97,20 @@ struct MatchCodecTrustBoundaryTests {
         }
 
         #expect(describe(.unsupportedVersion(received: 2, expected: 1)) == "unsupportedVersion")
-        #expect(describe(.malformedPayload(underlying: CocoaError(.coderInvalidValue))) == "malformedPayload")
+        #expect(describe(.malformedPayload(description: "not JSON")) == "malformedPayload")
+    }
+
+    /// The transport surfaces decode failures from an async stream and the
+    /// session is observed on the main actor, so this error crosses an
+    /// isolation boundary. Capturing it in a `Task` only compiles while
+    /// `MatchCodecError` stays `Sendable` — that is the whole point of the test.
+    @Test("A decode error crosses an isolation boundary")
+    func errorCrossesIsolationBoundary() async {
+        for error: MatchCodecError in [
+            .unsupportedVersion(received: 2, expected: WireFormat.current),
+            .malformedPayload(description: "truncated"),
+        ] {
+            #expect(await Task { error }.value == error)
+        }
     }
 }

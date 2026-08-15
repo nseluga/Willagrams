@@ -5,26 +5,19 @@ import WillagramsRules
 ///
 /// `data` in `decode` may be anything a peer chooses to send — every failure
 /// path here returns one of these instead of trapping.
-public enum MatchCodecError: Error, Equatable {
+public enum MatchCodecError: Error, Equatable, Sendable {
     /// A structurally valid `.start` whose wire version this build doesn't
     /// speak. Refused, not decoded.
     case unsupportedVersion(received: Int, expected: Int)
 
     /// The bytes don't decode as `MatchMessage` at all: truncated, wrong
-    /// shape, or an unknown case. The underlying `DecodingError` is kept for
-    /// logging but callers aren't required to switch on it.
-    case malformedPayload(underlying: any Error)
-
-    public static func == (lhs: MatchCodecError, rhs: MatchCodecError) -> Bool {
-        switch (lhs, rhs) {
-        case let (.unsupportedVersion(r1, e1), .unsupportedVersion(r2, e2)):
-            return r1 == r2 && e1 == e2
-        case (.malformedPayload, .malformedPayload):
-            return true
-        default:
-            return false
-        }
-    }
+    /// shape, or an unknown case.
+    ///
+    /// Carries the underlying `DecodingError`'s description rather than the
+    /// error itself: `DecodingError` is not `Sendable`, and this error travels
+    /// from the transport's async streams into the session, which is observed
+    /// on the main actor. A string is as much as a log line ever wanted.
+    case malformedPayload(description: String)
 }
 
 /// Encodes and decodes `MatchMessage` for the wire.
@@ -43,7 +36,7 @@ public enum MatchCodec {
         do {
             message = try JSONDecoder().decode(MatchMessage.self, from: data)
         } catch {
-            throw .malformedPayload(underlying: error)
+            throw .malformedPayload(description: String(describing: error))
         }
 
         if case let .start(version, _, _, _) = message, version != WireFormat.current {
