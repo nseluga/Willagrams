@@ -91,7 +91,7 @@ declared without editing them, stop and report rather than editing either.
     - A start carrying a version other than WireFormat.current is refused with a
       defined error and no match state is entered
     - Truncated and structurally invalid Data return a decode error rather than trapping
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Build host authority over the pool — `Willagrams/Match/HostPool.swift`.
