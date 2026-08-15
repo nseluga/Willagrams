@@ -253,6 +253,41 @@ final class BoardModelTests: XCTestCase {
         XCTAssertEqual(released.placementList, fixture.board.placementList)
     }
 
+    func testFramesAfterALockLandsMidDragMoveNothingAndTheReleaseCommitsNothing() throws {
+        // The finger never lifts. SwiftUI keeps reporting `onChanged` for the
+        // same gesture, and the view reuses the carried `.tile` grab rather
+        // than deciding again — so `began` never runs a second time and the
+        // frames that follow the lock reach `moved` and `commit` alone.
+        let fixture = self.fixture()
+        let feel = SessionHaptics()
+        var model = BoardModel()
+
+        model.began(.tile(fixture.tile, at: Self.home), haptics: feel)
+        model.moved(to: Self.oneCell)
+        XCTAssertEqual(model.dragTranslation, Self.oneCell)
+
+        model.inputLocked = true
+
+        // Two more frames of a finger still down and still travelling.
+        model.moved(to: CGSize(width: 96, height: 30))
+        model.moved(to: CGSize(width: 144, height: 60))
+
+        XCTAssertEqual(model.dragTranslation, .zero, "the tile started following the finger again")
+        XCTAssertTrue(model.dragging.isEmpty, "the lock left a tile held")
+        XCTAssertEqual(feel.events, [.pickup], "a second pickup fired under the lock")
+
+        let home = try cell(at: Self.home, fixture.board, model)
+        XCTAssertEqual(home.tilePoint, home.point)
+        XCTAssertEqual(home.state, .idle)
+
+        let released = model.commit(
+            translation: CGSize(width: 144, height: 60), on: fixture.board,
+            camera: Self.camera, threshold: Self.threshold
+        )
+        XCTAssertEqual(released.placementList, fixture.board.placementList, "the release committed under the lock")
+        XCTAssertEqual(feel.events, [.pickup], "the release fired a feel under the lock")
+    }
+
     func testMovedWritesNoOffsetWhileNothingIsHeld() {
         let fixture = self.fixture()
         let feel = SessionHaptics()
@@ -260,6 +295,7 @@ final class BoardModelTests: XCTestCase {
 
         // A finger that took hold of the camera writes no tile offset...
         model.began(.pan, haptics: feel)
+        XCTAssertTrue(model.dragging.isEmpty, "a pan grab took hold of a tile")
         model.moved(to: CGSize(width: 120, height: 90))
         XCTAssertEqual(model.dragTranslation, .zero)
         XCTAssertEqual(feel.events, [])

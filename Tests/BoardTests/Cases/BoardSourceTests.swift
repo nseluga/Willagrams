@@ -480,6 +480,64 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertFalse(model.contains("panned("), "BoardModel pans")
     }
 
+    func testTheBodyNeverSpendsTheLockOnTheSurfaceItself() throws {
+        // Criterion 2's view half, and the one the pure checks cannot reach.
+        // Refusing at the grab decision is the only sanctioned refusal: a lock
+        // spent on the SURFACE instead — `.disabled`, a hit-test switch, a
+        // gesture attached only while unlocked — takes panning, zooming and
+        // recentering down with the tiles, and every check that reads
+        // `BoardGesture` or `BoardModel` stays green while it does, because
+        // neither of those files is where it happened.
+        let text = try view()
+        let body = try section(of: text, from: "public var body: some View", to: "private var dragGesture")
+
+        for killer in [".disabled(", ".allowsHitTesting(", "EmptyView()"] {
+            XCTAssertFalse(body.contains(killer), "BoardView's body spends the lock on \(killer), stopping the camera too")
+        }
+
+        // The body names the lock exactly once, and that once is the sync into
+        // the session. A second mention is a second decision.
+        let named = body.split(separator: "\n").filter { $0.contains("Locked") }
+        XCTAssertEqual(named.count, 1, "BoardView's body reads the lock outside the sync: \(named)")
+        XCTAssertTrue(
+            named.first?.contains(".onChange(of: inputLocked, initial: true)") == true,
+            "the one place the body names the lock is not the sync"
+        )
+
+        // And the camera gestures are still attached unconditionally, so the
+        // checks above are not passing on a body that stopped attaching them.
+        XCTAssertTrue(
+            body.contains(".gesture(magnifyGesture.exclusively(before: dragGesture))"),
+            "BoardView no longer attaches the camera gestures"
+        )
+    }
+
+    func testTheBodyLockCheckHasTeeth() {
+        let gated = """
+            BoardSurface(board: board, camera: camera, rect: rect)
+                .disabled(inputLocked)
+                .gesture(magnifyGesture.exclusively(before: dragGesture))
+                .onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }
+            """
+        XCTAssertTrue(gated.contains(".disabled("))
+        XCTAssertEqual(gated.split(separator: "\n").filter { $0.contains("Locked") }.count, 2)
+
+        let clean = """
+            BoardSurface(board: board, camera: camera, rect: rect)
+                .gesture(magnifyGesture.exclusively(before: dragGesture))
+                .onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }
+            """
+        XCTAssertFalse(clean.contains(".disabled("))
+        XCTAssertEqual(clean.split(separator: "\n").filter { $0.contains("Locked") }.count, 1)
+        XCTAssertTrue(clean.contains(".gesture(magnifyGesture.exclusively(before: dragGesture))"))
+
+        // A body that hid the gesture behind the lock instead of disabling the
+        // surface must read as gated too.
+        let conditional = "if !inputLocked { surface.gesture(dragGesture) } else { surface }"
+        XCTAssertEqual(conditional.split(separator: "\n").filter { $0.contains("Locked") }.count, 1)
+        XCTAssertFalse(conditional.contains(".onChange(of: inputLocked, initial: true)"))
+    }
+
     func testFeedbackHoldsPreparedGeneratorsAndNeverTrapsOffTheMainActor() throws {
         // UIKit, so unexecutable here. A generator built and fired in one
         // statement wakes the engine on the event and lands the buzz late.
