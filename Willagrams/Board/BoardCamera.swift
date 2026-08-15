@@ -20,8 +20,14 @@ public struct BoardCamera: Sendable {
 
     /// Screen-space offset applied before scaling.
     public var pan: CGSize
-    /// Requested zoom. Not itself clamped — `cellSize` is, so an
-    /// out-of-range zoom just saturates at the effective size floor/ceiling.
+    /// Requested zoom. Assigning this directly does not clamp it — `cellSize`
+    /// does, so an out-of-range zoom saturates at the effective size
+    /// floor/ceiling rather than rendering out of range.
+    ///
+    /// `magnified(by:about:)` is the exception and clamps what it stores here.
+    /// It has to: it is the only writer driven by a CUMULATIVE gesture, so an
+    /// unbounded value accumulates overshoot across pinches that the user then
+    /// has to pinch back through before the render moves at all.
     public var zoom: CGFloat
     /// Cell size at zoom == 1.
     public var baseCellSize: CGFloat

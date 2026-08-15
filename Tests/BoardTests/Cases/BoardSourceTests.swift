@@ -194,7 +194,7 @@ final class BoardSourceTests: XCTestCase {
         // rather than rebuilt — but only after proving it belongs to THIS
         // gesture. SwiftUI skips `onEnded` on a cancelled gesture, so an
         // unconditional `drag ?? ...` would carry a dead gesture's grab and
-        // start pan into the next touch; matching the touch-down point is what
+        // start pan into the next touch; comparing the touch-down point is what
         // scopes "decide once" to one gesture instead of to whatever was left
         // behind.
         XCTAssertTrue(
@@ -206,6 +206,24 @@ final class BoardSourceTests: XCTestCase {
             "BoardView rebuilds the drag on every change rather than carrying the one decision"
         )
         XCTAssertTrue(text.contains("drag = nil"), "BoardView never releases the drag")
+    }
+
+    func testViewComposesTheGesturesExclusivelyRatherThanSimultaneously() throws {
+        // Two fingers drift further than DragGesture's default minimumDistance,
+        // so under `.simultaneousGesture` a pinch feeds BOTH recognizers and
+        // each writes the whole camera from its own start snapshot — pan and
+        // zoom alternate instead of composing. Whether SwiftUI's recognizers
+        // actually fire that way is not observable headlessly; the wiring that
+        // decides it is, so the wiring is what gets pinned.
+        let text = try view()
+        XCTAssertTrue(
+            text.contains("magnifyGesture.exclusively(before: dragGesture)"),
+            "BoardView does not give the pinch first refusal over the drag"
+        )
+        XCTAssertFalse(
+            text.contains(".simultaneousGesture"),
+            "BoardView still feeds both recognizers, so pan and zoom fight over the camera"
+        )
     }
 
     func testViewMakesNoGeometryDecisionOfItsOwn() throws {
@@ -314,13 +332,31 @@ final class BoardSourceTests: XCTestCase {
         // that gets it right.
         let wrong = "let inFlight = BoardGesture.Drag(at: value.location, in: board, camera: camera)"
         XCTAssertTrue(wrong.contains("BoardGesture.Drag(at: value.location"))
-        XCTAssertFalse(wrong.contains("drag ?? BoardGesture.Drag("))
+        XCTAssertFalse(wrong.contains("carried ?? BoardGesture.Drag("))
         XCTAssertFalse(wrong.contains("value.startLocation"))
 
-        let right = "let inFlight = drag ?? BoardGesture.Drag(\n at: value.startLocation, in: board, camera: camera\n)"
+        let right = """
+            let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
+            let inFlight = carried ?? BoardGesture.Drag(at: value.startLocation, in: board, camera: camera)
+            """
         XCTAssertFalse(right.contains("BoardGesture.Drag(at: value.location"))
-        XCTAssertTrue(right.contains("drag ?? BoardGesture.Drag("))
-        XCTAssertTrue(right.contains("value.startLocation"))
+        XCTAssertTrue(right.contains("carried ?? BoardGesture.Drag("))
+        XCTAssertTrue(right.contains("$0.startLocation == value.startLocation"))
+
+        // The staleness check must separate carrying a stored drag over
+        // unconditionally from carrying it over only within one gesture.
+        let stale = "let inFlight = drag ?? BoardGesture.Drag(at: value.startLocation, in: board, camera: camera)"
+        XCTAssertTrue(stale.contains("value.startLocation"))
+        XCTAssertFalse(stale.contains("$0.startLocation == value.startLocation"))
+
+        // And the composition check must separate the two wirings.
+        let fighting = ".gesture(dragGesture)\n.simultaneousGesture(magnifyGesture)"
+        XCTAssertTrue(fighting.contains(".simultaneousGesture"))
+        XCTAssertFalse(fighting.contains("magnifyGesture.exclusively(before: dragGesture)"))
+
+        let composed = ".gesture(magnifyGesture.exclusively(before: dragGesture))"
+        XCTAssertFalse(composed.contains(".simultaneousGesture"))
+        XCTAssertTrue(composed.contains("magnifyGesture.exclusively(before: dragGesture)"))
 
         XCTAssertTrue("let s = min(max(x, 24), 72)".contains("min(max("))
         XCTAssertFalse("let s = camera.cellSize".contains("min(max("))

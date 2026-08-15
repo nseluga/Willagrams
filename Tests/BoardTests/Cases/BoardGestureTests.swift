@@ -119,6 +119,90 @@ final class BoardGestureTests: XCTestCase {
         }
     }
 
+    // MARK: - Guardrail: a drag frame can never revert a zoom
+
+    func testDragFramesInterleavedWithPinchFramesNeverMoveTheRenderedSize() {
+        // A two-finger touch drifts past DragGesture's minimumDistance, so both
+        // recognizers can deliver frames into the same camera. `Drag` keeps only
+        // the start PAN and writes into the LIVE camera, so a drag frame landing
+        // between two pinch frames cannot carry a stale zoom back — the rendered
+        // size is decided by the pinch alone and never oscillates.
+        let board = Self.board()
+        let anchor = CGPoint(x: 300, y: 220)
+        var camera = BoardCamera(baseCellSize: 48)
+        let pinchStart = camera
+
+        let drag = BoardGesture.Drag(at: CGPoint(x: 500, y: 400), in: board, camera: camera)
+        XCTAssertEqual(drag.grab, .pan)
+
+        var previousSize = camera.cellSize
+        for step in 1...6 {
+            camera = pinchStart.magnified(by: 1 + CGFloat(step) * 0.05, about: anchor)
+            let afterPinch = camera.cellSize
+            XCTAssertGreaterThan(afterPinch, previousSize, "step \(step): the pinch itself must still scale")
+
+            camera = drag.camera(camera, translatedBy: CGSize(width: CGFloat(step) * 7, height: CGFloat(step) * -3))
+            XCTAssertEqual(
+                camera.cellSize, afterPinch, accuracy: 1e-12,
+                "step \(step): a drag frame changed the rendered cell size"
+            )
+            previousSize = afterPinch
+        }
+    }
+
+    func testAPinchStillScalesWhileAFingerRestsOnATile() {
+        // The tile-grab half of the same defect: a `.tile` drag used to hard-set
+        // the camera back to its own start snapshot on every frame, so pinching
+        // with a finger on a tile did nothing at all. It now returns the live
+        // camera untouched, which leaves the pinch in sole charge.
+        let board = Self.board()
+        let anchor = CGPoint(x: 120, y: 90)
+        var camera = BoardCamera(baseCellSize: 48)
+        let pinchStart = camera
+
+        let drag = BoardGesture.Drag(
+            at: point(in: Coord(row: 0, col: 0), camera: camera), in: board, camera: camera
+        )
+        guard case .tile = drag.grab else { return XCTFail("this test needs a tile grab") }
+
+        for step in 1...4 {
+            camera = pinchStart.magnified(by: 1 + CGFloat(step) * 0.1, about: anchor)
+            let afterPinch = camera
+            camera = drag.camera(camera, translatedBy: CGSize(width: CGFloat(step) * 9, height: 0))
+            XCTAssertEqual(camera.zoom, afterPinch.zoom, accuracy: 1e-12, "step \(step)")
+            XCTAssertEqual(camera.pan, afterPinch.pan, "step \(step): a tile grab must not move the camera")
+        }
+        XCTAssertGreaterThan(camera.cellSize, pinchStart.cellSize, "the pinch must have scaled something")
+    }
+
+    // MARK: - Guardrail: a point the camera cannot index grabs nothing
+
+    func testAStartLocationTheCameraCannotIndexNeverGrabsTheOriginTile() {
+        // `coord(at:)` answers the origin coord for a point it cannot index, and
+        // this board has a tile at the origin — so without the check in
+        // `Drag.init` a non-finite or absurd touch point picks that tile up.
+        let camera = BoardCamera(pan: CGSize(width: 12, height: -8), zoom: 1.1, baseCellSize: 48)
+        let board = Self.board()
+        XCTAssertNotNil(board.tile(at: Coord(row: 0, col: 0)), "the origin must hold a tile or this proves nothing")
+
+        for bad: CGFloat in [.nan, .infinity, -.infinity, 1e300, -1e300] {
+            for start in [CGPoint(x: bad, y: 0), CGPoint(x: 0, y: bad), CGPoint(x: bad, y: bad)] {
+                XCTAssertEqual(
+                    BoardGesture.Drag(at: start, in: board, camera: camera).grab, .pan,
+                    "\(start) resolved to the origin cell and grabbed the tile sitting on it"
+                )
+            }
+        }
+
+        // And the check does not cost a legitimate grab of that same tile.
+        XCTAssertEqual(
+            BoardGesture.Drag(
+                at: point(in: Coord(row: 0, col: 0), camera: camera), in: board, camera: camera
+            ).grab,
+            .tile(board.tile(at: Coord(row: 0, col: 0))!, at: Coord(row: 0, col: 0))
+        )
+    }
+
     // MARK: - Guardrail: the hit test and the renderer agree on every cell edge
 
     func testGrabAgreesWithTheDrawListOnEveryVisibleCellIncludingItsEdges() {
