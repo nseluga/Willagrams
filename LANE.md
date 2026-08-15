@@ -66,7 +66,7 @@ Global rules:
   risk: a renamed or dropped key breaks board and shell against a frozen contract —
         loud, it fails to compile. A wrong value is silent but visible in StyleGallery
   difficulty: low — values pinned by the direction; the only constraint is not renaming
-  status: not started
+  status: done
 
 - task: Build the tile style — face, bevel, selected ring and lift
   done when:
