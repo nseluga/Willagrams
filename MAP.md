@@ -28,6 +28,37 @@ would have owned is on the `protected:` list above, so 100% of the lane's scope
 is frozen and no item could legally run in it. Downstream lanes depend on those
 contracts directly, not on a lane.
 
+## Pending amendment — wire v2, for the `settings` lane
+
+Rule variants ship in v1, which the wire cannot currently express. Before
+`settings` can run, `/foundation` must amend: add `options:` to
+`MatchMessage.start`, bump `WireFormat.current` to 2, regenerate the golden
+fixture as `wire-v2.json`, add `MatchOptions` and its enforcement to the engine,
+and extend `protected:` with both new paths.
+
+Decided, to be pinned at amendment time:
+
+  - The variants are **minimum word length**, **pool size**, and **selectable
+    letter distribution**. No match timer — it reintroduces the unsynced-clock
+    problem the countdown design deliberately avoids. No handicap.
+  - Minimum word length needs no change to `BoardAnalysis`. `words()` already
+    returns every run of two or more and defers validity to the injected
+    `WordList`, so a decorator rejecting anything shorter turns a short run into
+    an *invalid word* rather than an ignored one — which is the correct behavior,
+    and leaves the `tileCount >= 2` floor intact.
+  - The distribution travels as **literal letter counts, not a preset name**, so
+    presets can be added, tuned, or dropped forever without a wire bump and
+    therefore without a forced app update. Counts arrive from a peer and are a
+    trust boundary: validate single A–Z keys, non-negative counts, and a total
+    within sane bounds before building a pool from them.
+  - The host chooses the options and sends them in `start`. The guest accepts or
+    leaves; there is no negotiation handshake.
+
+**Timing.** The amendment must not land while the match lane is mid-run against
+`wire-v1.json`. Sequence: the current match run finishes on v1 → amend → match
+rebases and builds its remaining items against v2 → `settings` runs. `board` is
+unaffected by all of it and can run at any point.
+
 ---
 
 - lane: style
@@ -48,11 +79,17 @@ contracts directly, not on a lane.
   assignee: nate
   depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, with golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v1.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, those shipped with the foundation and are fenced under protected:
 
+- lane: settings
+  area: Match configuration and rule variants — the host's pre-match options screen, local persistence of chosen defaults, and showing both players which rules are in force. Ships the minimum-word-length, pool-size, and letter-distribution controls.
+  owns: [ Willagrams/Settings/**, Tests/SettingsTests/** ]
+  assignee: nate
+  depends on: match (sequenced — starts after the wire v2 amendment lands and match merges), style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift)
+
 - lane: shell
-  area: App shell — launch, main menu, solo practice mode, host/join flow, in-match HUD, results screen, settings, navigation.
+  area: App shell — launch, main menu, solo practice mode, host/join flow, in-match HUD, results screen, navigation. Settings screens themselves belong to the settings lane; shell navigates into them.
   owns: [ Willagrams/Shell/**, Willagrams/App/**, Tests/ShellTests/** ]
   assignee: nate
-  depends on: style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift), board (sequenced — starts after board merges), match (sequenced — starts after match merges)
+  depends on: style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift), board (sequenced — starts after board merges), match (sequenced — starts after match merges), settings (sequenced — starts after settings merges)
 
 - lane: release
   area: Ship pipeline — bundle id, signing, privacy manifest, App Store Connect metadata, store screenshots, TestFlight distribution.
