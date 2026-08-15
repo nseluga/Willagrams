@@ -145,9 +145,22 @@ public struct BoardCamera: Sendable {
     ///
     /// A pinch can report a zero, negative or non-finite magnification;
     /// each of those leaves the camera untouched.
+    ///
+    /// The STORED zoom is clamped here, not just the derived `cellSize`. It has
+    /// to be: each pinch snapshots the live camera, so an unbounded `zoom`
+    /// carries every frame of overshoot into the next gesture and the user pays
+    /// it all back before anything on screen moves. Five ordinary 3x pinches
+    /// reached zoom 243 against a 1.5 ceiling — 162x of dead travel, which no
+    /// single physical pinch can unwind. This is the one place in the type
+    /// where the state itself is clamped rather than the value derived from it,
+    /// and the reason is that `zoom` is driven by a cumulative gesture.
     public func magnified(by magnification: CGFloat, about anchor: CGPoint) -> BoardCamera {
         let size = cellSize
+        // `baseCellSize > 0` is not covered by `size > 0`: `cellSize` floors at
+        // minCellSize, so it is 24 even when `baseCellSize` is 0 — and the zoom
+        // bounds below divide by `baseCellSize`.
         guard size > 0, size.isFinite,
+              baseCellSize > 0, baseCellSize.isFinite,
               magnification.isFinite, magnification > 0,
               anchor.x.isFinite, anchor.y.isFinite
         else { return self }
@@ -157,7 +170,10 @@ public struct BoardCamera: Sendable {
         let boardY = (anchor.y - pan.height) / size
 
         var camera = self
-        camera.zoom = zoom * magnification
+        camera.zoom = min(
+            max(zoom * magnification, Self.minCellSize / baseCellSize),
+            Self.maxCellSize / baseCellSize
+        )
         let zoomedSize = camera.cellSize
         camera.pan = CGSize(
             width: anchor.x - boardX * zoomedSize,
@@ -171,6 +187,15 @@ public struct BoardCamera: Sendable {
 
     /// Pan and zoom that frame `coords` inside `rect`, centered, with the
     /// resulting cell size still inside `minCellSize...maxCellSize`.
+    ///
+    /// Framing and the cell-size floor genuinely conflict once the span is
+    /// wider than `rect` measured in floor-sized cells — about 42 columns
+    /// across a 1024pt viewport at 24pt — and a late-game board reaches that.
+    /// The floor wins and the content is CENTERED rather than contained, so
+    /// the outermost tiles sit off screen. That is the deliberate degradation:
+    /// honouring the frame instead would render cells too small to read or to
+    /// hit with a finger. Pinned by
+    /// `testRecenterCentersContentTooLargeToFitAtTheCellSizeFloor`.
     ///
     /// `rect` is standardized first, so this and `visibleCoords(in:)` hold the
     /// same view of a mirrored rect — a negative width describes a real region

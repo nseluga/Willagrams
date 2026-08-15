@@ -190,11 +190,20 @@ final class BoardSourceTests: XCTestCase {
             "BoardView hit tests the current point, so the decision can change mid-gesture"
         )
 
-        // And only when nothing is in flight. `??` on the stored drag is what
-        // makes a second decision impossible before release.
+        // And only when nothing is in flight. A stored drag is carried over
+        // rather than rebuilt — but only after proving it belongs to THIS
+        // gesture. SwiftUI skips `onEnded` on a cancelled gesture, so an
+        // unconditional `drag ?? ...` would carry a dead gesture's grab and
+        // start pan into the next touch; matching the touch-down point is what
+        // scopes "decide once" to one gesture instead of to whatever was left
+        // behind.
         XCTAssertTrue(
-            text.contains("drag ?? BoardGesture.Drag("),
-            "BoardView rebuilds the drag on every change rather than keeping the one decision"
+            text.contains("$0.startLocation == value.startLocation"),
+            "BoardView reuses a stored drag without checking it belongs to this gesture"
+        )
+        XCTAssertTrue(
+            text.contains("carried ?? BoardGesture.Drag("),
+            "BoardView rebuilds the drag on every change rather than carrying the one decision"
         )
         XCTAssertTrue(text.contains("drag = nil"), "BoardView never releases the drag")
     }

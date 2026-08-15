@@ -19,12 +19,19 @@ public struct BoardView: View {
     /// The drag in flight, or nil between drags. Built once on the first
     /// change and kept until release, which is what makes the pan-or-tile
     /// decision unrepeatable inside one gesture.
+    ///
+    /// It carries its own touch-down point because `onEnded` is the only thing
+    /// that clears this, and SwiftUI skips `onEnded` when a gesture is
+    /// cancelled (a system edge swipe, backgrounding, the view going away).
+    /// Reusing what a cancelled gesture left behind would leak both the grab
+    /// decision and the pan origin into the next, unrelated touch.
     @State private var drag: BoardGesture.Drag?
 
-    /// The camera as it stood when the pinch began. `MagnifyGesture` reports a
-    /// magnification cumulative from that moment, so it has to be applied to
-    /// this rather than to the live camera.
-    @State private var pinchStart: BoardCamera?
+    /// The pinch midpoint at touch-down and the camera as it stood there.
+    /// `MagnifyGesture` reports a magnification cumulative from that moment, so
+    /// it has to be applied to that camera rather than to the live one — and
+    /// the anchor is stored beside it for the same staleness reason as `drag`.
+    @State private var pinch: (anchor: CGPoint, camera: BoardCamera)?
 
     public init(board: Board, camera: BoardCamera) {
         self.board = board
@@ -40,8 +47,14 @@ public struct BoardView: View {
                 // already hit-testable, but the empty cells between tiles have
                 // to be too or a pan could only start on the background.
                 .contentShape(Rectangle())
-                .gesture(dragGesture)
-                .simultaneousGesture(magnifyGesture)
+                // One gesture, not two simultaneous ones. Two fingers drift
+                // more than `DragGesture`'s default minimumDistance, so under
+                // `.simultaneousGesture` a pinch feeds BOTH recognizers and
+                // they alternate writing the camera from their own start
+                // snapshots — pan and zoom fight instead of composing.
+                // `.exclusively(before:)` gives the pinch first refusal, so a
+                // two-finger touch never reaches `DragGesture` at all.
+                .gesture(magnifyGesture.exclusively(before: dragGesture))
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
         }
     }
@@ -52,14 +65,19 @@ public struct BoardView: View {
     /// point, not the current one — and only when no drag is in flight, so a
     /// finger that began on an empty cell keeps panning across every tile it
     /// crosses.
+    /// A stored drag is reused only while its touch-down point is the one this
+    /// event reports; a different `startLocation` means a new gesture, so the
+    /// grab is decided again. That is the same "decide once" rule, scoped to
+    /// one gesture rather than to whatever the last cancelled one left behind.
     private var dragGesture: some Gesture {
         DragGesture()
             .onChanged { value in
-                let inFlight = drag ?? BoardGesture.Drag(
+                let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
+                let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, camera: camera
                 )
                 drag = inFlight
-                camera = inFlight.camera(translatedBy: value.translation)
+                camera = inFlight.camera(camera, translatedBy: value.translation)
             }
             .onEnded { _ in drag = nil }
     }
@@ -68,14 +86,18 @@ public struct BoardView: View {
     /// gesture began, and `BoardCamera.magnified(by:about:)` holds the board
     /// position under it fixed — through the camera's own cell-size clamp, so
     /// nothing here knows a zoom bound exists.
+    ///
+    /// The stored start is carried over only while the midpoint is unchanged,
+    /// for the same cancelled-gesture reason as `drag`.
     private var magnifyGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                let start = pinchStart ?? camera
-                pinchStart = start
+                let carried = pinch.flatMap { $0.anchor == value.startLocation ? $0.camera : nil }
+                let start = carried ?? camera
+                pinch = (anchor: value.startLocation, camera: start)
                 camera = start.magnified(by: value.magnification, about: value.startLocation)
             }
-            .onEnded { _ in pinchStart = nil }
+            .onEnded { _ in pinch = nil }
     }
 
     // MARK: - Recenter

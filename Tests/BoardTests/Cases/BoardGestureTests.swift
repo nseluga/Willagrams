@@ -43,7 +43,7 @@ final class BoardGestureTests: XCTestCase {
             CGSize(width: 137, height: -211),
             CGSize(width: -4321.75, height: 9876.25),
         ] {
-            let moved = drag.camera(translatedBy: translation)
+            let moved = drag.camera(camera, translatedBy: translation)
             XCTAssertEqual(moved.pan.width, camera.pan.width + translation.width, accuracy: 1e-9)
             XCTAssertEqual(moved.pan.height, camera.pan.height + translation.height, accuracy: 1e-9)
             XCTAssertEqual(moved.zoom, camera.zoom, "a pan must not change zoom")
@@ -60,7 +60,7 @@ final class BoardGestureTests: XCTestCase {
         XCTAssertEqual(drag.grab, .tile(tile, at: occupied))
 
         for translation in [CGSize(width: 200, height: 200), CGSize(width: -50, height: 900)] {
-            let moved = drag.camera(translatedBy: translation)
+            let moved = drag.camera(camera, translatedBy: translation)
             XCTAssertEqual(moved.pan, camera.pan)
             XCTAssertEqual(moved.zoom, camera.zoom)
         }
@@ -102,7 +102,7 @@ final class BoardGestureTests: XCTestCase {
             if step == 3 {
                 XCTAssertNotNil(board.tile(at: coordUnderFinger), "step 3 must actually cross a tile")
             }
-            let moved = drag.camera(translatedBy: translation)
+            let moved = drag.camera(camera, translatedBy: translation)
             XCTAssertEqual(moved.pan.height, camera.pan.height + translation.height, accuracy: 1e-9)
         }
     }
@@ -114,7 +114,7 @@ final class BoardGestureTests: XCTestCase {
             at: point(in: Coord(row: 0, col: 0), camera: camera), in: board, camera: camera
         )
         for step in 1...6 {
-            let moved = drag.camera(translatedBy: CGSize(width: 0, height: camera.cellSize * CGFloat(step)))
+            let moved = drag.camera(camera, translatedBy: CGSize(width: 0, height: camera.cellSize * CGFloat(step)))
             XCTAssertEqual(moved.pan, camera.pan, "a tile grab must never start panning mid-gesture")
         }
     }
@@ -211,15 +211,22 @@ final class BoardGestureTests: XCTestCase {
     }
 
     func testRepeatedPinchesCompoundThroughTheClampWithoutSticking() {
-        // The clamp is on the derived cell size, not on stored zoom, so
-        // pinching hard past the ceiling and back must return to where it
-        // started rather than saturating permanently.
+        // Pinching hard past the ceiling must bank no dead travel: the stored
+        // zoom is clamped, so an ordinary reverse pinch moves the rendered size
+        // at once instead of unwinding overshoot first.
+        //
+        // 0.5x, deliberately NOT the 0.01x that is the exact inverse of the
+        // 100x above: an exact reciprocal returns to the start by arithmetic
+        // whatever the code does, so it cannot fail and tested nothing.
         let camera = BoardCamera(zoom: 1, baseCellSize: 48)
         let anchor = CGPoint(x: 100, y: 100)
         let out = camera.magnified(by: 100, about: anchor)
         XCTAssertEqual(out.cellSize, 72, accuracy: 1e-9)
-        let back = out.magnified(by: 0.01, about: anchor)
-        XCTAssertEqual(back.cellSize, camera.cellSize, accuracy: 1e-9)
+        let back = out.magnified(by: 0.5, about: anchor)
+        XCTAssertLessThan(
+            back.cellSize, out.cellSize,
+            "a reverse pinch must move the rendered size on the very next gesture"
+        )
     }
 
     func testMagnifyWithDegenerateInputLeavesTheCameraUnchanged() {
@@ -332,7 +339,7 @@ final class BoardGestureTests: XCTestCase {
         for (name, translation, rowShift, colShift) in directions {
             let drag = BoardGesture.Drag(at: CGPoint(x: 500, y: 400), in: board, camera: base)
             XCTAssertEqual(drag.grab, .pan, name)
-            let panned = drag.camera(translatedBy: translation)
+            let panned = drag.camera(base, translatedBy: translation)
 
             // Pan is exact: nothing clamped it on the way out.
             XCTAssertEqual(panned.pan.width, base.pan.width + translation.width, accuracy: 1e-9, name)

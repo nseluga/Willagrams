@@ -35,12 +35,20 @@ public enum BoardGesture {
         /// Decided at touch-down and never revisited.
         public let grab: Grab
 
-        /// The camera as it stood at touch-down. `DragGesture` reports a
-        /// translation cumulative from that moment, so it is applied to this
-        /// snapshot and never to the live camera — applying a cumulative
-        /// translation to a camera that already moved would accelerate away
-        /// from the finger.
-        private let start: BoardCamera
+        /// The touch-down point, kept so a caller can tell this drag from the
+        /// next one. SwiftUI skips `onEnded` for a cancelled gesture, so a
+        /// stored `Drag` outlives the gesture that made it; comparing this
+        /// against the incoming `startLocation` is how the caller notices and
+        /// rebuilds rather than reusing a stale decision.
+        public let startLocation: CGPoint
+
+        /// Only the PAN as it stood at touch-down — deliberately not a whole
+        /// camera. `DragGesture` reports a cumulative translation, so the
+        /// origin of that translation has to be remembered; the zoom must not
+        /// be, or a drag frame arriving between two pinch frames would write a
+        /// stale zoom back and the two gestures would fight over the camera
+        /// every event.
+        private let startPan: CGSize
 
         /// Hit-tests `startLocation` once. The cell comes from
         /// `camera.coord(at:)` — the same helper the renderer's visible range
@@ -48,21 +56,49 @@ public enum BoardGesture {
         /// it is drawn over, with no second boundary convention to disagree at
         /// a cell edge.
         public init(at startLocation: CGPoint, in board: Board, camera: BoardCamera) {
+            self.startLocation = startLocation
+            self.startPan = camera.pan
+
+            // `coord(at:)` answers `Coord(0, 0)` for any point it cannot index
+            // — non-finite, or so far out that no `Int` cell index expresses it
+            // — which would otherwise let a stray touch grab whatever tile sits
+            // at the origin. Putting the coord back through `point(for:)` tells
+            // a real hit from that fallback without re-deriving the boundary
+            // convention here, which stays `coord(at:)`'s alone.
+            //
+            // The window is a whole cell either side rather than the exact
+            // `0..<size` a correct hit lands in: what has to be rejected is
+            // non-finite (every comparison against a NaN is false) and the
+            // astronomically-out-of-range, and a slack window rejects both
+            // while leaving no room for a float ULP at a cell edge a thousand
+            // cells from the origin to read as a rejection.
             let coord = camera.coord(at: startLocation)
-            if let tile = board.tile(at: coord) {
-                self.grab = .tile(tile, at: coord)
-            } else {
+            let cellOrigin = camera.point(for: coord)
+            let size = camera.cellSize
+            guard (startLocation.x - cellOrigin.x).magnitude <= size,
+                  (startLocation.y - cellOrigin.y).magnitude <= size
+            else {
                 self.grab = .pan
+                return
             }
-            self.start = camera
+
+            self.grab = board.tile(at: coord).map { .tile($0, at: coord) } ?? .pan
         }
 
-        /// The camera after a cumulative `translation`: one-to-one with the
-        /// finger for a pan, and the untouched start camera for a tile —
-        /// moving the tile is the next item's job, not the camera's.
-        public func camera(translatedBy translation: CGSize) -> BoardCamera {
-            guard grab == .pan else { return start }
-            return start.panned(by: translation)
+        /// `camera` after a cumulative `translation`: the LIVE camera with its
+        /// pan moved one-to-one with the finger, or the live camera untouched
+        /// for a tile grab — moving the tile is the next item's job, not the
+        /// camera's.
+        ///
+        /// Taking the live camera rather than a snapshot is what stops a drag
+        /// reverting a zoom that a pinch changed underneath it. Only `pan` is
+        /// ever written, and it is written through `BoardCamera.panned(by:)`
+        /// so the one non-finite guard covers this path too.
+        public func camera(_ camera: BoardCamera, translatedBy translation: CGSize) -> BoardCamera {
+            guard grab == .pan else { return camera }
+            var moved = camera
+            moved.pan = startPan
+            return moved.panned(by: translation)
         }
     }
 
