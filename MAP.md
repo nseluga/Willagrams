@@ -21,6 +21,13 @@ and add keys freely. Renaming or removing a key is still an amendment.
 `Terminology.swift` is protected in full — it is the IP fence, and the strings
 themselves are the contract.
 
+There is no `rules` lane. The engine it would have built — pool, board model,
+connectivity and word extraction, dictionary, the Draw gate — landed whole
+during `/foundation` and is green at 36 tests across 6 suites. Everything it
+would have owned is on the `protected:` list above, so 100% of the lane's scope
+is frozen and no item could legally run in it. Downstream lanes depend on those
+contracts directly, not on a lane.
+
 ---
 
 - lane: style
@@ -29,23 +36,17 @@ themselves are the contract.
   assignee: nate
   depends on: —
 
-- lane: rules
-  area: Pure Swift game engine — tile distribution, pool draw/swap/grow, board model, connectivity + word extraction, dictionary lookup, win validation. No UIKit, no SwiftUI, no I/O.
-  owns: [ Sources/WillagramsRules/**, Tests/WillagramsRulesTests/** ]
-  assignee: nate
-  depends on: —
-
 - lane: board
   area: The playing surface — tile rack, drag/drop/snap to grid, pan/zoom, rearrange, invalid-placement feedback, haptics, tile animations.
   owns: [ Willagrams/Board/**, Tests/BoardTests/** ]
   assignee: nate
-  depends on: rules (Tile, Coord, Placement, Board.place/remove — contract Sources/WillagramsRules/Contracts.swift; the Draw gate BoardValidation — contract Sources/WillagramsRules/BoardAnalysis.swift), style (tile art + token names — contract Willagrams/Style/DesignTokens.swift)
+  depends on: style (tile art + token names — contract Willagrams/Style/DesignTokens.swift). Also builds on the frozen engine (Tile, Coord, Placement, Board.place/remove in Sources/WillagramsRules/Contracts.swift; the Draw gate BoardValidation in Sources/WillagramsRules/BoardAnalysis.swift) — no lane edge, those shipped with the foundation and are fenced under protected:
 
 - lane: match
   area: GameKit multiplayer — Game Center auth, friend invite, GKMatch lifecycle, message codec, host-authoritative pool, draw/grow broadcast, win claim, disconnect + reconnect.
   owns: [ Willagrams/Match/**, Tests/MatchTests/** ]
   assignee: nate
-  depends on: rules (MatchMessage wire enum — contract Sources/WillagramsRules/MatchMessage.swift; host-side Pool.draw/swap — contract Sources/WillagramsRules/Pool.swift)
+  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, with golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v1.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, those shipped with the foundation and are fenced under protected:
 
 - lane: shell
   area: App shell — launch, main menu, solo practice mode, host/join flow, in-match HUD, results screen, settings, navigation.
