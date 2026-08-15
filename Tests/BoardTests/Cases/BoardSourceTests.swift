@@ -378,10 +378,16 @@ final class BoardSourceTests: XCTestCase {
         // statement wakes the engine on the event and lands the buzz late.
         let text = BoardSource.strippingComments(try BoardSource.text("BoardFeedback.swift"))
         XCTAssertTrue(text.contains("prepare()"), "BoardFeedback never prepares a generator")
-        XCTAssertTrue(
-            text.contains("static let"),
-            "BoardFeedback rebuilds its generators per event, so preparing them buys nothing"
-        )
+        // Each generator by name, not a bare "static let" anywhere in the file:
+        // one of the three sliding back to a rebuilt-per-event `var` still
+        // leaves the other two reading `static let`, and the buzz it wakes on
+        // the event itself is exactly the late one this pins.
+        for generator in ["pickupGenerator", "snapGenerator", "rejectGenerator"] {
+            XCTAssertTrue(
+                text.contains("static let \(generator)"),
+                "BoardFeedback rebuilds \(generator) per event, so preparing it buys nothing"
+            )
+        }
         // Three feels that stay distinguishable by hand.
         for feel in ["style: .light", "style: .medium", "notificationOccurred(.error)"] {
             XCTAssertTrue(text.contains(feel), "BoardFeedback no longer fires \(feel)")
@@ -569,12 +575,20 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertTrue(belted.contains("dragTranslation = .zero"))
         XCTAssertFalse(belted.contains("haptics"))
 
-        // Cold generators built per event, versus held and prepared ones.
+        // Cold generators built per event, versus held and prepared ones. The
+        // check names each generator, so a single one sliding back to a `var`
+        // has to read as cold even while its two siblings still read as held.
         let cold = "UIImpactFeedbackGenerator(style: .light).impactOccurred()"
         XCTAssertFalse(cold.contains("prepare()"))
-        XCTAssertFalse(cold.contains("static let"))
-        let warm = "@MainActor private static let snapGenerator = UIImpactFeedbackGenerator(style: .medium)"
-        XCTAssertTrue(warm.contains("static let"))
+        XCTAssertFalse(cold.contains("static let pickupGenerator"))
+        let oneCold = """
+        @MainActor private static var pickupGenerator = UIImpactFeedbackGenerator(style: .light)
+        @MainActor private static let snapGenerator = UIImpactFeedbackGenerator(style: .medium)
+        """
+        XCTAssertFalse(oneCold.contains("static let pickupGenerator"))
+        XCTAssertTrue(oneCold.contains("static let snapGenerator"), "a bare \"static let\" would pass this file")
+        let warm = "@MainActor private static let pickupGenerator = UIImpactFeedbackGenerator(style: .light)"
+        XCTAssertTrue(warm.contains("static let pickupGenerator"))
 
         // And the trap-versus-hop separation.
         XCTAssertFalse("MainActor.assumeIsolated { play(event) }".contains("Thread.isMainThread"))

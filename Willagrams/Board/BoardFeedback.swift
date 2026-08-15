@@ -17,7 +17,7 @@ public struct TileFeedback: BoardHaptics {
     /// the same breath wakes the Taptic Engine on the event itself, which lands
     /// the buzz behind the finger. Pickup opens every drag, so warming the other
     /// two there puts the feel that actually resolves the drag on time.
-    @MainActor private static var pickupGenerator = UIImpactFeedbackGenerator(style: .light)
+    @MainActor private static let pickupGenerator = UIImpactFeedbackGenerator(style: .light)
     @MainActor private static let snapGenerator = UIImpactFeedbackGenerator(style: .medium)
     @MainActor private static let rejectGenerator = UINotificationFeedbackGenerator()
 
