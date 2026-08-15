@@ -114,9 +114,72 @@ public struct BoardCamera: Sendable {
         }
     }
 
+    /// The camera translated one-to-one with a finger.
+    ///
+    /// Never clamped, in any direction: the board is unbounded, so there is no
+    /// maximum extent to stop at and no "edge" to rubber-band against. A
+    /// non-finite translation leaves the camera alone rather than poisoning
+    /// `pan` with a NaN every later `Int` conversion would have to survive.
+    public func panned(by translation: CGSize) -> BoardCamera {
+        guard translation.width.isFinite, translation.height.isFinite else { return self }
+        var camera = self
+        camera.pan = CGSize(
+            width: pan.width + translation.width,
+            height: pan.height + translation.height
+        )
+        return camera
+    }
+
+    /// Zoomed by `magnification` about `anchor`, keeping whatever board
+    /// position sits under `anchor` exactly where it is.
+    ///
+    /// `magnification` is cumulative from a pinch's start, so callers apply it
+    /// to a camera snapshotted at that start rather than to the live one.
+    ///
+    /// Both halves of the anchor math read the CLAMPED `cellSize`. That is
+    /// what lets the 24...72pt clamp stay here and out of the gesture code:
+    /// the board position under the anchor is measured in whatever cell size
+    /// is actually rendered and restored in whatever cell size is actually
+    /// rendered next, so the anchor still holds exactly once the clamp
+    /// saturates and the gesture never has to know a bound exists.
+    ///
+    /// A pinch can report a zero, negative or non-finite magnification;
+    /// each of those leaves the camera untouched.
+    public func magnified(by magnification: CGFloat, about anchor: CGPoint) -> BoardCamera {
+        let size = cellSize
+        guard size > 0, size.isFinite,
+              magnification.isFinite, magnification > 0,
+              anchor.x.isFinite, anchor.y.isFinite
+        else { return self }
+
+        // Where the anchor sits on the board, in cells, fractional.
+        let boardX = (anchor.x - pan.width) / size
+        let boardY = (anchor.y - pan.height) / size
+
+        var camera = self
+        camera.zoom = zoom * magnification
+        let zoomedSize = camera.cellSize
+        camera.pan = CGSize(
+            width: anchor.x - boardX * zoomedSize,
+            height: anchor.y - boardY * zoomedSize
+        )
+
+        guard camera.zoom.isFinite, camera.pan.width.isFinite, camera.pan.height.isFinite
+        else { return self }
+        return camera
+    }
+
     /// Pan and zoom that frame `coords` inside `rect`, centered, with the
     /// resulting cell size still inside `minCellSize...maxCellSize`.
+    ///
+    /// `rect` is standardized first, so this and `visibleCoords(in:)` hold the
+    /// same view of a mirrored rect — a negative width describes a real region
+    /// and is framed, while only a genuinely area-less rect is refused. Before
+    /// this line the two disagreed: `visibleCoords` enumerated a mirrored rect
+    /// (its `minX`/`maxX` reads already standardize) while `recenter`'s
+    /// `width > 0` rejected it.
     public func recenter(over coords: [Coord], in rect: CGRect) -> BoardCamera {
+        let rect = rect.standardized
         // `baseCellSize` is public and unclamped, so a zero-size first layout
         // pass can make it 0. Dividing by it would give `zoom == .infinity`,
         // and the next `cellSize` read `0 * .infinity == .nan` — which the

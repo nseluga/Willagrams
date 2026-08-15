@@ -1,80 +1,188 @@
 import SwiftUI
 import WillagramsRules
 
-/// The board surface: an empty-cell grid with the placed tiles sitting on it.
+/// The board surface: an empty-cell grid with the placed tiles sitting on it,
+/// pannable, zoomable, and recenterable.
 ///
 /// Deliberately dumb. Every decision about what to draw comes from
-/// `BoardRender.cells(board:camera:in:)`, and both layers below consume that
-/// one array — this view adds no geometry, no state derivation, and no gestures
-/// (later lane items own pan/zoom and selection).
+/// `BoardRender.cells(board:camera:in:)`, and every decision a gesture makes
+/// comes from `BoardGesture` and `BoardCamera` — this file only wires SwiftUI's
+/// gestures to them and holds the resulting camera.
 public struct BoardView: View {
 
     public let board: Board
-    public let camera: BoardCamera
+
+    /// The live camera. Owned here because nothing above this view exists yet
+    /// to own it; the initializer's camera is the starting value.
+    @State private var camera: BoardCamera
+
+    /// The drag in flight, or nil between drags. Built once on the first
+    /// change and kept until release, which is what makes the pan-or-tile
+    /// decision unrepeatable inside one gesture.
+    @State private var drag: BoardGesture.Drag?
+
+    /// The camera as it stood when the pinch began. `MagnifyGesture` reports a
+    /// magnification cumulative from that moment, so it has to be applied to
+    /// this rather than to the live camera.
+    @State private var pinchStart: BoardCamera?
 
     public init(board: Board, camera: BoardCamera) {
         self.board = board
-        self.camera = camera
+        _camera = State(initialValue: camera)
     }
 
     public var body: some View {
         GeometryReader { proxy in
-            let cells = BoardRender.cells(
-                board: board,
-                camera: camera,
-                in: CGRect(origin: .zero, size: proxy.size)
-            )
-            let cellSize = camera.cellSize
+            let rect = CGRect(origin: .zero, size: proxy.size)
 
-            ZStack(alignment: .topLeading) {
-                DesignTokens.Palette.boardSurface
+            BoardSurface(board: board, camera: camera, rect: rect)
+                // The surface is a color and a Canvas, both of which are
+                // already hit-testable, but the empty cells between tiles have
+                // to be too or a pan could only start on the background.
+                .contentShape(Rectangle())
+                .gesture(dragGesture)
+                .simultaneousGesture(magnifyGesture)
+                .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
+        }
+    }
 
-                // One Canvas, not one view per cell: at the 24pt cell floor a
-                // landscape iPad viewport holds ~2,400 cells, and 2,400 shape
-                // views would make the pan/zoom item unusable. Canvas resolves
-                // the asset-catalog Color in the current environment, so light
-                // and dark still come from the catalog.
-                Canvas { context, _ in
-                    let shading = GraphicsContext.Shading.color(DesignTokens.Palette.cellEmpty)
-                    for cell in cells {
-                        context.fill(
-                            Path(
-                                roundedRect: CGRect(
-                                    origin: cell.point,
-                                    size: CGSize(width: cellSize, height: cellSize)
-                                )
-                                .insetBy(
-                                    dx: DesignTokens.Stroke.hairline,
-                                    dy: DesignTokens.Stroke.hairline
-                                ),
-                                cornerRadius: DesignTokens.Radius.cell
+    // MARK: - Gestures
+
+    /// One finger. The hit test runs on `value.startLocation` — the touch-down
+    /// point, not the current one — and only when no drag is in flight, so a
+    /// finger that began on an empty cell keeps panning across every tile it
+    /// crosses.
+    private var dragGesture: some Gesture {
+        DragGesture()
+            .onChanged { value in
+                let inFlight = drag ?? BoardGesture.Drag(
+                    at: value.startLocation, in: board, camera: camera
+                )
+                drag = inFlight
+                camera = inFlight.camera(translatedBy: value.translation)
+            }
+            .onEnded { _ in drag = nil }
+    }
+
+    /// Two fingers. `startLocation` is the pinch midpoint at the moment the
+    /// gesture began, and `BoardCamera.magnified(by:about:)` holds the board
+    /// position under it fixed — through the camera's own cell-size clamp, so
+    /// nothing here knows a zoom bound exists.
+    private var magnifyGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let start = pinchStart ?? camera
+                pinchStart = start
+                camera = start.magnified(by: value.magnification, about: value.startLocation)
+            }
+            .onEnded { _ in pinchStart = nil }
+    }
+
+    // MARK: - Recenter
+
+    /// Frames every placed tile. `BoardGesture.recentered` reads the
+    /// placements; this view never does, so the draw path stays a function of
+    /// the viewport.
+    private func recenterControl(in rect: CGRect) -> some View {
+        Button {
+            withAnimation(DesignTokens.Motion.snap) {
+                camera = BoardGesture.recentered(camera, over: board, in: rect)
+            }
+        } label: {
+            Image(systemName: Self.recenterSymbol)
+        }
+        .buttonStyle(.brandQuiet)
+        .padding(DesignTokens.Space.m)
+        .accessibilityLabel(Self.recenterLabel)
+    }
+
+    /// Not a `Terminology` constant: that file is the fence around the game's
+    /// vocabulary and is frozen, and recentering a camera is a control, not a
+    /// game concept. Named here so there is still exactly one copy of it.
+    private static let recenterLabel = "Recenter"
+    private static let recenterSymbol = "scope"
+}
+
+/// The drawn surface, animatable as one piece.
+///
+/// `Canvas` contents do not interpolate under an implicit animation while an
+/// offset `BrandTile` does, so a `withAnimation` recenter would slide the tiles
+/// and snap the grid underneath them. Conforming to `Animatable` over the
+/// camera's pan and zoom makes SwiftUI re-evaluate this body once per frame
+/// with an interpolated camera instead — grid and tiles then derive from the
+/// same numbers and move together.
+private struct BoardSurface: View, Animatable {
+
+    let board: Board
+    var camera: BoardCamera
+    let rect: CGRect
+
+    /// Pan width, pan height, zoom — the whole of what an animation between
+    /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
+    /// fixed property of the surface, and `recenter` moves `zoom`, not it.
+    /// `nonisolated` because `View` is main-actor isolated and `Animatable` is
+    /// not — SwiftUI reads this off the animation's own thread. Safe: every
+    /// stored property here is a Sendable value type.
+    nonisolated var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, CGFloat> {
+        get { AnimatablePair(AnimatablePair(camera.pan.width, camera.pan.height), camera.zoom) }
+        set {
+            camera.pan = CGSize(width: newValue.first.first, height: newValue.first.second)
+            camera.zoom = newValue.second
+        }
+    }
+
+    var body: some View {
+        let cells = BoardRender.cells(board: board, camera: camera, in: rect)
+        let cellSize = camera.cellSize
+
+        ZStack(alignment: .topLeading) {
+            DesignTokens.Palette.boardSurface
+
+            // One Canvas, not one view per cell: at the 24pt cell floor a
+            // landscape iPad viewport holds ~2,400 cells, and 2,400 shape
+            // views would make panning and zooming unusable. Canvas resolves
+            // the asset-catalog Color in the current environment, so light
+            // and dark still come from the catalog.
+            Canvas { context, _ in
+                let shading = GraphicsContext.Shading.color(DesignTokens.Palette.cellEmpty)
+                for cell in cells {
+                    context.fill(
+                        Path(
+                            roundedRect: CGRect(
+                                origin: cell.point,
+                                size: CGSize(width: cellSize, height: cellSize)
+                            )
+                            .insetBy(
+                                dx: DesignTokens.Stroke.hairline,
+                                dy: DesignTokens.Stroke.hairline
                             ),
-                            with: shading
-                        )
-                    }
-                }
-
-                // Real views, not Canvas drawing: BrandTile owns the face,
-                // bevel, ring and lift, and this must not re-implement any of
-                // it. Only cells carrying a tile reach here.
-                // Keyed by tile id, not by coord: a tile that moves must be the
-                // same view in a new place, or SwiftUI destroys it and builds a
-                // fresh one and the drag item's move cannot animate. `Tile.id`
-                // is stable across a move for exactly this reason. The list is
-                // already filtered to non-nil tiles, so no two keys are nil.
-                ForEach(cells.filter { $0.tile != nil }, id: \.tile?.id) { cell in
-                    if let tile = cell.tile {
-                        BrandTile(
-                            letter: tile.letter,
-                            size: cellSize,
-                            state: (cell.state ?? .idle).brandState
-                        )
-                        .offset(x: cell.point.x, y: cell.point.y)
-                    }
+                            cornerRadius: DesignTokens.Radius.cell
+                        ),
+                        with: shading
+                    )
                 }
             }
-            .clipped()
+
+            // Real views, not Canvas drawing: BrandTile owns the face,
+            // bevel, ring and lift, and this must not re-implement any of
+            // it. Only cells carrying a tile reach here.
+            // Keyed by tile id, not by coord: a tile that moves must be the
+            // same view in a new place, or SwiftUI destroys it and builds a
+            // fresh one and the drag item's move cannot animate. `Tile.id`
+            // is stable across a move for exactly this reason. The list is
+            // already filtered to non-nil tiles, so no two keys are nil.
+            ForEach(cells.filter { $0.tile != nil }, id: \.tile?.id) { cell in
+                if let tile = cell.tile {
+                    BrandTile(
+                        letter: tile.letter,
+                        size: cellSize,
+                        state: (cell.state ?? .idle).brandState
+                    )
+                    .offset(x: cell.point.x, y: cell.point.y)
+                }
+            }
         }
+        .clipped()
     }
 }
 

@@ -164,12 +164,91 @@ final class BoardSourceTests: XCTestCase {
         }
     }
 
-    // MARK: - The pure file must stay pure, or the execution tests evaporate
+    // MARK: - The pure files must stay pure, or the execution tests evaporate
 
-    func testRenderImportsNoUIFramework() throws {
-        let text = BoardSource.strippingComments(try BoardSource.text("BoardRender.swift"))
-        let uiImports = BoardSource.matches(#"import\s+(SwiftUI|UIKit|AppKit)"#, in: text)
-        XCTAssertTrue(uiImports.isEmpty, "BoardRender imports \(uiImports) and is no longer host-compilable")
+    func testPureFilesImportNoUIFramework() throws {
+        // Every file symlinked into this package. A SwiftUI import in any of
+        // them stops the whole package compiling, so this is the early, legible
+        // failure rather than a wall of build errors.
+        for name in ["BoardCamera.swift", "BoardRender.swift", "BoardGesture.swift"] {
+            let text = BoardSource.strippingComments(try BoardSource.text(name))
+            let uiImports = BoardSource.matches(#"import\s+(SwiftUI|UIKit|AppKit)"#, in: text)
+            XCTAssertTrue(uiImports.isEmpty, "\(name) imports \(uiImports) and is no longer host-compilable")
+        }
+    }
+
+    // MARK: - Gestures: the view wires, the pure layer decides
+
+    func testViewDecidesTheGrabOnceAtGestureStart() throws {
+        let text = try view()
+
+        // The touch-down point, not the live one: `value.location` would
+        // re-hit-test wherever the finger has got to.
+        XCTAssertTrue(text.contains("value.startLocation"), "BoardView does not hit test the touch-down point")
+        XCTAssertFalse(
+            text.contains("BoardGesture.Drag(at: value.location"),
+            "BoardView hit tests the current point, so the decision can change mid-gesture"
+        )
+
+        // And only when nothing is in flight. `??` on the stored drag is what
+        // makes a second decision impossible before release.
+        XCTAssertTrue(
+            text.contains("drag ?? BoardGesture.Drag("),
+            "BoardView rebuilds the drag on every change rather than keeping the one decision"
+        )
+        XCTAssertTrue(text.contains("drag = nil"), "BoardView never releases the drag")
+    }
+
+    func testViewMakesNoGeometryDecisionOfItsOwn() throws {
+        let text = try view()
+        for reimplementation in ["floor(", "ceil(", "Int(", "minCellSize", "maxCellSize", "min(max("] {
+            XCTAssertFalse(text.contains(reimplementation), "BoardView re-derives geometry via \(reimplementation)")
+        }
+    }
+
+    func testTheZoomClampLivesOnlyInBoardCamera() throws {
+        for file in try BoardSource.all() where file.name != "BoardCamera.swift" {
+            let text = BoardSource.strippingComments(file.text)
+            for clamp in ["minCellSize", "maxCellSize", "min(max("] {
+                XCTAssertFalse(text.contains(clamp), "\(file.name) holds part of the zoom clamp: \(clamp)")
+            }
+        }
+        let camera = BoardSource.strippingComments(try BoardSource.text("BoardCamera.swift"))
+        XCTAssertTrue(camera.contains("min(max("), "the clamp has left BoardCamera entirely")
+    }
+
+    func testViewNeverClampsThePan() throws {
+        // The board is unbounded; a bound on pan in any direction is the
+        // guardrail this item must not break.
+        let text = try view()
+        for clamp in ["pan.width = min", "pan.width = max", "pan.height = min", "pan.height = max",
+                      "clamped(", ".clamp("] {
+            XCTAssertFalse(text.contains(clamp), "BoardView clamps the pan via \(clamp)")
+        }
+    }
+
+    func testViewAnimatesRecenterThroughTheMotionToken() throws {
+        let text = try view()
+        XCTAssertTrue(
+            text.contains("withAnimation(DesignTokens.Motion.snap)"),
+            "BoardView does not animate recenter over Motion.snapDuration"
+        )
+        XCTAssertTrue(
+            text.contains("BoardGesture.recentered("),
+            "BoardView does not route recenter through the pure layer"
+        )
+    }
+
+    func testSurfaceInterpolatesTheWholeCameraAsOnePiece() throws {
+        // Canvas contents do not interpolate under an implicit animation while
+        // an offset BrandTile does. Without Animatable over the camera, a
+        // recenter slides the tiles and snaps the grid under them.
+        let text = try view()
+        XCTAssertTrue(text.contains("Animatable"), "the surface does not conform to Animatable")
+        XCTAssertTrue(text.contains("animatableData"), "the surface exposes no animatableData")
+        for component in ["camera.pan.width", "camera.pan.height", "camera.zoom"] {
+            XCTAssertTrue(text.contains(component), "animatableData does not carry \(component)")
+        }
     }
 
     // MARK: - Lane vocabulary guardrails
@@ -218,5 +297,34 @@ final class BoardSourceTests: XCTestCase {
         // literal checks — and what stops it hiding a real one.
         XCTAssertFalse(BoardSource.strippingComments("// cornerRadius: 12\nlet a = 1").contains("cornerRadius"))
         XCTAssertTrue(BoardSource.strippingComments("let r = 12 // fine").contains("let r = 12"))
+    }
+
+    func testGestureWiringChecksHaveTeeth() {
+        // The gesture guards above are fixed-string `contains`, so their teeth
+        // are that they separate a body that gets the wiring wrong from one
+        // that gets it right.
+        let wrong = "let inFlight = BoardGesture.Drag(at: value.location, in: board, camera: camera)"
+        XCTAssertTrue(wrong.contains("BoardGesture.Drag(at: value.location"))
+        XCTAssertFalse(wrong.contains("drag ?? BoardGesture.Drag("))
+        XCTAssertFalse(wrong.contains("value.startLocation"))
+
+        let right = "let inFlight = drag ?? BoardGesture.Drag(\n at: value.startLocation, in: board, camera: camera\n)"
+        XCTAssertFalse(right.contains("BoardGesture.Drag(at: value.location"))
+        XCTAssertTrue(right.contains("drag ?? BoardGesture.Drag("))
+        XCTAssertTrue(right.contains("value.startLocation"))
+
+        XCTAssertTrue("let s = min(max(x, 24), 72)".contains("min(max("))
+        XCTAssertFalse("let s = camera.cellSize".contains("min(max("))
+
+        XCTAssertTrue("var animatableData: CGFloat".contains("animatableData"))
+        XCTAssertFalse("var body: some View".contains("animatableData"))
+
+        XCTAssertTrue("withAnimation(.easeOut(duration: 0.16))".contains("duration:"))
+        XCTAssertFalse("withAnimation(DesignTokens.Motion.snap)".contains("duration:"))
+
+        // And the stripper must not let a doc comment hide a real clamp, or
+        // manufacture one out of prose.
+        XCTAssertTrue(BoardSource.strippingComments("/// clamps hard\nlet s = min(max(a, b), c)").contains("min(max("))
+        XCTAssertFalse(BoardSource.strippingComments("/// min(max(a, b), c)\nlet s = 1").contains("min(max("))
     }
 }
