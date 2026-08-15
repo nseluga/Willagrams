@@ -82,10 +82,25 @@ final class BoardDragTests: XCTestCase {
         XCTAssertEqual(carried.tilePoint?.x, atHome.point.x + 30)
         XCTAssertEqual(carried.tilePoint?.y, atHome.point.y - 12)
 
-        // Release: the drag ends, the set empties, the state is a board fact again.
-        _ = inFlight.drop(translation: .zero, on: board, camera: Self.camera, threshold: Self.threshold)
-        let released = BoardRender.cells(board: board, camera: Self.camera, in: Self.viewport)
-        XCTAssertEqual(released.first { $0.coord == home }?.state, .idle)
+        // Release. The draw list is re-read against the board `drop` ACTUALLY
+        // RETURNED, and the tile is moved a cell so the assertion has somewhere
+        // to be wrong: reading the pre-drag board back with an empty drag set
+        // would hold whatever `drop` did, which is the shape of a test that
+        // cannot fail.
+        let after = inFlight.drop(
+            translation: CGSize(width: 48, height: 0),
+            on: board, camera: Self.camera, threshold: Self.threshold
+        )
+        let landing = Coord(row: 0, col: 1)
+        let released = BoardRender.cells(board: after, camera: Self.camera, in: Self.viewport)
+        let moved = try XCTUnwrap(released.first { $0.coord == landing })
+        XCTAssertEqual(moved.tile?.id, tile.id, "the drop did not land the tile in the next cell")
+        XCTAssertEqual(moved.state, .idle, "the released tile is still selected")
+        // And no residual lift: the tile draws on its cell, not offset from it.
+        XCTAssertEqual(moved.tilePoint, moved.point)
+        // The cell it left is empty, so nothing is drawn selected anywhere.
+        XCTAssertNil(released.first { $0.coord == home }?.tile)
+        XCTAssertTrue(released.allSatisfy { $0.state != .selected })
     }
 
     func testAReleasedTileWithANeighbourRevertsToPlacedNotIdle() throws {

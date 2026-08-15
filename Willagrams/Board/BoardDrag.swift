@@ -25,12 +25,6 @@ public protocol BoardHaptics: Sendable {
     func fire(_ event: BoardHapticEvent)
 }
 
-/// Fires nothing. For previews and any caller with no opinion.
-public struct SilentHaptics: BoardHaptics {
-    public init() {}
-    public func fire(_ event: BoardHapticEvent) {}
-}
-
 /// One tile drag, from pickup to release.
 ///
 /// What is being dragged is a `Set<Coord>` from the outset, holding a single

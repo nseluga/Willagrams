@@ -40,12 +40,16 @@ public struct BoardView: View {
     /// is what fires the pickup feel, so it must not be rebuilt per frame.
     /// Nil whenever the finger took hold of the camera rather than a tile.
     ///
-    /// ponytail: a cancelled gesture (a system edge swipe, backgrounding) never
-    /// reaches `onEnded`, so the lifted tile stays drawn where the finger left
-    /// it until the next touch rebuilds or clears this. The BOARD is untouched
-    /// either way — only the drawing is stale. Give this its own reset when
-    /// SwiftUI exposes a cancellation callback for `.gesture`, or when a real
-    /// session shows it happening often enough to notice.
+    /// A second finger arriving is handled — `magnifyGesture` clears this on its
+    /// first change, because with no minimum distance the first finger has
+    /// usually picked a tile up by then.
+    ///
+    /// ponytail: the other cancellations (a system edge swipe, backgrounding)
+    /// still never reach `onEnded`, so the lifted tile stays drawn where the
+    /// finger left it until the next touch rebuilds or clears this. The BOARD is
+    /// untouched either way — only the drawing is stale. Give this its own reset
+    /// when SwiftUI exposes a cancellation callback for `.gesture`, or when a
+    /// real session shows it happening often enough to notice.
     @State private var tileDrag: TileDrag?
 
     /// How far the finger has moved since it took hold.
@@ -83,12 +87,14 @@ public struct BoardView: View {
                 // to be too or a pan could only start on the background.
                 .contentShape(Rectangle())
                 // One gesture, not two simultaneous ones. Two fingers drift
-                // more than `DragGesture`'s default minimumDistance, so under
+                // far enough to feed a drag recognizer, so under
                 // `.simultaneousGesture` a pinch feeds BOTH recognizers and
                 // they alternate writing the camera from their own start
                 // snapshots — pan and zoom fight instead of composing.
                 // `.exclusively(before:)` gives the pinch first refusal, so a
-                // two-finger touch never reaches `DragGesture` at all.
+                // two-finger touch never reaches `DragGesture` at all. That
+                // matters more now the drag has no minimum distance of its own
+                // to filter the second finger out.
                 .gesture(magnifyGesture.exclusively(before: dragGesture))
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
         }
@@ -108,8 +114,12 @@ public struct BoardView: View {
     /// The tile drag is built in the same breath, and only when the grab is
     /// freshly decided: constructing it fires the pickup feel, so one gesture
     /// gets exactly one pickup however many changes SwiftUI reports.
+    /// `minimumDistance: 0`, not the default 10: the criterion is that TOUCHING
+    /// a tile lifts it, and at the default the selection, the `tileLift` offset
+    /// and the pickup feel all wait for 10pt of travel — a fifth of a cell of
+    /// dead movement before the board admits the finger landed.
     private var dragGesture: some Gesture {
-        DragGesture()
+        DragGesture(minimumDistance: 0)
             .onChanged { value in
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
                 let inFlight = carried ?? BoardGesture.Drag(
@@ -128,6 +138,10 @@ public struct BoardView: View {
                     // `drop` hands back either the moved board or the one it
                     // was given, so a refused drop cannot leave a partial move
                     // behind. The snap-or-refuse feel fires inside it.
+                    // The resets belong INSIDE the animation with the board
+                    // change: clearing the translation is what returns the tile
+                    // from the finger to its cell, and outside the closure that
+                    // half of the move would jump while the board's half slid.
                     withAnimation(DesignTokens.Motion.snap) {
                         board = tileDrag.drop(
                             translation: value.translation,
@@ -135,11 +149,11 @@ public struct BoardView: View {
                             camera: camera,
                             threshold: DesignTokens.Motion.snapThreshold
                         )
+                        self.tileDrag = nil
+                        dragTranslation = .zero
                     }
                 }
                 drag = nil
-                tileDrag = nil
-                dragTranslation = .zero
             }
     }
 
@@ -153,6 +167,20 @@ public struct BoardView: View {
     private var magnifyGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
+                // A second finger landing takes the gesture away from
+                // `DragGesture`, which then never reaches `onEnded` — and with
+                // no minimum distance the first finger may already have picked
+                // a tile up. Drop that pickup here or the tile stays lifted
+                // under a pinch that has nothing to do with it.
+                //
+                // No haptic fires on this path. A pinch stealing the gesture is
+                // a cancellation, not a refused drop, and firing `.reject` here
+                // would put a second reject in a count that must record exactly
+                // one per rejected drop. The board is untouched either way.
+                if tileDrag != nil {
+                    tileDrag = nil
+                    dragTranslation = .zero
+                }
                 let carried = pinch.flatMap { $0.anchor == value.startLocation ? $0.camera : nil }
                 let start = carried ?? camera
                 pinch = (anchor: value.startLocation, camera: start)
@@ -255,9 +283,12 @@ private struct BoardSurface: View, Animatable {
             // Real views, not Canvas drawing: BrandTile owns the face,
             // bevel, ring and lift, and this must not re-implement any of
             // it. Only cells carrying a tile reach here.
-            // Keyed by tile id, not by coord: a tile that moves must be the
-            // same view in a new place, or SwiftUI destroys it and builds a
-            // fresh one and the drag item's move cannot animate. `Tile.id`
+            // Keyed by tile id, not by coord: a released tile IS animated
+            // from the finger to its new cell — `onEnded` clears the drag
+            // offset inside the same `withAnimation` as the board change —
+            // and that only interpolates while the moved tile stays the same
+            // view. Keyed by coord, SwiftUI would destroy it and build a
+            // fresh one at the destination, and the move would cut. `Tile.id`
             // is stable across a move for exactly this reason. The list is
             // already filtered to non-nil tiles, so no two keys are nil.
             // `cell.tilePoint`, not `cell.point`: a tile in flight has left its
@@ -270,6 +301,12 @@ private struct BoardSurface: View, Animatable {
                         state: (cell.state ?? .idle).brandState
                     )
                     .offset(x: tilePoint.x, y: tilePoint.y)
+                    // `cells` arrives in `visibleCoords` row-major order, so a
+                    // tile dragged down or right would otherwise draw BEHIND
+                    // every tile at a greater row and the lift would read as
+                    // sunk. The tile under the finger belongs on top of the
+                    // ones it is passing over.
+                    .zIndex(cell.state == .selected ? 1 : 0)
                 }
             }
         }

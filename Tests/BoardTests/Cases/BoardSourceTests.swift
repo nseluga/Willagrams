@@ -209,8 +209,9 @@ final class BoardSourceTests: XCTestCase {
     }
 
     func testViewComposesTheGesturesExclusivelyRatherThanSimultaneously() throws {
-        // Two fingers drift further than DragGesture's default minimumDistance,
-        // so under `.simultaneousGesture` a pinch feeds BOTH recognizers and
+        // Two fingers drift far enough to feed a drag recognizer — and the drag
+        // now has no minimum distance of its own to filter them out — so under
+        // `.simultaneousGesture` a pinch feeds BOTH recognizers and
         // each writes the whole camera from its own start snapshot — pan and
         // zoom alternate instead of composing. Whether SwiftUI's recognizers
         // actually fire that way is not observable headlessly; the wiring that
@@ -329,6 +330,67 @@ final class BoardSourceTests: XCTestCase {
         )
         XCTAssertTrue(text.contains("TileDrag(grab:"), "BoardView runs a second hit test of its own")
         XCTAssertTrue(text.contains("tileDrag = nil"), "BoardView never releases the tile drag")
+    }
+
+    func testViewLiftsTheDraggedTileAboveTheOnesItPassesOver() throws {
+        // `cells` arrives in `visibleCoords` row-major order, so without a
+        // stacking order a tile dragged down or right draws BEHIND every tile
+        // at a greater row and the lift reads as sunk.
+        let text = try view()
+        XCTAssertTrue(
+            text.contains("zIndex(cell.state == .selected"),
+            "BoardView does not raise the dragged tile above the ones it crosses"
+        )
+    }
+
+    func testViewRecognizesTheDragOnTouchDownRatherThanAfterTenPoints() throws {
+        // The criterion is that TOUCHING a tile lifts it. At DragGesture's
+        // default minimumDistance the selection, the lift and the pickup feel
+        // all wait for 10pt of travel.
+        let text = try view()
+        XCTAssertTrue(
+            text.contains("DragGesture(minimumDistance: 0)"),
+            "BoardView still waits for DragGesture's default travel before the tile lifts"
+        )
+    }
+
+    func testPinchClearsATileDragItStealsWithoutFiringAFeel() throws {
+        // With no minimum distance the drag recognizes on touch-down, so a
+        // second finger can take the gesture away before `onEnded` ever runs.
+        // The pinch path has to drop that pickup, and must NOT call it a
+        // rejected drop — criterion 4 counts exactly one reject per refusal.
+        let text = try view()
+        let fromMagnify = try XCTUnwrap(
+            text.range(of: "private var magnifyGesture").map { String(text[$0.lowerBound...]) }
+        )
+        let magnify = try XCTUnwrap(
+            fromMagnify.range(of: "private func recenterControl")
+                .map { String(fromMagnify[..<$0.lowerBound]) }
+        )
+        XCTAssertTrue(magnify.contains("tileDrag = nil"), "a pinch leaves a stolen tile drag lifted")
+        XCTAssertTrue(magnify.contains("dragTranslation = .zero"), "a pinch leaves the tile offset")
+        XCTAssertFalse(magnify.contains("haptics"), "the pinch path fires a feel for a cancellation")
+        XCTAssertFalse(magnify.contains(".drop("), "the pinch path commits a drop")
+    }
+
+    func testFeedbackHoldsPreparedGeneratorsAndNeverTrapsOffTheMainActor() throws {
+        // UIKit, so unexecutable here. A generator built and fired in one
+        // statement wakes the engine on the event and lands the buzz late.
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardFeedback.swift"))
+        XCTAssertTrue(text.contains("prepare()"), "BoardFeedback never prepares a generator")
+        XCTAssertTrue(
+            text.contains("static let"),
+            "BoardFeedback rebuilds its generators per event, so preparing them buys nothing"
+        )
+        // Three feels that stay distinguishable by hand.
+        for feel in ["style: .light", "style: .medium", "notificationOccurred(.error)"] {
+            XCTAssertTrue(text.contains(feel), "BoardFeedback no longer fires \(feel)")
+        }
+        // A missed buzz must never be a crash.
+        XCTAssertTrue(
+            text.contains("Thread.isMainThread"),
+            "BoardFeedback reaches assumeIsolated without establishing the main thread"
+        )
     }
 
     func testViewNeverMutatesTheBoardItself() throws {
@@ -479,5 +541,43 @@ final class BoardSourceTests: XCTestCase {
         // And the mapping check must separate the two arms.
         XCTAssertFalse("case .placed: .placed".contains("case .selected: .selected"))
         XCTAssertTrue("case .selected: .selected".contains("case .selected: .selected"))
+    }
+
+    func testRoundTwoWiringChecksHaveTeeth() {
+        // Stacking order: a body with no zIndex, and one that raises the wrong
+        // thing, must both read as unpinned.
+        let flat = "BrandTile(letter: l, size: s, state: st)\n.offset(x: p.x, y: p.y)"
+        XCTAssertFalse(flat.contains("zIndex(cell.state == .selected"))
+        XCTAssertFalse(".zIndex(cell.coord.row)".contains("zIndex(cell.state == .selected"))
+        XCTAssertTrue(".zIndex(cell.state == .selected ? 1 : 0)".contains("zIndex(cell.state == .selected"))
+
+        // Touch-down recognition: the default and an explicit non-zero distance
+        // must both fail, or the check is not reading the number.
+        XCTAssertFalse("DragGesture()".contains("DragGesture(minimumDistance: 0)"))
+        XCTAssertFalse("DragGesture(minimumDistance: 10)".contains("DragGesture(minimumDistance: 0)"))
+        XCTAssertTrue("DragGesture(minimumDistance: 0)".contains("DragGesture(minimumDistance: 0)"))
+
+        // The pinch belt: a magnify path that clears nothing, and one that
+        // clears by firing a rejected-drop feel, are both wrong.
+        let unbelted = "MagnifyGesture().onChanged { value in\nlet start = camera\n}"
+        XCTAssertFalse(unbelted.contains("tileDrag = nil"))
+        let buzzing = "if tileDrag != nil { haptics.fire(.reject); tileDrag = nil }"
+        XCTAssertTrue(buzzing.contains("tileDrag = nil"))
+        XCTAssertTrue(buzzing.contains("haptics"), "the teeth must catch a feel on the cancel path")
+        let belted = "if tileDrag != nil {\n    tileDrag = nil\n    dragTranslation = .zero\n}"
+        XCTAssertTrue(belted.contains("tileDrag = nil"))
+        XCTAssertTrue(belted.contains("dragTranslation = .zero"))
+        XCTAssertFalse(belted.contains("haptics"))
+
+        // Cold generators built per event, versus held and prepared ones.
+        let cold = "UIImpactFeedbackGenerator(style: .light).impactOccurred()"
+        XCTAssertFalse(cold.contains("prepare()"))
+        XCTAssertFalse(cold.contains("static let"))
+        let warm = "@MainActor private static let snapGenerator = UIImpactFeedbackGenerator(style: .medium)"
+        XCTAssertTrue(warm.contains("static let"))
+
+        // And the trap-versus-hop separation.
+        XCTAssertFalse("MainActor.assumeIsolated { play(event) }".contains("Thread.isMainThread"))
+        XCTAssertTrue("guard Thread.isMainThread else { return }".contains("Thread.isMainThread"))
     }
 }
