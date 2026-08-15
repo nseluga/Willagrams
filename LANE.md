@@ -122,7 +122,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - Pinching scales about the pinch midpoint, and the rendered cell size stops at 24pt and 72pt at the two ends
     - The recenter control produces a camera framing every placed tile, animated over Motion.snapDuration
     - Panning 1000 cells in any direction, including negative, leaves the board rendering normally
-  status: not started
+  status: done
 
 - task: Add tile dragging to BoardView — touching a tile renders it
     BrandTile.State.selected and lifts it by Motion.tileLift, the tile follows the
