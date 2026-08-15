@@ -82,6 +82,55 @@ struct StyleSourceTests {
         #expect(StyleRepo.matches(#"let snap = Animation\.easeOut\(duration: (\w+)\)"#, in: tokens) == ["snapDuration"])
     }
 
+    @Test("The card carries fill, border, radius and both theme treatments")
+    func cardUsesItsTokens() throws {
+        let card = StyleRepo.strippingComments(try StyleRepo.source("BrandCard.swift"))
+        for token in ["Palette.surface", "Palette.hairline", "Radius.panel",
+                      "Stroke.hairline", "Shadow.card", "Palette.topHighlight"] {
+            #expect(card.contains(token), "BrandCard does not use DesignTokens.\(token)")
+        }
+        #expect(card.contains("func brandCard()"), "no .brandCard() modifier")
+    }
+
+    @Test("The theme swap lives in the catalog, not in Swift")
+    func cardThemeSwapIsDataDriven() throws {
+        // The offset shadow must vanish in dark and the top highlight in light.
+        // Since no Swift may branch on colorScheme, the alphas are the switch.
+        let shadow = try ColorSetTests.entries("shadowCard")
+        let highlight = try ColorSetTests.entries("topHighlight")
+
+        #expect(shadow.any?.alpha ?? 0 > 0, "the card has no offset shadow in light")
+        #expect(shadow.dark?.alpha == 0, "the offset shadow still shows in dark")
+        #expect(highlight.any?.alpha == 0, "the top highlight shows in light")
+        #expect(highlight.dark?.alpha ?? 0 > 0, "the card has no top highlight in dark")
+    }
+
+    @Test("All three button styles exist and each has a distinct pressed state")
+    func buttonStylesAreDistinct() throws {
+        let buttons = StyleRepo.strippingComments(try StyleRepo.source("ButtonStyles.swift"))
+
+        for style in ["PrimaryButtonStyle", "QuietButtonStyle", "TextButtonStyle"] {
+            #expect(buttons.contains("struct \(style): ButtonStyle"), "missing \(style)")
+        }
+
+        // primary: ink fill, onInk label, soft drop
+        #expect(buttons.contains("Palette.ink"))
+        #expect(buttons.contains("Palette.onInk"))
+        #expect(buttons.contains("Shadow.button"))
+        // quiet: cellEmpty fill, hairline border
+        #expect(buttons.contains("Palette.cellEmpty"))
+        #expect(buttons.contains("Stroke.hairline"))
+        // text: accent, no chrome
+        #expect(buttons.contains("Palette.accentPressed"))
+
+        // Every style must actually read isPressed, and do something with it.
+        let pressedBodies = buttons.components(separatedBy: "makeBody").dropFirst()
+        #expect(pressedBodies.count == 3)
+        for body in pressedBodies {
+            #expect(body.contains("configuration.isPressed ?"), "a button style has no pressed state")
+        }
+    }
+
     @Test("The literal check has teeth")
     func literalCheckIsReal() {
         #expect(StyleRepo.matches(#"cornerRadius:\s*([0-9.]+)"#, in: "cornerRadius: 12") == ["12"])

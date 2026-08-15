@@ -86,7 +86,7 @@ Global rules:
     - Both files contain no literal color, radius or duration
   risk: none — purely visual
   difficulty: low — standard ViewModifier and ButtonStyle work
-  status: not started
+  status: done
   parallel-group: b
 
 - task: Write docs/ip-review.md, the written distinctness review
