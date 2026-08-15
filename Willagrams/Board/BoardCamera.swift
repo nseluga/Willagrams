@@ -89,7 +89,16 @@ public struct BoardCamera: Sendable {
         let size = cellSize
         // Empty rather than a trap on a non-finite rect; same half-open
         // convention as `coord(at:)`, via the same `index` helper.
-        guard size > 0,
+        //
+        // `!rect.isEmpty` is load-bearing, not defensive noise: a rect with no
+        // area still has a `minX` and a `maxX`, and when that shared edge falls
+        // *inside* a cell rather than on a boundary, floor and ceil land on
+        // different indices and the range enumerates a phantom cell. A
+        // `GeometryReader` reports `.zero` on its first layout pass, so this is
+        // a real frame, not a hypothetical one. `CGRect.isEmpty` is true for
+        // zero or collapsed extents and false for a mirrored (negative-size)
+        // rect, which describes a real region and still enumerates.
+        guard size > 0, !rect.isEmpty,
               let minCol = Self.index(rect.minX - pan.width, size: size, rule: .down),
               let maxColEnd = Self.index(rect.maxX - pan.width, size: size, rule: .up),
               let minRow = Self.index(rect.minY - pan.height, size: size, rule: .down),
