@@ -32,12 +32,10 @@ public enum BoardRender {
         public let tile: Tile?
         public let state: TileState?
 
-        public init(coord: Coord, point: CGPoint, tile: Tile?, state: TileState?) {
-            self.coord = coord
-            self.point = point
-            self.tile = tile
-            self.state = state
-        }
+        // No hand-written init: `cells(_:_:in:)` is the only producer, and the
+        // synthesized memberwise one already covers the tests. A public init
+        // would just be a second way to build a `Cell` with a state that
+        // describes no tile.
     }
 
     /// The draw list for `rect`, one entry per visible coord.

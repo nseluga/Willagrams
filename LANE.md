@@ -105,7 +105,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - A board whose tiles sit at row/col ±500 builds no more views than the same board translated to the origin
     - A tile in a run of 2+ renders .placed; a tile with no orthogonal neighbor renders .idle
     - The surface renders correctly in both light and dark
-  status: not started
+  status: done
 
 - task: Add the camera gestures to BoardView — a DragGesture whose hit test at
     gesture start decides once whether it pans or moves a tile (empty cell → pan,

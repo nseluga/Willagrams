@@ -57,7 +57,12 @@ public struct BoardView: View {
                 // Real views, not Canvas drawing: BrandTile owns the face,
                 // bevel, ring and lift, and this must not re-implement any of
                 // it. Only cells carrying a tile reach here.
-                ForEach(cells.filter { $0.tile != nil }, id: \.coord) { cell in
+                // Keyed by tile id, not by coord: a tile that moves must be the
+                // same view in a new place, or SwiftUI destroys it and builds a
+                // fresh one and the drag item's move cannot animate. `Tile.id`
+                // is stable across a move for exactly this reason. The list is
+                // already filtered to non-nil tiles, so no two keys are nil.
+                ForEach(cells.filter { $0.tile != nil }, id: \.tile?.id) { cell in
                     if let tile = cell.tile {
                         BrandTile(
                             letter: tile.letter,
