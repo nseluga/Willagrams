@@ -81,6 +81,23 @@ final class BoardSourceTests: XCTestCase {
         BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
     }
 
+    private func model() throws -> String {
+        BoardSource.strippingComments(try BoardSource.text("BoardModel.swift"))
+    }
+
+    /// The text between two markers, so a check aimed at one gesture path
+    /// cannot be satisfied by another one further down the file.
+    private func section(of text: String, from: String, to: String) throws -> String {
+        let tail = try XCTUnwrap(
+            text.range(of: from).map { String(text[$0.lowerBound...]) },
+            "no \(from) in this file"
+        )
+        return try XCTUnwrap(
+            tail.range(of: to).map { String(tail[..<$0.lowerBound]) },
+            "no \(to) after \(from)"
+        )
+    }
+
     // MARK: - Guardrail: the draw is never driven by iterating placements
 
     func testNeitherFileIteratesPlacements() throws {
@@ -170,7 +187,8 @@ final class BoardSourceTests: XCTestCase {
         // Every file symlinked into this package. A SwiftUI import in any of
         // them stops the whole package compiling, so this is the early, legible
         // failure rather than a wall of build errors.
-        for name in ["BoardCamera.swift", "BoardRender.swift", "BoardGesture.swift", "BoardDrag.swift"] {
+        for name in ["BoardCamera.swift", "BoardRender.swift", "BoardGesture.swift",
+                     "BoardDrag.swift", "BoardModel.swift"] {
             let text = BoardSource.strippingComments(try BoardSource.text(name))
             let uiImports = BoardSource.matches(#"import\s+(SwiftUI|UIKit|AppKit)"#, in: text)
             XCTAssertTrue(uiImports.isEmpty, "\(name) imports \(uiImports) and is no longer host-compilable")
@@ -290,14 +308,26 @@ final class BoardSourceTests: XCTestCase {
             text.contains("threshold: DesignTokens.Motion.snapThreshold"),
             "BoardView does not pass DesignTokens.Motion.snapThreshold to the drop"
         )
-        XCTAssertTrue(text.contains(".drop("), "BoardView never commits a drag")
+        XCTAssertTrue(text.contains("model.commit("), "BoardView never commits a drag")
         XCTAssertTrue(text.contains("board = "), "BoardView never lands a committed drag")
+
+        // The commit itself moved into the pure session with the rest of the
+        // drag state. Same two things pinned, where they now live: it lands
+        // through `TileDrag.drop`, and it forwards the threshold it was handed
+        // rather than naming a distance of its own.
+        let model = try self.model()
+        XCTAssertTrue(model.contains(".drop("), "BoardModel commits through something other than TileDrag")
+        XCTAssertTrue(
+            model.contains("threshold: threshold"),
+            "BoardModel does not forward the injected threshold to the drop"
+        )
     }
 
     func testNoPureFileNamesTheThresholdOrTheLiftItself() throws {
         // Either token appearing outside the view means a second copy of a
         // DesignTokens value, which is the lane's one hard rule.
-        for name in ["BoardDrag.swift", "BoardRender.swift", "BoardGesture.swift", "BoardCamera.swift"] {
+        for name in ["BoardDrag.swift", "BoardRender.swift", "BoardGesture.swift",
+                     "BoardCamera.swift", "BoardModel.swift"] {
             let text = BoardSource.strippingComments(try BoardSource.text(name))
             XCTAssertFalse(text.contains("snapThreshold"), "\(name) names the threshold token")
             XCTAssertFalse(text.contains("tileLift"), "\(name) names the lift token")
@@ -319,7 +349,7 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertFalse(text.contains(".offset(y:"), "BoardView lifts the tile itself")
     }
 
-    func testViewBuildsTheTileDragOnceAndCommitsThroughIt() throws {
+    func testTheTileDragIsBuiltOnceFromTheDecidedGrabAndAlwaysReleased() throws {
         let text = try view()
         // Construction is what fires the pickup feel, so it must sit behind the
         // same "freshly decided" branch the grab does — `onChanged` fires many
@@ -328,8 +358,17 @@ final class BoardSourceTests: XCTestCase {
             text.contains("if carried == nil"),
             "BoardView rebuilds the tile drag every change, so pickup fires per frame"
         )
-        XCTAssertTrue(text.contains("TileDrag(grab:"), "BoardView runs a second hit test of its own")
-        XCTAssertTrue(text.contains("tileDrag = nil"), "BoardView never releases the tile drag")
+        XCTAssertTrue(
+            text.contains("model.began(inFlight.grab"),
+            "BoardView does not hand the already-decided grab to the session"
+        )
+        // The session state moved into the pure model, so the same two things
+        // are pinned there: it builds the drag from the carried grab rather
+        // than hit-testing again, and it lets go of it.
+        let model = try self.model()
+        XCTAssertTrue(model.contains("TileDrag(grab:"), "BoardModel runs a second hit test of its own")
+        XCTAssertTrue(model.contains("tileDrag = nil"), "BoardModel never releases the tile drag")
+        XCTAssertFalse(text.contains("tileDrag"), "BoardView still owns tile-drag state of its own")
     }
 
     func testViewLiftsTheDraggedTileAboveTheOnesItPassesOver() throws {
@@ -354,23 +393,91 @@ final class BoardSourceTests: XCTestCase {
         )
     }
 
-    func testPinchClearsATileDragItStealsWithoutFiringAFeel() throws {
+    func testPinchClearsATileDragItStealsThroughTheOneCancelPathWithoutFiringAFeel() throws {
         // With no minimum distance the drag recognizes on touch-down, so a
         // second finger can take the gesture away before `onEnded` ever runs.
         // The pinch path has to drop that pickup, and must NOT call it a
         // rejected drop — criterion 4 counts exactly one reject per refusal.
         let text = try view()
-        let fromMagnify = try XCTUnwrap(
-            text.range(of: "private var magnifyGesture").map { String(text[$0.lowerBound...]) }
-        )
-        let magnify = try XCTUnwrap(
-            fromMagnify.range(of: "private func recenterControl")
-                .map { String(fromMagnify[..<$0.lowerBound]) }
-        )
-        XCTAssertTrue(magnify.contains("tileDrag = nil"), "a pinch leaves a stolen tile drag lifted")
-        XCTAssertTrue(magnify.contains("dragTranslation = .zero"), "a pinch leaves the tile offset")
+        let magnify = try section(of: text, from: "private var magnifyGesture", to: "private func recenterControl")
+        XCTAssertTrue(magnify.contains("model.cancel()"), "a pinch leaves a stolen tile drag lifted")
         XCTAssertFalse(magnify.contains("haptics"), "the pinch path fires a feel for a cancellation")
         XCTAssertFalse(magnify.contains(".drop("), "the pinch path commits a drop")
+        XCTAssertFalse(magnify.contains("model.commit("), "the pinch path commits a drop")
+
+        // The cancel it takes is the SAME one the lock takes, and it clears both
+        // halves of the session. One path, two callers: a second one is a second
+        // chance to clear half of it.
+        let model = try self.model()
+        XCTAssertTrue(model.contains("tileDrag = nil"), "the cancel path leaves the tile drag held")
+        XCTAssertTrue(model.contains("dragTranslation = .zero"), "the cancel path leaves the tile offset")
+        XCTAssertEqual(
+            BoardSource.matches(#"(tileDrag = nil)"#, in: model).count, 1,
+            "BoardModel holds more than one cancel path"
+        )
+        XCTAssertFalse(model.contains("haptics.fire"), "BoardModel fires a feel of its own")
+    }
+
+    // MARK: - The external input lock
+
+    func testViewPassesTheInputLockIntoTheGrabDecisionAndNowhereElse() throws {
+        let text = try view()
+        // The lock reaches exactly one place: the grab decision, which is made
+        // once at touch-down. That is what makes a locked touch a refusal at
+        // gesture start rather than a revert after a tile has already lifted.
+        XCTAssertTrue(
+            text.contains("camera: camera, inputLocked: model.inputLocked"),
+            "BoardView decides the grab without the lock, so a locked touch still lifts a tile"
+        )
+        XCTAssertTrue(
+            text.contains(".onChange(of: inputLocked, initial: true)"),
+            "BoardView does not sync the external lock into the session on the first pass"
+        )
+        // No second reading of it that undoes work already done.
+        XCTAssertFalse(
+            text.contains("if model.inputLocked"),
+            "BoardView branches on the lock after the fact instead of refusing at gesture start"
+        )
+        XCTAssertFalse(
+            text.contains("if inputLocked"),
+            "BoardView branches on the lock after the fact instead of refusing at gesture start"
+        )
+
+        // And the gesture layer takes it where the grab is decided — in `init`,
+        // read before the hit test, defaulted so existing call sites are unmoved.
+        let gesture = BoardSource.strippingComments(try BoardSource.text("BoardGesture.swift"))
+        XCTAssertTrue(
+            gesture.contains("inputLocked: Bool = false"),
+            "BoardGesture.Drag does not accept the lock, or its default is not unlocked"
+        )
+        XCTAssertTrue(
+            gesture.contains("guard !inputLocked else"),
+            "BoardGesture.Drag accepts the lock but never refuses on it"
+        )
+    }
+
+    func testTheCameraPathsNameTheLockNowhere() throws {
+        // Panning, zooming and recentering stay live while the tiles are inert,
+        // and the way that is guaranteed is that neither path can see the flag.
+        let text = try view()
+        let magnify = try section(of: text, from: "private var magnifyGesture", to: "private func recenterControl")
+        let recenter = try section(of: text, from: "private func recenterControl", to: "private static let recenterLabel")
+        for (name, path) in [("the pinch path", magnify), ("the recenter path", recenter)] {
+            XCTAssertFalse(path.contains("inputLocked"), "\(name) consults the lock")
+            XCTAssertFalse(path.contains("Locked"), "\(name) consults the lock")
+        }
+        // Both still do their own job, so the checks above are not passing on an
+        // empty path.
+        XCTAssertTrue(magnify.contains("magnified(by:"), "the pinch path no longer zooms")
+        XCTAssertTrue(recenter.contains("BoardGesture.recentered("), "the recenter path no longer recenters")
+
+        // The session that owns the lock owns no camera at all, so there is
+        // nothing there for a zoom or a recenter to be refused by.
+        let model = try self.model()
+        XCTAssertFalse(model.contains("var camera"), "BoardModel stores a camera the lock could reach")
+        XCTAssertFalse(model.contains("magnified("), "BoardModel zooms")
+        XCTAssertFalse(model.contains("recenter"), "BoardModel recenters")
+        XCTAssertFalse(model.contains("panned("), "BoardModel pans")
     }
 
     func testFeedbackHoldsPreparedGeneratorsAndNeverTrapsOffTheMainActor() throws {
@@ -593,5 +700,86 @@ final class BoardSourceTests: XCTestCase {
         // And the trap-versus-hop separation.
         XCTAssertFalse("MainActor.assumeIsolated { play(event) }".contains("Thread.isMainThread"))
         XCTAssertTrue("guard Thread.isMainThread else { return }".contains("Thread.isMainThread"))
+    }
+
+    func testInputLockWiringChecksHaveTeeth() throws {
+        // A grab decided without the lock, versus one decided with it.
+        let deaf = "let inFlight = carried ?? BoardGesture.Drag(at: value.startLocation, in: board, camera: camera)"
+        XCTAssertFalse(deaf.contains("camera: camera, inputLocked: model.inputLocked"))
+        let wired = "carried ?? BoardGesture.Drag(at: value.startLocation, in: board, camera: camera, inputLocked: model.inputLocked)"
+        XCTAssertTrue(wired.contains("camera: camera, inputLocked: model.inputLocked"))
+
+        // A gesture that ACCEPTS the flag and never reads it must still read as
+        // unpinned, or the check is only counting a parameter list.
+        let acceptedNotRead = """
+            public init(at p: CGPoint, in board: Board, camera: BoardCamera, inputLocked: Bool = false) {
+                self.grab = board.tile(at: c).map { .tile($0, at: c) } ?? .pan
+            }
+            """
+        XCTAssertTrue(acceptedNotRead.contains("inputLocked: Bool = false"))
+        XCTAssertFalse(acceptedNotRead.contains("guard !inputLocked else"))
+        XCTAssertTrue("guard !inputLocked else {\n    self.grab = .pan\n    return\n}".contains("guard !inputLocked else"))
+
+        // A default that flipped would break every existing call site silently.
+        XCTAssertFalse("inputLocked: Bool = true".contains("inputLocked: Bool = false"))
+
+        // Reverting after the fact, versus refusing at the start.
+        XCTAssertTrue("if model.inputLocked { model.cancel() }".contains("if model.inputLocked"))
+        XCTAssertFalse("model.began(inFlight.grab, haptics: haptics)".contains("if model.inputLocked"))
+
+        // A sync that only runs on a LATER change leaves a rebuilt view unlocked.
+        XCTAssertFalse(
+            ".onChange(of: inputLocked) { model.inputLocked = inputLocked }"
+                .contains(".onChange(of: inputLocked, initial: true)")
+        )
+        XCTAssertTrue(
+            ".onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }"
+                .contains(".onChange(of: inputLocked, initial: true)")
+        )
+
+        // A camera path that grew a lock check, versus one that did not.
+        XCTAssertTrue("if model.inputLocked { return }\ncamera = start.magnified(by: m, about: a)".contains("inputLocked"))
+        XCTAssertFalse("camera = start.magnified(by: m, about: a)".contains("inputLocked"))
+        XCTAssertTrue("if isLocked { return }".contains("Locked"))
+        XCTAssertFalse("camera = BoardGesture.recentered(camera, over: board, in: rect)".contains("Locked"))
+        // ...and the "still does its job" halves must separate a live path from
+        // an emptied one.
+        XCTAssertTrue("camera = start.magnified(by: value.magnification, about: a)".contains("magnified(by:"))
+        XCTAssertFalse("camera = start".contains("magnified(by:"))
+
+        // Two cancel paths versus one.
+        let twoCancels = """
+            public mutating func cancel() { tileDrag = nil }
+            public mutating func lockOut() { tileDrag = nil; dragTranslation = .zero }
+            """
+        XCTAssertEqual(BoardSource.matches(#"(tileDrag = nil)"#, in: twoCancels).count, 2)
+        XCTAssertEqual(
+            BoardSource.matches(#"(tileDrag = nil)"#, in: "mutating func cancel() { tileDrag = nil }").count, 1
+        )
+
+        // A session that buzzed on its own cancel path, versus one that only
+        // ever hands the hardware to `TileDrag`.
+        XCTAssertTrue("haptics.fire(.reject)".contains("haptics.fire"))
+        XCTAssertFalse("tileDrag = TileDrag(grab: grab, haptics: haptics)".contains("haptics.fire"))
+
+        // A commit that names a distance of its own instead of forwarding the
+        // injected one.
+        XCTAssertFalse("tileDrag.drop(translation: t, on: board, camera: c, threshold: 22)".contains("threshold: threshold"))
+        XCTAssertTrue("tileDrag.drop(translation: t, on: board, camera: c, threshold: threshold)".contains("threshold: threshold"))
+
+        // A view that kept session state of its own after the move.
+        XCTAssertTrue("@State private var tileDrag: TileDrag?".contains("tileDrag"))
+        XCTAssertFalse("@State private var model: BoardModel".contains("tileDrag"))
+
+        // A model that grew a camera the lock could reach.
+        XCTAssertTrue("private var camera: BoardCamera".contains("var camera"))
+        XCTAssertFalse("public mutating func commit(translation: CGSize, on board: Board, camera: BoardCamera)".contains("var camera"))
+
+        // And the section slicer must actually slice, or every path check above
+        // is reading the whole file.
+        let file = "private var magnifyGesture {\n  zoom()\n}\nprivate func recenterControl() {\n  frame()\n}"
+        let sliced = try section(of: file, from: "private var magnifyGesture", to: "private func recenterControl")
+        XCTAssertTrue(sliced.contains("zoom()"))
+        XCTAssertFalse(sliced.contains("frame()"))
     }
 }

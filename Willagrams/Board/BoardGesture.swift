@@ -55,9 +55,26 @@ public enum BoardGesture {
         /// routes through — so a tile is grabbable across exactly the region
         /// it is drawn over, with no second boundary convention to disagree at
         /// a cell edge.
-        public init(at startLocation: CGPoint, in board: Board, camera: BoardCamera) {
+        ///
+        /// `inputLocked` is the surface's external lock, and this is the one
+        /// point where a lock has to be read: the grab is decided exactly once,
+        /// here, so refusing here is refusing at gesture start rather than
+        /// reverting a tile that was already lifted. A locked touch becomes a
+        /// `.pan`, which is why panning, and with it zooming and recentering,
+        /// keep working while the tiles are inert — the camera never asks.
+        public init(
+            at startLocation: CGPoint,
+            in board: Board,
+            camera: BoardCamera,
+            inputLocked: Bool = false
+        ) {
             self.startLocation = startLocation
             self.startPan = camera.pan
+
+            guard !inputLocked else {
+                self.grab = .pan
+                return
+            }
 
             // `coord(at:)` answers `Coord(0, 0)` for any point it cannot index
             // — non-finite, or so far out that no `Int` cell index expresses it

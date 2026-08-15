@@ -36,39 +36,42 @@ public struct BoardView: View {
     /// the anchor is stored beside it for the same staleness reason as `drag`.
     @State private var pinch: (anchor: CGPoint, camera: BoardCamera)?
 
-    /// The tiles in flight, built once per gesture beside `drag` — building it
-    /// is what fires the pickup feel, so it must not be rebuilt per frame.
-    /// Nil whenever the finger took hold of the camera rather than a tile.
+    /// The tile-drag session: what is held, how far it has travelled, and
+    /// whether the surface accepts a hold at all. Every decision it makes lives
+    /// in `BoardModel`, which is pure and executable by `Tests/BoardTests`;
+    /// this view only reports touches into it and draws what comes back.
     ///
-    /// A second finger arriving is handled — `magnifyGesture` clears this on its
-    /// first change, because with no minimum distance the first finger has
-    /// usually picked a tile up by then.
+    /// A second finger arriving is handled — `magnifyGesture` cancels the
+    /// session on its first change, because with no minimum distance the first
+    /// finger has usually picked a tile up by then.
     ///
     /// ponytail: the other cancellations (a system edge swipe, backgrounding)
     /// still never reach `onEnded`, so the lifted tile stays drawn where the
-    /// finger left it until the next touch rebuilds or clears this. The BOARD is
-    /// untouched either way — only the drawing is stale. Give this its own reset
-    /// when SwiftUI exposes a cancellation callback for `.gesture`, or when a
-    /// real session shows it happening often enough to notice.
-    @State private var tileDrag: TileDrag?
-
-    /// How far the finger has moved since it took hold.
-    ///
-    /// Assigned, never accumulated: `DragGesture` already reports a translation
-    /// cumulative from its own start, so each frame REPLACES this rather than
-    /// adding to it and there is no stored quantity that can run away behind a
-    /// clamped render. Both readers (`BoardRender.cells` and `TileDrag.drop`)
-    /// handle a non-finite value themselves.
-    @State private var dragTranslation: CGSize = .zero
+    /// finger left it until the next touch rebuilds or clears the session. The
+    /// BOARD is untouched either way — only the drawing is stale. Give it its
+    /// own reset when SwiftUI exposes a cancellation callback for `.gesture`,
+    /// or when a real session shows it happening often enough to notice.
+    @State private var model: BoardModel
 
     /// Real hardware. `TileDrag` only ever sees the protocol, so the decisions
     /// about which feel fires when are executed by the test package with a
     /// recording double in this slot.
     private let haptics = TileFeedback()
 
-    public init(board: Board, camera: BoardCamera) {
+    /// The lock as the OWNER of this view sets it, kept apart from the model's
+    /// copy because `@State`'s initial value is read once per view identity
+    /// while this changes as often as the owner likes. `.onChange` below is
+    /// what carries a later change across.
+    ///
+    /// What sets it, and why, is none of this view's business: it takes a
+    /// boolean and asks no questions.
+    private let inputLocked: Bool
+
+    public init(board: Board, camera: BoardCamera, inputLocked: Bool = false) {
         _board = State(initialValue: board)
         _camera = State(initialValue: camera)
+        _model = State(initialValue: BoardModel(inputLocked: inputLocked))
+        self.inputLocked = inputLocked
     }
 
     public var body: some View {
@@ -79,8 +82,8 @@ public struct BoardView: View {
                 board: board,
                 camera: camera,
                 rect: rect,
-                dragging: tileDrag?.origins ?? [],
-                dragTranslation: dragTranslation
+                dragging: model.dragging,
+                dragTranslation: model.dragTranslation
             )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
@@ -97,6 +100,11 @@ public struct BoardView: View {
                 // to filter the second finger out.
                 .gesture(magnifyGesture.exclusively(before: dragGesture))
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
+                // The lock is a plain assignment: `BoardModel` cancels an
+                // in-flight hold on its own when it lands, so there is no
+                // second call here to forget. `initial: true` because a view
+                // reconstructed around a live lock must not come back unlocked.
+                .onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }
         }
     }
 
@@ -123,34 +131,33 @@ public struct BoardView: View {
             .onChanged { value in
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
                 let inFlight = carried ?? BoardGesture.Drag(
-                    at: value.startLocation, in: board, camera: camera
+                    at: value.startLocation, in: board, camera: camera, inputLocked: model.inputLocked
                 )
                 if carried == nil {
-                    tileDrag = TileDrag(grab: inFlight.grab, haptics: haptics)
+                    model.began(inFlight.grab, haptics: haptics)
                 }
                 drag = inFlight
-                dragTranslation = value.translation
+                model.moved(to: value.translation)
                 camera = inFlight.camera(camera, translatedBy: value.translation)
             }
             .onEnded { value in
-                if let tileDrag {
+                if !model.dragging.isEmpty {
                     // The whole commit is one assignment of one value type:
-                    // `drop` hands back either the moved board or the one it
+                    // `commit` hands back either the moved board or the one it
                     // was given, so a refused drop cannot leave a partial move
-                    // behind. The snap-or-refuse feel fires inside it.
-                    // The resets belong INSIDE the animation with the board
-                    // change: clearing the translation is what returns the tile
-                    // from the finger to its cell, and outside the closure that
-                    // half of the move would jump while the board's half slid.
+                    // behind. The snap-or-refuse feel fires inside it, and it
+                    // clears the session itself.
+                    // The commit belongs INSIDE the animation: clearing the
+                    // translation is what returns the tile from the finger to
+                    // its cell, and outside the closure that half of the move
+                    // would jump while the board's half slid.
                     withAnimation(DesignTokens.Motion.snap) {
-                        board = tileDrag.drop(
+                        board = model.commit(
                             translation: value.translation,
                             on: board,
                             camera: camera,
                             threshold: DesignTokens.Motion.snapThreshold
                         )
-                        self.tileDrag = nil
-                        dragTranslation = .zero
                     }
                 }
                 drag = nil
@@ -177,10 +184,11 @@ public struct BoardView: View {
                 // a cancellation, not a refused drop, and firing `.reject` here
                 // would put a second reject in a count that must record exactly
                 // one per rejected drop. The board is untouched either way.
-                if tileDrag != nil {
-                    tileDrag = nil
-                    dragTranslation = .zero
-                }
+                //
+                // The same one cancel the model takes when it is locked, not a
+                // second copy of it: two cancel paths are two chances to clear
+                // half of one.
+                model.cancel()
                 let carried = pinch.flatMap { $0.anchor == value.startLocation ? $0.camera : nil }
                 let start = carried ?? camera
                 pinch = (anchor: value.startLocation, camera: start)

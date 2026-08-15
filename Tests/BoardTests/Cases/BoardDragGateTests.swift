@@ -557,19 +557,30 @@ final class BoardDragStructureTests: XCTestCase {
         XCTAssertTrue(text.contains("camera.cellSize"), "the drag does not read the clamped cell size")
     }
 
-    func testTheViewAssignsTheDragTranslationRatherThanAccumulatingIt() throws {
+    func testTheDragTranslationIsAssignedRatherThanAccumulated() throws {
         // `DragGesture.translation` is ALREADY cumulative from the gesture's
         // start. Adding to a stored copy would double-count every frame, and the
         // render clamp would hide it until the release read the runaway total.
-        let text = Self.code(try source("BoardView.swift"))
+        //
+        // The stored translation now lives in `BoardModel` rather than in the
+        // view. Same rule, pinned at both ends of the hand-off: the view passes
+        // the gesture's own cumulative value straight through, and the model
+        // ASSIGNS what it was passed.
+        let view = Self.code(try source("BoardView.swift"))
         XCTAssertTrue(
-            text.contains("dragTranslation = value.translation"),
-            "BoardView no longer assigns the gesture's own cumulative translation"
+            view.contains("model.moved(to: value.translation)"),
+            "BoardView no longer hands the gesture's own cumulative translation to the session"
+        )
+        let model = Self.code(try source("BoardModel.swift"))
+        XCTAssertTrue(
+            model.contains("dragTranslation = translation"),
+            "BoardModel no longer assigns the cumulative translation it was handed"
         )
         for accumulation in ["dragTranslation +=", "dragTranslation = dragTranslation", "dragTranslation.width +="] {
-            XCTAssertFalse(text.contains(accumulation), "BoardView accumulates via \(accumulation)")
+            XCTAssertFalse(view.contains(accumulation), "BoardView accumulates via \(accumulation)")
+            XCTAssertFalse(model.contains(accumulation), "BoardModel accumulates via \(accumulation)")
         }
-        XCTAssertTrue(text.contains("dragTranslation = .zero"), "BoardView never resets the translation on release")
+        XCTAssertTrue(model.contains("dragTranslation = .zero"), "BoardModel never resets the translation on release")
     }
 
     func testTheStructuralChecksHaveTeeth() {
@@ -581,12 +592,19 @@ final class BoardDragStructureTests: XCTestCase {
         XCTAssertFalse("let target = camera.coord(at: dropped)".contains("floor("))
         XCTAssertTrue("let target = camera.coord(at: dropped)".contains("camera.coord(at:"))
 
-        let accumulated = "dragTranslation += value.translation"
+        let accumulated = "dragTranslation += translation"
         XCTAssertTrue(accumulated.contains("dragTranslation +="))
-        XCTAssertFalse(accumulated.contains("dragTranslation = value.translation"))
-        let assigned = "dragTranslation = value.translation"
+        XCTAssertFalse(accumulated.contains("dragTranslation = translation"))
+        let assigned = "dragTranslation = translation"
         XCTAssertFalse(assigned.contains("dragTranslation +="))
-        XCTAssertTrue(assigned.contains("dragTranslation = value.translation"))
+        XCTAssertTrue(assigned.contains("dragTranslation = translation"))
+
+        // And the view half: a body that drops the translation on the floor, or
+        // one that hands over a value of its own making, must both read as
+        // unpinned against one that forwards the gesture's own.
+        XCTAssertFalse("model.moved(to: .zero)".contains("model.moved(to: value.translation)"))
+        XCTAssertFalse("camera = inFlight.camera(camera, translatedBy: value.translation)".contains("model.moved(to: value.translation)"))
+        XCTAssertTrue("model.moved(to: value.translation)".contains("model.moved(to: value.translation)"))
 
         // And the comment stripper must actually strip, or a term named only in
         // prose reads as code and every check above fires on documentation.
