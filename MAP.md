@@ -14,6 +14,13 @@ protected:
   - Willagrams.entitlements
   - Package.swift
 
+In `DesignTokens.swift` the protected surface is the **key names**, not the
+values: `board` and `shell` compile against the keys, and nothing downstream
+depends on a particular color or duration. The `style` lane may change values
+and add keys freely. Renaming or removing a key is still an amendment.
+`Terminology.swift` is protected in full — it is the IP fence, and the strings
+themselves are the contract.
+
 ---
 
 - lane: style
