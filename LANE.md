@@ -67,7 +67,7 @@ declared without editing them, stop and report rather than editing either.
     - Simulating a peer disconnect emits a disconnected state on the surviving endpoint's
       connection-state stream
     - A message marked dropped by the test hook never arrives, and the sender does not hang
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Build the wire codec — `Willagrams/Match/MatchCodec.swift`. Encode and

@@ -3,6 +3,9 @@
 LANE.md is the contract; this tracks where we are in it — if they disagree,
 LANE.md wins for scope.
 
+The style lane's ledger previously sat at this path; it has been archived to
+`progress/style.md` per the archive rule, since every lane writes this filename.
+
 ## Current position
 
 - **Status:** autonomous run in progress
@@ -14,7 +17,7 @@ LANE.md wins for scope.
 
 | Item | Status |
 |------|--------|
-| Define the transport seam (MatchTransport + FakeTransport) | in progress |
+| Define the transport seam (MatchTransport + FakeTransport) | done — The app now has one agreed way for two players' devices to pass messages, plus a stand-in version that lets the whole match be tested on one machine with no second device and no Game Center account. |
 | Build the wire codec (MatchCodec) | done — Two devices can now turn match messages into bytes and back, and a match from an app version that speaks a different wire format is refused instead of played. |
 | Build host authority over the pool (HostPool) | not started |
 | Build the client-side match state machine (MatchSession) | not started |
