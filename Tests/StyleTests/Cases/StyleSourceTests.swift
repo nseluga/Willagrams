@@ -131,6 +131,39 @@ struct StyleSourceTests {
         }
     }
 
+    @Test("Every DesignTokens key appears in the gallery")
+    func galleryCoversEveryToken() throws {
+        let gallery = StyleRepo.strippingComments(try StyleRepo.source("StyleGallery.swift"))
+        let tokens = StyleRepo.strippingComments(try StyleRepo.source("DesignTokens.swift"))
+
+        // Every `static let` inside DesignTokens, whatever group it sits in.
+        let keys = StyleRepo.matches(#"static let (\w+)"#, in: tokens)
+        #expect(keys.count > 40, "only found \(keys.count) tokens to check")
+
+        // Word-bounded member references, not substrings: plain `contains`
+        // would score `Space.s` a hit off any word with an s in it, and
+        // `Radius.tile` off `tileFace`.
+        let missing = Set(keys).filter { key in
+            StyleRepo.matches("\\.(\(key))\\b", in: gallery).isEmpty
+        }
+        #expect(missing.isEmpty, "the gallery never renders: \(missing.sorted())")
+    }
+
+    @Test("Tapping a gallery tile drives the selected state through Motion")
+    func galleryTapExercisesMotion() throws {
+        let gallery = StyleRepo.strippingComments(try StyleRepo.source("StyleGallery.swift"))
+        let tap = gallery.components(separatedBy: "onTapGesture").dropFirst()
+        #expect(tap.count == 1, "the gallery has no tappable tile")
+        let body = try #require(tap.first)
+        // The toggle must be animated with the same curve BrandTile lifts on,
+        // or the tap changes state without exercising Motion at all.
+        #expect(body.contains("withAnimation(DesignTokens.Motion.snap)"))
+        #expect(body.contains("selectedTile"))
+        // ...and the tile must read that state as `.selected`, which is what
+        // applies Motion.tileLift.
+        #expect(gallery.contains("selectedTile == index ? .selected : .idle"))
+    }
+
     @Test("The literal check has teeth")
     func literalCheckIsReal() {
         #expect(StyleRepo.matches(#"cornerRadius:\s*([0-9.]+)"#, in: "cornerRadius: 12") == ["12"])

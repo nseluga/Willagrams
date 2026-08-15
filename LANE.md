@@ -111,7 +111,7 @@ Global rules:
     - Tapping a gallery tile animates the selected lift, exercising Motion
   risk: none — this is the lane's proof surface; if it is wrong you see it
   difficulty: low — composition of the styles built above
-  status: not started
+  status: done
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
 
