@@ -122,7 +122,7 @@ declared without editing them, stop and report rather than editing either.
       and no grant
     - Host election over the same two PlayerIDs returns the same host regardless of
       argument order or which device evaluates it
-  status: not started
+  status: done
 
 - task: Build the client-side match state machine — `Willagrams/Match/MatchSession.swift`.
     An observable object that shell and board read. On `start`, enter
