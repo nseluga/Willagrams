@@ -50,7 +50,9 @@ player navigates by panning and zooming rather than by the board having edges.
     not re-implement the face, bevel, ring, or lift.
   - Nothing here imports GameKit or references a match, a peer, or a message. The
     board is a single-player surface that a match drives from outside; it must be
-    fully exercisable with no network and no second device.
+    fully exercisable with no network and no second device. Where the match needs
+    to change how the surface behaves, it does so by setting a plain input on it —
+    the board never learns why, and never asks.
   - Terminology.swift is frozen — use its constants for any player-facing word.
     The banned Bananagrams vocabulary (bunch, split, peel, dump, bananas, rotten)
     must not appear in source identifiers, comments, or test names either. The
@@ -144,6 +146,28 @@ player navigates by panning and zooming rather than by the board having edges.
     - The haptic protocol records exactly one pickup, one snap, and one reject event across a drag of each kind
   status: not started
 
+- task: Add an external input lock to BoardModel and BoardView — a plain
+    `inputLocked: Bool` the surface accepts from outside. While it is set, tiles
+    cannot be picked up, dragged, or committed, and the board reads as inert:
+    tiles hold their current position and no lift, ring, or haptic fires on
+    touch. Panning, zooming, and recentering stay live, so a locked player can
+    still look around their board. The match lane sets this when a Draw is owed
+    or the peer has dropped, but nothing in this lane may name or import either
+    condition — the board takes a boolean and asks no questions.
+  guardrails:
+    - No drag may begin or commit while inputLocked is set; refuse at gesture
+      start rather than reverting after the fact
+    - Never name this flag, its property, or its tests after the match condition
+      that causes it — no "pendingDraw", no "peel", no "frozen peer" in this lane
+    - Locking must never mutate Board. A lock that lands mid-drag returns the
+      tile to its origin coord and leaves placementList unchanged
+  done when:
+    - With inputLocked set, a drag beginning on a tile leaves Board.placementList identical and fires no haptic
+    - With inputLocked set, panning, pinch zoom, and recenter all still work
+    - Setting inputLocked during an in-flight drag returns the tile to the coord it started from
+    - Clearing inputLocked restores dragging with no residual selected state on any tile
+  status: not started
+
 - task: Add live validation to Willagrams/Board/BoardModel.swift — after every
     committed move, call board.validate(against:) on the frozen dictionary and
     publish the resulting BoardValidation. BoardView tints the tiles of every word
@@ -196,6 +220,9 @@ player navigates by panning and zooming rather than by the board having edges.
 
 - The Draw and Win buttons, the countdown, and the rest of the in-match HUD —
   shell owns those and gates them on the canDraw this lane publishes.
+- Any banner or copy explaining *why* input is locked — shell owns that, because
+  only shell knows whether a Draw is owed or the peer dropped. This lane ships
+  the lock, not its explanation.
 - Anything that knows a match exists: peers, messages, the opponent's board.
   Match owns that and drives this surface from outside.
 - A deal animation for the opening block — Motion.dealDuration exists for it,
