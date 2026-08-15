@@ -54,7 +54,7 @@ Global rules:
         than erroring, so a whole surface renders wrong with nothing in the log — silent
   difficulty: low — mechanical JSON, values already pinned
   speed: N/A — static asset catalog lookup
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Replace the placeholder values in DesignTokens.swift and add the new keys the direction needs
