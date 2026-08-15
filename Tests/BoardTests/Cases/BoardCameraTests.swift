@@ -281,4 +281,61 @@ final class BoardCameraTests: XCTestCase {
             XCTAssertFalse(lower.contains(word), "banned term '\(word)' found")
         }
     }
+
+    // MARK: - Degenerate input must not trap
+
+    // `Int(floor(.nan))` and `Int(_:)` past `Int.max` are runtime crashes in
+    // Swift, not clamps, and these entry points take live gesture translations
+    // and geometry-proxy rects. Reaching the end of each test is the assertion:
+    // an unguarded conversion crashes the whole run rather than failing.
+
+    func testCoordAtNonFinitePointDoesNotTrap() {
+        let camera = BoardCamera()
+        for bad: CGFloat in [.nan, .infinity, -.infinity, .greatestFiniteMagnitude] {
+            _ = camera.coord(at: CGPoint(x: bad, y: 0))
+            _ = camera.coord(at: CGPoint(x: 0, y: bad))
+            _ = camera.coord(at: CGPoint(x: bad, y: bad))
+        }
+    }
+
+    func testVisibleCoordsWithNonFiniteRectIsEmptyAndDoesNotTrap() {
+        let camera = BoardCamera()
+        for bad: CGFloat in [.nan, .infinity, -.infinity] {
+            XCTAssertEqual(
+                Array(camera.visibleCoords(in: CGRect(x: 0, y: 0, width: bad, height: 100))).count, 0)
+            XCTAssertEqual(
+                Array(camera.visibleCoords(in: CGRect(x: bad, y: 0, width: 100, height: 100))).count, 0)
+        }
+    }
+
+    func testRecenterWithZeroBaseCellSizeLeavesCameraUnchanged() {
+        // baseCellSize 0 would make zoom infinite, and the next cellSize read
+        // NaN — which min/max does not filter, since NaN comparisons are false.
+        let camera = BoardCamera(pan: CGSize(width: 5, height: 7), zoom: 1, baseCellSize: 0)
+        let result = camera.recenter(over: [Coord(row: 0, col: 0)], in: CGRect(x: 0, y: 0, width: 800, height: 600))
+        XCTAssertEqual(result.pan, camera.pan)
+        XCTAssertEqual(result.zoom, camera.zoom)
+        XCTAssertTrue(result.cellSize.isFinite)
+    }
+
+    func testRecenterWithDegenerateRectLeavesCameraUnchanged() {
+        let camera = BoardCamera()
+        let coords = [Coord(row: -3, col: -3), Coord(row: 3, col: 3)]
+        for rect in [
+            CGRect(x: 0, y: 0, width: 0, height: 600),
+            CGRect(x: 0, y: 0, width: 800, height: 0),
+            CGRect(x: 0, y: 0, width: CGFloat.nan, height: 600),
+        ] {
+            let result = camera.recenter(over: coords, in: rect)
+            XCTAssertEqual(result.pan, camera.pan)
+            XCTAssertEqual(result.zoom, camera.zoom)
+        }
+    }
+
+    func testCellSizeStaysFiniteAfterRecenterOnDegenerateInput() {
+        let camera = BoardCamera(baseCellSize: 0)
+            .recenter(over: [Coord(row: 1, col: 1)], in: CGRect(x: 0, y: 0, width: 800, height: 600))
+        XCTAssertTrue(camera.cellSize.isFinite)
+        _ = camera.coord(at: CGPoint(x: 10, y: 10))
+    }
 }
