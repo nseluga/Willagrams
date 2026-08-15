@@ -42,7 +42,7 @@ Global rules:
         `curl -A "Mozilla/4.0" "fonts.googleapis.com/css?family=Instrument+Sans:400,500,600,700"`
         returns four static per-weight TTF URLs. OFL.txt comes from the repo.
   speed: N/A — one-shot registration at launch, no growth with rows or rate
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Add a light+dark Color Set to Assets.xcassets for every semantic palette token
