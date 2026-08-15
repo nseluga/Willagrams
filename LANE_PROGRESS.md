@@ -9,7 +9,7 @@ The style lane's ledger previously sat at this path; it has been archived to
 ## Current position
 
 - **Status:** autonomous run in progress
-- **Next:** Build the client-side match state machine (MatchSession.swift)
+- **Next:** Build the terminal states — win, resign, peer-disconnect freeze
 - **Blockers:** none
 - **Last updated:** 2026-08-15
 
@@ -20,7 +20,7 @@ The style lane's ledger previously sat at this path; it has been archived to
 | Define the transport seam (MatchTransport + FakeTransport) | done — The app now has one agreed way for two players' devices to pass messages, plus a stand-in version that lets the whole match be tested on one machine with no second device and no Game Center account. |
 | Build the wire codec (MatchCodec) | done — Two devices can now turn match messages into bytes and back, and a match from an app version that speaks a different wire format is refused instead of played. |
 | Build host authority over the pool (HostPool) | done — One device now owns the real tile pool and answers both players' requests from it, so a draw gives each player exactly one tile, a swap with too few tiles left is refused without disturbing the pool, and the two devices agree on which one is in charge without negotiating. |
-| Build the client-side match state machine (MatchSession) | not started |
+| Build the client-side match state machine (MatchSession) | done — The match now runs on each player's device: it counts down to the start, applies tiles as they arrive, and when the opponent draws it holds the new tile until the player presses Draw, keeping the board locked until they do so both players take a tile for the same event. |
 | Build the terminal states — win, resign, peer-disconnect freeze | not started |
 | Wrap Game Center sign-in (GameCenterAuth) | skipped — below stop marker |
 | Conform GKMatch to the transport (GKMatchTransport) | skipped — below stop marker |

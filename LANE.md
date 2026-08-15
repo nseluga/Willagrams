@@ -152,7 +152,7 @@ declared without editing them, stop and report rather than editing either.
       board rearrangement is permitted again
     - canDraw returns false while any tile remains in hand, matching GameState.canDraw
       against the same state
-  status: not started
+  status: done
 
 - task: Build the terminal states — win, resign, and peer-disconnect freeze, in
     `Willagrams/Match/MatchSession.swift`. Sending a win transmits
