@@ -128,7 +128,9 @@ player navigates by panning and zooming rather than by the board having edges.
     BrandTile.State.selected and lifts it by Motion.tileLift, the tile follows the
     finger, and on release it snaps to the nearest free cell center within
     Motion.snapThreshold, committing through Board.remove(at:) then
-    Board.place(_:at:). A release over an occupied cell or outside the threshold
+    Board.place(_:at:). Model the thing being dragged as a *set* of coords from
+    the start, holding one in the ordinary case — a later item moves several
+    tiles at once, and a drag written for exactly one tile is painful to widen. A release over an occupied cell or outside the threshold
     returns the tile to where it came from with the board untouched. Pickup, a
     successful snap, and a rejected drop each fire a distinct haptic through
     UIImpactFeedbackGenerator / UINotificationFeedbackGenerator behind a small
@@ -205,6 +207,29 @@ player navigates by panning and zooming rather than by the board having edges.
     - The initial camera frames all 21 with margin, in landscape, on both an iPad and an iPhone viewport
     - Tiles delivered by a Draw land at coords inside the viewport rect at the moment of delivery, and none is adjacent to an existing tile
     - Delivering onto a board whose cells below are already occupied still places every tile, and Board.placementList grows by exactly the number delivered
+  status: not started
+
+- task: Add multi-tile selection and group drag to BoardView. A double-tap enters
+    selection mode. While in it, a one-finger drag across the surface paints every
+    tile it crosses into the selection rather than panning or moving anything, and
+    selected tiles render BrandTile.State.selected. Dragging any already-selected
+    tile then moves the whole selection together, every tile keeping its offset
+    from the others, committing as one batch through Board.remove/Board.place.
+    Tapping empty space clears the selection and leaves selection mode. Pinch zoom
+    stays live throughout so the player can still see what they are sweeping.
+  guardrails:
+    - A group move is all-or-nothing: if any tile would land on a cell occupied by
+      a tile outside the selection, refuse the entire move and leave Board unchanged
+    - Never leave the player stuck in selection mode — clearing must always be
+      reachable without moving a tile
+    - Painting a selection mutates view state only; Board is untouched until a
+      group drag commits
+    - No selection may begin or continue while inputLocked is set
+  done when:
+    - A double-tap enters selection mode, and a drag crossing N tiles leaves exactly those N selected and rendered .selected
+    - Dragging one selected tile moves all of them, and every pairwise row/col offset within the selection is identical before and after
+    - A group move whose destination overlaps a non-selected tile leaves Board.placementList unchanged
+    - Tapping empty space clears the selection and restores ordinary panning and single-tile dragging
   status: not started
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
