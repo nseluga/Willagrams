@@ -142,9 +142,14 @@ public enum DesignTokens {
         public static let button = Recipe(color: Palette.shadowButton, radius: 7, x: 0, y: 5)
         /// `0 8px 18px` under a lifted tile.
         public static let selected = Recipe(color: Palette.shadowSelected, radius: 9, x: 0, y: 8)
+        /// No shadow — for anything seated flush against its ground.
+        public static let flush = Recipe(color: .clear, radius: 0, x: 0, y: 0)
     }
 
     public enum Motion {
+        /// The standard ease for a tile settling into place.
+        public static let snap = Animation.easeOut(duration: snapDuration)
+
         public static let snapDuration: Double = 0.16
         public static let dealDuration: Double = 0.45
 
@@ -158,5 +163,12 @@ public enum DesignTokens {
         /// snap too eagerly or not eagerly enough. Too low and placing feels
         /// fiddly; too high and tiles jump to cells the player did not mean.
         public static let snapThreshold: CGFloat = 22
+    }
+}
+
+public extension View {
+    /// Applies one of the shadow recipes.
+    func brandShadow(_ recipe: DesignTokens.Shadow.Recipe) -> some View {
+        shadow(color: recipe.color, radius: recipe.radius, x: recipe.x, y: recipe.y)
     }
 }

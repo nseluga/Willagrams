@@ -77,7 +77,7 @@ Global rules:
   difficulty: open — SwiftUI has no inner shadow, so the `inset 0 -3px 0` bevel has
         competing implementations (clipped gradient band, overlaid shape, layered rects)
         and which one holds up at small sizes is not settled
-  status: not started
+  status: done
 
 - task: Build the card style and the three button styles
   done when:
