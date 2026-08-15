@@ -189,10 +189,13 @@ player navigates by panning and zooming rather than by the board having edges.
     - Median of 5 runs, revalidating and republishing after a move on a 144-tile board completes in under 16ms
   status: not started
 
-- task: Add the opening layout and Draw landing to BoardModel — a new match places
-    the 21 opening tiles as Board placements in 3 rows of 7, spaced one empty cell
-    apart in both axes so no two are orthogonally adjacent, and the initial camera
-    frames that block. Tiles arriving from a Draw are placed into free cells
+- task: Add the opening layout and Draw landing to BoardModel — a new match takes
+    its opening tiles from outside and places them as Board placements in a block
+    roughly three rows deep, spaced one empty cell apart in both axes so no two
+    are orthogonally adjacent, and the initial camera frames that block. The count
+    is an input, never a constant: the starting hand size travels on the wire and
+    is about to become configurable, so a hardcoded 21 here would be a bug the
+    moment anyone changes it. Tiles arriving from a Draw are placed into free cells
     immediately below the currently visible content, spaced the same way, so they
     are visible without moving the camera.
   guardrails:
@@ -203,8 +206,8 @@ player navigates by panning and zooming rather than by the board having edges.
       escape; find free cells, do not assume they are free
     - GameState.hand stays empty; tiles go onto the board, not into a rack
   done when:
-    - Starting a match leaves 21 tiles on the board, none orthogonally adjacent to another, and BoardValidation reports 21 clusters and zero invalid words
-    - The initial camera frames all 21 with margin, in landscape, on both an iPad and an iPhone viewport
+    - Starting a match with N opening tiles leaves N on the board, none orthogonally adjacent to another, and BoardValidation reports N clusters and zero invalid words — verified at N of 21 and at a different N
+    - The initial camera frames every opening tile with margin, in landscape, on both an iPad and an iPhone viewport
     - Tiles delivered by a Draw land at coords inside the viewport rect at the moment of delivery, and none is adjacent to an existing tile
     - Delivering onto a board whose cells below are already occupied still places every tile, and Board.placementList grows by exactly the number delivered
   status: not started
