@@ -18,6 +18,10 @@ import WillagramsRules
 /// is what makes "one tile per player, once" true when two requests land
 /// together — the second request sees the pool the first one left.
 ///
+/// The isolation covers the pool and nothing else. ``handle(_:)`` suspends
+/// while it sends, so two callers running at once still interleave what reaches
+/// the wire — see the precondition there.
+///
 /// It deliberately does not subscribe to `transport.inboundMessages` itself:
 /// that stream supports exactly one consumer, and a second one would silently
 /// divide messages between the two rather than fail. The session above owns the
@@ -60,6 +64,9 @@ public actor HostPool {
         seed: UInt64,
         transport: any MatchTransport
     ) {
+        // Our own bug, not a peer payload: two equal ids would pass the
+        // membership guard and fan a round out to the same player twice.
+        precondition(players.0 != players.1, "a match needs two different players")
         self.players = [players.0, players.1].sorted { $0.rawValue < $1.rawValue }
         self.pool = pool
         self.generator = SeededGenerator(seed: seed)
@@ -71,10 +78,20 @@ public actor HostPool {
     /// Anything that is not a pool request is ignored — this type owns the
     /// pool, not the match.
     ///
-    /// - Returns: the messages that went on the wire, in send order. The host
-    ///   device does not receive its own sends, so this is how it learns about
-    ///   the grant addressed to itself. Empty when the message was not a
-    ///   request.
+    /// - Precondition: called from one place at a time. The pool is safe either
+    ///   way, but this method suspends while it sends, so two concurrent
+    ///   callers can interleave on the wire and a later request's
+    ///   `poolExhausted` can overtake an earlier grant. The session's inbound
+    ///   pump is that single caller, which is why there is no queue here.
+    ///
+    /// - Returns: the messages this request *produced* — every authoritative
+    ///   movement of the pool, in order, whether or not it went on the wire.
+    ///   Two kinds never do: the grant addressed to the host, which the host
+    ///   applies from this return value because it does not receive its own
+    ///   sends, and a refusal of the host's own request, which carries no
+    ///   player and would read on the peer as a refusal of its own. A message
+    ///   here is not proof of delivery — nothing in this type retries a failed
+    ///   send or reports one. Empty when the message was not a request.
     @discardableResult
     public func handle(_ message: MatchMessage) async -> [MatchMessage] {
         switch message {
@@ -83,46 +100,76 @@ public actor HostPool {
             // A request naming somebody who is not in this match must not be
             // able to move the pool: the payload arrived from a peer.
             guard players.contains(player) else {
-                return await send([.rejected(reason: .unknownPlayer)])
+                return await answer([.rejected(reason: .unknownPlayer)], to: player)
             }
             // One draw for the whole fan-out. It takes a tile for every player
             // or none at all, so a pool too small to go round is refused with
             // the pool untouched rather than half dealt.
             guard let drawn = pool.draw(players.count) else {
-                return await send([.poolExhausted])
+                return await answer([.poolExhausted], to: player)
             }
-            return await send(
+            return await answer(
                 zip(players, drawn).map { player, tile in
                     MatchMessage.grant(player: player, tiles: [tile])
-                }
+                },
+                to: player
             )
 
         case let .swapRequest(player, returning):
             guard players.contains(player) else {
-                return await send([.rejected(reason: .unknownPlayer)])
+                return await answer([.rejected(reason: .unknownPlayer)], to: player)
             }
+            // `returning` came off the wire and goes into the pool unchecked: a
+            // modified peer can mint a tile it never held or return the same one
+            // twice. Not fixable from here — verifying it needs the rack state
+            // the session will own, and this is a hard precondition on that item.
+            //
             // `Pool.swap` returns nil and leaves the pool untouched when fewer
             // than three remain, which is the whole of the rollback story.
             guard let drawn = pool.swap(returning, using: &generator) else {
-                return await send([.rejected(reason: .notEnoughTilesToSwap)])
+                return await answer([.rejected(reason: .notEnoughTilesToSwap)], to: player)
             }
-            return await send([.swapGrant(player: player, tiles: drawn, returned: returning)])
+            return await answer(
+                [.swapGrant(player: player, tiles: drawn, returned: returning)],
+                to: player
+            )
 
         default:
             return []
         }
     }
 
-    /// Puts `messages` on the wire in order and hands them back.
+    /// Puts the part of `produced` the peer is entitled to see on the wire, in
+    /// order, and hands all of `produced` back.
     ///
     /// A failed send is swallowed: the only failure a transport reports is a
     /// peer that has already gone, the connection-state stream reports that
     /// authoritatively, and by here the pool has already moved. Retrying into a
     /// dead peer would be the one way to hand the same tile out twice.
-    private func send(_ messages: [MatchMessage]) async -> [MatchMessage] {
-        for message in messages {
+    private func answer(_ produced: [MatchMessage], to requester: PlayerID) async -> [MatchMessage] {
+        for message in produced where isForPeer(message, requestedBy: requester) {
             try? await transport.send(message, delivery: .reliable)
         }
-        return messages
+        return produced
+    }
+
+    /// Whether the peer is entitled to `message`.
+    ///
+    /// The peer is told what it was given and when the pool runs out. It is not
+    /// told which tiles the host holds: a modified client reading the
+    /// opponent's rack off the wire would be unbeatable, and nothing on this
+    /// side of the wire can stop it reading what we chose to send.
+    private func isForPeer(_ message: MatchMessage, requestedBy requester: PlayerID) -> Bool {
+        switch message {
+        case let .grant(player, _), let .swapGrant(player, _, _):
+            return player != transport.localPlayerID
+        case .poolExhausted:
+            // The one real broadcast: it ends the match for both players.
+            return true
+        default:
+            // `rejected` carries no player, so who asked is the only thing that
+            // can route it. The host's own refusal would read as the peer's.
+            return requester != transport.localPlayerID
+        }
     }
 }

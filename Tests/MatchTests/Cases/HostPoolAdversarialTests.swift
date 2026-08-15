@@ -28,43 +28,8 @@ struct HostPoolAdversarialTests {
         (0..<count).map { Tile(letter: Self.alphabet[$0 % Self.alphabet.count]) }
     }
 
-    // MARK: - Driving the real entry point
-
-    /// Reads exactly `count` messages off `transport` and hands each to the
-    /// host, then stops. One subscription, one pass.
-    private func pump(
-        _ count: Int,
-        from transport: FakeTransport,
-        into authority: HostPool
-    ) async -> Int? {
-        await outcome {
-            var handled = 0
-            for await inbound in transport.inboundMessages {
-                await authority.handle(inbound)
-                handled += 1
-                if handled == count { break }
-            }
-            return handled
-        }
-    }
-
-    /// Ends the match and reads the peer's stream to completion, so "and
-    /// nothing else was sent" is an assertion rather than a race.
-    private func drain(_ host: FakeTransport, _ guest: FakeTransport) async -> [MatchMessage]? {
-        host.leave()
-        return await outcome {
-            var seen: [MatchMessage] = []
-            for await message in guest.inboundMessages { seen.append(message) }
-            return seen
-        }
-    }
-
-    private func grants(in messages: [MatchMessage]) -> [(player: PlayerID, tiles: [Tile])] {
-        messages.compactMap { message in
-            if case let .grant(player, tiles) = message { return (player, tiles) }
-            return nil
-        }
-    }
+    // Driving the real entry point: `pump`, `drain` and `grants` are shared
+    // with ``HostPoolTests`` at file scope in that file.
 
     // MARK: - No tile leaves the pool twice, across the whole match
 
@@ -81,28 +46,38 @@ struct HostPoolAdversarialTests {
         for _ in 0..<3 {
             try await guest.send(.drawRequest(player: guestID), delivery: .reliable)
         }
-        #expect(await pump(3, from: host, into: authority) == 3, "the host did not answer every request")
+        let rounds = try #require(await pump(3, from: host, into: authority))
+        // `#require`, not `#expect`: the per-round assertions below index into
+        // this, and a run that stops here reports rather than traps.
+        try #require(rounds.count == 3, "the host did not answer every request")
 
         let messages = try #require(await drain(host, guest), "no reply reached the peer")
 
-        // Two rounds go out, the third finds one tile for two players.
-        let granted = grants(in: messages)
-        #expect(granted.count == 4, "expected two grants per round for two rounds, got \(messages)")
-        #expect(messages.last == .poolExhausted, "the third round should have been refused: \(messages)")
-        #expect(messages.filter { $0 == .poolExhausted }.count == 1)
+        // Two rounds go out, the third finds one tile for two players. Counted
+        // over what the requests produced: only the peer's own half of each
+        // round reaches the wire, so the wire cannot answer "was any tile
+        // granted twice" — the host's tiles are the other half of that question.
+        let produced = rounds.flatMap { $0 }
+        let granted = grants(in: produced)
+        #expect(granted.count == 4, "expected two grants per round for two rounds, got \(produced)")
+        #expect(produced.last == .poolExhausted, "the third round should have been refused: \(produced)")
+        #expect(produced.filter { $0 == .poolExhausted }.count == 1)
+        #expect(messages.last == .poolExhausted, "the peer was not told the pool had run out: \(messages)")
 
         let grantedIDs = granted.flatMap { $0.tiles.map(\.id) }
         #expect(Set(grantedIDs).count == 4, "a tile was granted more than once across requests")
         #expect(grantedIDs.allSatisfy(startIDs.contains), "a granted tile was never in the pool")
 
-        // Each round grew both racks by exactly one. Indexed defensively: a
-        // regression that grants too few must fail this run, not crash it and
-        // take the rest of the suite's results with it.
-        for round in 0..<2 where granted.indices.contains(round * 2 + 1) {
-            let pair = [granted[round * 2], granted[round * 2 + 1]]
+        // Each round grew both racks by exactly one.
+        for round in 0..<2 {
+            let pair = grants(in: rounds[round])
             #expect(Set(pair.map(\.player)) == [hostID, guestID], "round \(round) missed a player")
             #expect(pair.allSatisfy { $0.tiles.count == 1 }, "round \(round) granted more than one tile")
         }
+
+        // Each round put the peer's own grant on the wire, and only that.
+        #expect(grants(in: messages).count == 2, "the wire should carry one grant per round: \(messages)")
+        #expect(grants(in: messages).allSatisfy { $0.player == guestID }, "the host's tiles reached the peer")
 
         let after = await authority.pool
         #expect(after.count == 1, "five tiles, four granted")
@@ -121,20 +96,28 @@ struct HostPoolAdversarialTests {
         let authority = HostPool(players: (hostID, guestID), pool: start, seed: 42, transport: host)
 
         // Straight at the production entry point, both at once — this is what
-        // an inbound pump does when two requests are already buffered.
-        await withTaskGroup(of: Void.self) { group in
+        // an inbound pump does when two requests are already buffered. Wire
+        // *order* is not serialised across concurrent callers and this does not
+        // assert it; what must hold is that the pool moved exactly once.
+        let produced = await withTaskGroup(of: [MatchMessage].self) { group in
             for _ in 0..<2 {
                 group.addTask { await authority.handle(.drawRequest(player: guestID)) }
             }
+            return await group.reduce(into: [MatchMessage]()) { $0 += $1 }
         }
 
         let messages = try #require(await drain(host, guest), "no reply reached the peer")
 
-        let granted = grants(in: messages)
-        #expect(granted.count == 2, "three tiles cannot serve two rounds: \(messages)")
-        #expect(messages.filter { $0 == .poolExhausted }.count == 1, "the losing request was not refused: \(messages)")
+        let granted = grants(in: produced)
+        #expect(granted.count == 2, "three tiles cannot serve two rounds: \(produced)")
+        #expect(produced.filter { $0 == .poolExhausted }.count == 1, "the losing request was not refused: \(produced)")
         #expect(Set(granted.map(\.player)) == [hostID, guestID], "both players should have been served once")
         #expect(Set(granted.flatMap { $0.tiles.map(\.id) }).count == 2, "the same tile went to both players")
+
+        // The peer sees its own grant and the refusal, in some order.
+        #expect(messages.count == 2, "expected the peer's grant and the refusal, got \(messages)")
+        #expect(grants(in: messages).allSatisfy { $0.player == guestID }, "the host's tile reached the peer")
+        #expect(messages.contains(.poolExhausted), "the peer was never told the pool had run out")
 
         let after = await authority.pool
         #expect(after.count == 1, "the pool should have moved exactly once")
@@ -151,11 +134,14 @@ struct HostPoolAdversarialTests {
         for _ in 0..<2 {
             try await guest.send(.drawRequest(player: hostID), delivery: .reliable)
         }
-        #expect(await pump(2, from: host, into: authority) == 2)
+        let produced = try #require(await pump(2, from: host, into: authority)).flatMap { $0 }
 
         let messages = try #require(await drain(host, guest), "no reply reached the peer")
-        #expect(grants(in: messages).count == 2, "two tiles, two players, one round: \(messages)")
-        #expect(messages.last == .poolExhausted, "the second round had nothing to give: \(messages)")
+        #expect(grants(in: produced).count == 2, "two tiles, two players, one round: \(produced)")
+        #expect(produced.last == .poolExhausted, "the second round had nothing to give: \(produced)")
+        // The host asked, so only the peer's own grant and the refusal go out.
+        #expect(grants(in: messages).count == 1, "the wire should carry one grant: \(messages)")
+        #expect(messages.last == .poolExhausted, "the peer was not told the pool had run out: \(messages)")
         #expect(await authority.pool.isEmpty)
     }
 
@@ -168,8 +154,9 @@ struct HostPoolAdversarialTests {
             let authority = HostPool(players: (hostID, guestID), pool: start, seed: 8, transport: host)
 
             try await guest.send(.swapRequest(player: guestID, returning: returned), delivery: .reliable)
-            #expect(await pump(1, from: host, into: authority) == 1)
+            #expect(await pump(1, from: host, into: authority)?.count == 1)
 
+            // The peer asked, so its answer belongs on the wire either way.
             let messages = try #require(await drain(host, guest), "no reply reached the peer")
             #expect(messages.count == 1, "expected exactly one reply for \(count) tiles, got \(messages)")
 
@@ -197,13 +184,17 @@ struct HostPoolAdversarialTests {
     @Test("Every refused request leaves the pool exactly as it was")
     func refusalsNeverMoveThePool() async throws {
         let stranger = PlayerID(rawValue: "not-in-this-match")
-        let cases: [(name: String, pool: [Tile], request: MatchMessage)] = [
-            ("an empty pool", [], .drawRequest(player: guestID)),
-            ("one tile, two players", tiles(1), .drawRequest(player: guestID)),
-            ("an empty pool, swap", [], .swapRequest(player: guestID, returning: Tile(letter: "Q"))),
-            ("two tiles, swap", tiles(2), .swapRequest(player: hostID, returning: Tile(letter: "Q"))),
-            ("a stranger drawing", tiles(20), .drawRequest(player: stranger)),
-            ("a stranger swapping", tiles(20), .swapRequest(player: stranger, returning: Tile(letter: "Q"))),
+        // `reachesPeer`: a refusal carries no player, so the only thing that can
+        // route it is who asked. The host's own refusal stays home — on the peer
+        // it would read as a refusal of the peer's own request. `poolExhausted`
+        // is the exception that always goes out: it ends the match for both.
+        let cases: [(name: String, pool: [Tile], request: MatchMessage, reachesPeer: Bool)] = [
+            ("an empty pool", [], .drawRequest(player: guestID), true),
+            ("one tile, two players", tiles(1), .drawRequest(player: guestID), true),
+            ("an empty pool, swap", [], .swapRequest(player: guestID, returning: Tile(letter: "Q")), true),
+            ("two tiles, swap", tiles(2), .swapRequest(player: hostID, returning: Tile(letter: "Q")), false),
+            ("a stranger drawing", tiles(20), .drawRequest(player: stranger), true),
+            ("a stranger swapping", tiles(20), .swapRequest(player: stranger, returning: Tile(letter: "Q")), true),
         ]
 
         for scenario in cases {
@@ -212,11 +203,18 @@ struct HostPoolAdversarialTests {
             let authority = HostPool(players: (hostID, guestID), pool: start, seed: 3, transport: host)
 
             try await guest.send(scenario.request, delivery: .reliable)
-            #expect(await pump(1, from: host, into: authority) == 1, "\(scenario.name): unanswered")
+            let produced = try #require(
+                await pump(1, from: host, into: authority), "\(scenario.name): unanswered"
+            ).flatMap { $0 }
 
             let messages = try #require(await drain(host, guest), "\(scenario.name): no reply reached the peer")
-            #expect(grants(in: messages).isEmpty, "\(scenario.name): a refusal granted tiles — \(messages)")
-            #expect(messages.count == 1, "\(scenario.name): expected one reply, got \(messages)")
+            #expect(produced.count == 1, "\(scenario.name): expected one answer, got \(produced)")
+            #expect(grants(in: produced).isEmpty, "\(scenario.name): a refusal granted tiles — \(produced)")
+            #expect(grants(in: messages).isEmpty, "\(scenario.name): a refusal granted tiles on the wire — \(messages)")
+            #expect(
+                messages.count == (scenario.reachesPeer ? 1 : 0),
+                "\(scenario.name): wrong number of replies on the wire — \(messages)"
+            )
             #expect(await authority.pool == start, "\(scenario.name): a refused request moved the pool")
         }
     }
@@ -230,18 +228,23 @@ struct HostPoolAdversarialTests {
     func grantsAreIndependentOfConstructorArgumentOrder() async throws {
         let start = Pool(tiles: tiles(8))
 
-        func run(_ players: (PlayerID, PlayerID)) async throws -> [MatchMessage] {
+        func run(_ players: (PlayerID, PlayerID)) async throws -> (produced: [MatchMessage], received: [MatchMessage]) {
             let (host, guest) = FakeTransport.pair(hostID, guestID)
             let authority = HostPool(players: players, pool: start, seed: 4, transport: host)
             try await guest.send(.drawRequest(player: guestID), delivery: .reliable)
-            #expect(await pump(1, from: host, into: authority) == 1)
-            return try #require(await drain(host, guest), "no reply reached the peer")
+            let produced = try #require(await pump(1, from: host, into: authority)).flatMap { $0 }
+            let received = try #require(await drain(host, guest), "no reply reached the peer")
+            return (produced, received)
         }
 
         let forward = try await run((hostID, guestID))
         let reversed = try await run((guestID, hostID))
-        #expect(forward == reversed, "argument order changed who got which tile")
-        #expect(grants(in: forward).count == 2)
+        // Both halves of the round, not just the half the peer sees: argument
+        // order must not change which tile either player got.
+        #expect(forward.produced == reversed.produced, "argument order changed who got which tile")
+        #expect(forward.received == reversed.received, "argument order changed what the peer was told")
+        #expect(grants(in: forward.produced).count == 2)
+        #expect(grants(in: forward.received).count == 1, "only the peer's own grant belongs on the wire")
     }
 
     // MARK: - Messages that are not requests
@@ -277,6 +280,14 @@ struct HostPoolAdversarialTests {
     /// answer, and the answer is always one of the two ids given.
     @Test("Election is total, returns one of its inputs, and ignores argument order")
     func electionIsTotalAndClosedOverItsInputs() {
+        // One literal case, since the sweep below re-derives its expectation
+        // with the same comparator the implementation uses and would agree with
+        // a reversed rule just as happily.
+        #expect(
+            HostPool.host(of: PlayerID(rawValue: "G:999"), PlayerID(rawValue: "G:100"))
+                == PlayerID(rawValue: "G:100")
+        )
+
         let ids = ["", " ", "a", "A", "alpha", "alpha-host", "beta-guest",
                    "player-2", "player-10", "G:1234567890", "Ω", "zzz"]
 
