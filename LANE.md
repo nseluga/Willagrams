@@ -146,7 +146,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - Releasing within Motion.snapThreshold of a free cell moves the tile there, and the moved tile's id is the same UUID it had before the drag
     - Releasing over an occupied cell or beyond the threshold leaves Board.placementList identical to before the gesture
     - The haptic protocol records exactly one pickup, one snap, and one reject event across a drag of each kind
-  status: not started
+  status: done
 
 - task: Add an external input lock to BoardModel and BoardView — a plain
     `inputLocked: Bool` the surface accepts from outside. While it is set, tiles
