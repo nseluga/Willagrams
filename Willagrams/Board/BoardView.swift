@@ -10,7 +10,10 @@ import WillagramsRules
 /// gestures to them and holds the resulting camera.
 public struct BoardView: View {
 
-    public let board: Board
+    /// The live board. Owned here for the same reason as the camera: a
+    /// committed drag has to land somewhere, and nothing above this view exists
+    /// yet to own it. The initializer's board is the starting value.
+    @State private var board: Board
 
     /// The live camera. Owned here because nothing above this view exists yet
     /// to own it; the initializer's camera is the starting value.
@@ -33,8 +36,34 @@ public struct BoardView: View {
     /// the anchor is stored beside it for the same staleness reason as `drag`.
     @State private var pinch: (anchor: CGPoint, camera: BoardCamera)?
 
+    /// The tiles in flight, built once per gesture beside `drag` — building it
+    /// is what fires the pickup feel, so it must not be rebuilt per frame.
+    /// Nil whenever the finger took hold of the camera rather than a tile.
+    ///
+    /// ponytail: a cancelled gesture (a system edge swipe, backgrounding) never
+    /// reaches `onEnded`, so the lifted tile stays drawn where the finger left
+    /// it until the next touch rebuilds or clears this. The BOARD is untouched
+    /// either way — only the drawing is stale. Give this its own reset when
+    /// SwiftUI exposes a cancellation callback for `.gesture`, or when a real
+    /// session shows it happening often enough to notice.
+    @State private var tileDrag: TileDrag?
+
+    /// How far the finger has moved since it took hold.
+    ///
+    /// Assigned, never accumulated: `DragGesture` already reports a translation
+    /// cumulative from its own start, so each frame REPLACES this rather than
+    /// adding to it and there is no stored quantity that can run away behind a
+    /// clamped render. Both readers (`BoardRender.cells` and `TileDrag.drop`)
+    /// handle a non-finite value themselves.
+    @State private var dragTranslation: CGSize = .zero
+
+    /// Real hardware. `TileDrag` only ever sees the protocol, so the decisions
+    /// about which feel fires when are executed by the test package with a
+    /// recording double in this slot.
+    private let haptics = TileFeedback()
+
     public init(board: Board, camera: BoardCamera) {
-        self.board = board
+        _board = State(initialValue: board)
         _camera = State(initialValue: camera)
     }
 
@@ -42,7 +71,13 @@ public struct BoardView: View {
         GeometryReader { proxy in
             let rect = CGRect(origin: .zero, size: proxy.size)
 
-            BoardSurface(board: board, camera: camera, rect: rect)
+            BoardSurface(
+                board: board,
+                camera: camera,
+                rect: rect,
+                dragging: tileDrag?.origins ?? [],
+                dragTranslation: dragTranslation
+            )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
                 // to be too or a pan could only start on the background.
@@ -69,6 +104,10 @@ public struct BoardView: View {
     /// event reports; a different `startLocation` means a new gesture, so the
     /// grab is decided again. That is the same "decide once" rule, scoped to
     /// one gesture rather than to whatever the last cancelled one left behind.
+    ///
+    /// The tile drag is built in the same breath, and only when the grab is
+    /// freshly decided: constructing it fires the pickup feel, so one gesture
+    /// gets exactly one pickup however many changes SwiftUI reports.
     private var dragGesture: some Gesture {
         DragGesture()
             .onChanged { value in
@@ -76,10 +115,32 @@ public struct BoardView: View {
                 let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, camera: camera
                 )
+                if carried == nil {
+                    tileDrag = TileDrag(grab: inFlight.grab, haptics: haptics)
+                }
                 drag = inFlight
+                dragTranslation = value.translation
                 camera = inFlight.camera(camera, translatedBy: value.translation)
             }
-            .onEnded { _ in drag = nil }
+            .onEnded { value in
+                if let tileDrag {
+                    // The whole commit is one assignment of one value type:
+                    // `drop` hands back either the moved board or the one it
+                    // was given, so a refused drop cannot leave a partial move
+                    // behind. The snap-or-refuse feel fires inside it.
+                    withAnimation(DesignTokens.Motion.snap) {
+                        board = tileDrag.drop(
+                            translation: value.translation,
+                            on: board,
+                            camera: camera,
+                            threshold: DesignTokens.Motion.snapThreshold
+                        )
+                    }
+                }
+                drag = nil
+                tileDrag = nil
+                dragTranslation = .zero
+            }
     }
 
     /// Two fingers. `startLocation` is the pinch midpoint at the moment the
@@ -138,6 +199,9 @@ private struct BoardSurface: View, Animatable {
     let board: Board
     var camera: BoardCamera
     let rect: CGRect
+    /// Empty between drags. `BoardRender` turns these into `.selected` cells.
+    let dragging: Set<Coord>
+    let dragTranslation: CGSize
 
     /// Pan width, pan height, zoom — the whole of what an animation between
     /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
@@ -154,7 +218,10 @@ private struct BoardSurface: View, Animatable {
     }
 
     var body: some View {
-        let cells = BoardRender.cells(board: board, camera: camera, in: rect)
+        let cells = BoardRender.cells(
+            board: board, camera: camera, in: rect,
+            dragging: dragging, by: dragTranslation
+        )
         let cellSize = camera.cellSize
 
         ZStack(alignment: .topLeading) {
@@ -193,14 +260,16 @@ private struct BoardSurface: View, Animatable {
             // fresh one and the drag item's move cannot animate. `Tile.id`
             // is stable across a move for exactly this reason. The list is
             // already filtered to non-nil tiles, so no two keys are nil.
+            // `cell.tilePoint`, not `cell.point`: a tile in flight has left its
+            // cell, and the grid hole it came from must stay put under it.
             ForEach(cells.filter { $0.tile != nil }, id: \.tile?.id) { cell in
-                if let tile = cell.tile {
+                if let tile = cell.tile, let tilePoint = cell.tilePoint {
                     BrandTile(
                         letter: tile.letter,
                         size: cellSize,
                         state: (cell.state ?? .idle).brandState
                     )
-                    .offset(x: cell.point.x, y: cell.point.y)
+                    .offset(x: tilePoint.x, y: tilePoint.y)
                 }
             }
         }
@@ -214,19 +283,26 @@ private extension BoardRender.TileState {
         switch self {
         case .idle: .idle
         case .placed: .placed
+        // BrandTile applies `Motion.tileLift` and the ring itself for this
+        // state, so the lift is named in exactly one place and not here.
+        case .selected: .selected
         }
     }
 }
 
 /// A run of four plus one loose tile, so `.placed` and `.idle` are both on
 /// screen — the pair of previews below is how the light/dark surface is checked.
+///
+/// The local is `fixture`, not `board`: `BoardSourceTests` pins that nothing
+/// named `board` is mutated in this file, which is how the view is held to
+/// committing every change through `TileDrag`.
 private func previewBoard() -> Board {
-    var board = Board()
+    var fixture = Board()
     for (offset, letter) in "WILL".enumerated() {
-        try? board.place(Tile(letter: letter), at: Coord(row: 0, col: offset))
+        try? fixture.place(Tile(letter: letter), at: Coord(row: 0, col: offset))
     }
-    try? board.place(Tile(letter: "Z"), at: Coord(row: 3, col: 6))
-    return board
+    try? fixture.place(Tile(letter: "Z"), at: Coord(row: 3, col: 6))
+    return fixture
 }
 
 private let previewCamera = BoardCamera(pan: CGSize(width: DesignTokens.Space.xl, height: DesignTokens.Space.xl))

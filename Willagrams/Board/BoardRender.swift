@@ -14,22 +14,33 @@ public enum BoardRender {
     /// How a placed tile reads on the surface. Mirrors the subset of
     /// `BrandTile.State` the board itself decides — `BrandTile.State` is
     /// SwiftUI and unreachable from here, so the view maps this across.
-    /// Selection is not a board fact and is deliberately absent.
     public enum TileState: Equatable, Sendable {
         /// Loose: no orthogonal neighbor, so it keeps its drop shadow and
         /// reads as sitting on top of the surface.
         case idle
         /// Part of a run of two or more, so it seats flush into the surface.
         case placed
+        /// Carried by a drag in flight. Outranks the other two for as long as
+        /// the finger is down: the view maps it onto `BrandTile.State.selected`,
+        /// which owns the ring and the `Motion.tileLift` offset, so nothing
+        /// here or in the view knows how far a lifted tile rises.
+        case selected
     }
 
     /// One visible grid cell. `tile` and `state` are nil together or set
     /// together — `state` describes `tile`, and an empty cell has no state.
     public struct Cell: Equatable, Sendable {
         public let coord: Coord
-        /// Top-left corner of the cell in view space, from `camera.point(for:)`.
+        /// Top-left corner of the CELL in view space, from
+        /// `camera.point(for:)`. A dragged tile leaves its cell behind, so this
+        /// is deliberately never offset — the grid hole stays where the tile
+        /// came from.
         public let point: CGPoint
         public let tile: Tile?
+        /// Top-left corner of the TILE, which is `point` for everything except
+        /// a tile in flight, where it is `point` plus the live drag
+        /// translation. Nil exactly when `tile` is nil.
+        public let tilePoint: CGPoint?
         public let state: TileState?
 
         // No hand-written init: `cells(_:_:in:)` is the only producer, and the
@@ -48,14 +59,36 @@ public enum BoardRender {
     /// A degenerate or non-finite `rect` (a `GeometryReader`'s first layout
     /// pass reports `.zero`) yields an empty list rather than trapping —
     /// `BoardCamera` already guards the `Int` conversions.
-    public static func cells(board: Board, camera: BoardCamera, in rect: CGRect) -> [Cell] {
-        camera.visibleCoords(in: rect).map { coord in
+    ///
+    /// `dragging` is the coord set a `TileDrag` is carrying and `translation`
+    /// is how far the finger has moved since it took hold; both default to
+    /// nothing in flight. Those tiles read `.selected` and draw offset, and
+    /// revert to `.idle`/`.placed` the moment the set is empty again.
+    public static func cells(
+        board: Board,
+        camera: BoardCamera,
+        in rect: CGRect,
+        dragging: Set<Coord> = [],
+        by translation: CGSize = .zero
+    ) -> [Cell] {
+        // A live `DragGesture` translation is an external float. A non-finite
+        // one draws the tile where it was rather than at a position no renderer
+        // can use — the drop that follows refuses on the same grounds.
+        let offset = translation.width.isFinite && translation.height.isFinite ? translation : .zero
+        return camera.visibleCoords(in: rect).map { coord in
             let tile = board.tile(at: coord)
+            let point = camera.point(for: coord)
+            let carried = tile != nil && dragging.contains(coord)
             return Cell(
                 coord: coord,
-                point: camera.point(for: coord),
+                point: point,
                 tile: tile,
-                state: tile == nil ? nil : state(of: coord, in: board)
+                tilePoint: tile == nil ? nil : (
+                    carried
+                        ? CGPoint(x: point.x + offset.width, y: point.y + offset.height)
+                        : point
+                ),
+                state: tile == nil ? nil : (carried ? .selected : state(of: coord, in: board))
             )
         }
     }

@@ -170,7 +170,7 @@ final class BoardSourceTests: XCTestCase {
         // Every file symlinked into this package. A SwiftUI import in any of
         // them stops the whole package compiling, so this is the early, legible
         // failure rather than a wall of build errors.
-        for name in ["BoardCamera.swift", "BoardRender.swift", "BoardGesture.swift"] {
+        for name in ["BoardCamera.swift", "BoardRender.swift", "BoardGesture.swift", "BoardDrag.swift"] {
             let text = BoardSource.strippingComments(try BoardSource.text(name))
             let uiImports = BoardSource.matches(#"import\s+(SwiftUI|UIKit|AppKit)"#, in: text)
             XCTAssertTrue(uiImports.isEmpty, "\(name) imports \(uiImports) and is no longer host-compilable")
@@ -278,6 +278,77 @@ final class BoardSourceTests: XCTestCase {
         }
     }
 
+    // MARK: - Tile dragging: the view wires, the pure layer decides
+
+    func testViewPassesTheRealSnapThresholdTokenToTheDrag() throws {
+        // The threshold is a `drop` PARAMETER so the pure layer never has to
+        // name a number DesignTokens owns. That only keeps the token as the one
+        // source of truth if the view actually passes it.
+        let text = try view()
+        XCTAssertTrue(
+            text.contains("threshold: DesignTokens.Motion.snapThreshold"),
+            "BoardView does not pass DesignTokens.Motion.snapThreshold to the drop"
+        )
+        XCTAssertTrue(text.contains(".drop("), "BoardView never commits a drag")
+        XCTAssertTrue(text.contains("board = "), "BoardView never lands a committed drag")
+    }
+
+    func testNoPureFileNamesTheThresholdOrTheLiftItself() throws {
+        // Either token appearing outside the view means a second copy of a
+        // DesignTokens value, which is the lane's one hard rule.
+        for name in ["BoardDrag.swift", "BoardRender.swift", "BoardGesture.swift", "BoardCamera.swift"] {
+            let text = BoardSource.strippingComments(try BoardSource.text(name))
+            XCTAssertFalse(text.contains("snapThreshold"), "\(name) names the threshold token")
+            XCTAssertFalse(text.contains("tileLift"), "\(name) names the lift token")
+            XCTAssertFalse(text.contains("DesignTokens"), "\(name) reaches for DesignTokens")
+        }
+        let drag = BoardSource.strippingComments(try BoardSource.text("BoardDrag.swift"))
+        XCTAssertTrue(drag.contains("threshold: CGFloat"), "the threshold is not injected into BoardDrag")
+    }
+
+    func testViewMapsTheSelectedRenderStateOntoBrandTileAndOwnsNoLiftOfItsOwn() throws {
+        let text = try view()
+        XCTAssertTrue(
+            text.contains("case .selected: .selected"),
+            "BoardView does not map the pure .selected state onto BrandTile.State.selected"
+        )
+        // BrandTile applies Motion.tileLift for .selected itself. Naming it here
+        // would be a second lift on top of the one the tile already has.
+        XCTAssertFalse(text.contains("tileLift"), "BoardView applies its own lift")
+        XCTAssertFalse(text.contains(".offset(y:"), "BoardView lifts the tile itself")
+    }
+
+    func testViewBuildsTheTileDragOnceAndCommitsThroughIt() throws {
+        let text = try view()
+        // Construction is what fires the pickup feel, so it must sit behind the
+        // same "freshly decided" branch the grab does — `onChanged` fires many
+        // times per drag.
+        XCTAssertTrue(
+            text.contains("if carried == nil"),
+            "BoardView rebuilds the tile drag every change, so pickup fires per frame"
+        )
+        XCTAssertTrue(text.contains("TileDrag(grab:"), "BoardView runs a second hit test of its own")
+        XCTAssertTrue(text.contains("tileDrag = nil"), "BoardView never releases the tile drag")
+    }
+
+    func testViewNeverMutatesTheBoardItself() throws {
+        // Every board change goes through TileDrag, which builds on a copy.
+        // A place or a remove here would be a move that can land half done.
+        // The preview fixture builds its board under another name for exactly
+        // this reason — the live `board` is the one being pinned.
+        let text = try view()
+        for mutation in ["board.place(", "board.remove(", ".placements["] {
+            XCTAssertFalse(text.contains(mutation), "BoardView mutates the board via \(mutation)")
+        }
+    }
+
+    func testDragCommitsThroughPlaceAndRemoveOnly() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardDrag.swift"))
+        XCTAssertTrue(text.contains(".remove(at:"), "the drag does not remove through Board.remove")
+        XCTAssertTrue(text.contains(".place("), "the drag does not land through Board.place")
+        XCTAssertFalse(text.contains("placements"), "the drag reaches into Board.placements")
+    }
+
     // MARK: - Lane vocabulary guardrails
 
     func testNoBoardSourceUsesBannedVocabulary() throws {
@@ -371,5 +442,42 @@ final class BoardSourceTests: XCTestCase {
         // manufacture one out of prose.
         XCTAssertTrue(BoardSource.strippingComments("/// clamps hard\nlet s = min(max(a, b), c)").contains("min(max("))
         XCTAssertFalse(BoardSource.strippingComments("/// min(max(a, b), c)\nlet s = 1").contains("min(max("))
+    }
+
+    func testDragWiringChecksHaveTeeth() {
+        // Each of these separates a body that hardcodes the token's value from
+        // one that passes the token.
+        let copied = "board = tileDrag.drop(translation: t, on: board, camera: camera, threshold: 22)"
+        XCTAssertFalse(copied.contains("threshold: DesignTokens.Motion.snapThreshold"))
+        let passed = "threshold: DesignTokens.Motion.snapThreshold"
+        XCTAssertTrue(passed.contains("threshold: DesignTokens.Motion.snapThreshold"))
+
+        // And a pure file that reached for the token at all.
+        XCTAssertTrue("let t = DesignTokens.Motion.snapThreshold".contains("snapThreshold"))
+        XCTAssertFalse("public func drop(threshold: CGFloat)".contains("snapThreshold"))
+        XCTAssertTrue("public func drop(threshold: CGFloat)".contains("threshold: CGFloat"))
+
+        // A view that lifts the tile itself rather than letting BrandTile do it.
+        let doubleLift = ".offset(y: DesignTokens.Motion.tileLift)"
+        XCTAssertTrue(doubleLift.contains("tileLift"))
+        XCTAssertTrue(doubleLift.contains(".offset(y:"))
+        XCTAssertFalse("BrandTile(letter: l, size: s, state: .selected)".contains("tileLift"))
+
+        // A view that rebuilds the drag — and therefore the pickup — per frame.
+        let perFrame = "tileDrag = TileDrag(grab: inFlight.grab, haptics: haptics)"
+        XCTAssertFalse(perFrame.contains("if carried == nil"))
+        let once = "if carried == nil {\n    tileDrag = TileDrag(grab: inFlight.grab, haptics: haptics)\n}"
+        XCTAssertTrue(once.contains("if carried == nil"))
+        XCTAssertTrue(once.contains("TileDrag(grab:"))
+
+        // A view that moved the tile itself instead of going through the drag.
+        let handRolled = "board.remove(at: from)\ntry? board.place(tile, at: to)"
+        XCTAssertTrue(handRolled.contains("board.remove("))
+        XCTAssertTrue(handRolled.contains("board.place("))
+        XCTAssertFalse(handRolled.contains(".drop("))
+
+        // And the mapping check must separate the two arms.
+        XCTAssertFalse("case .placed: .placed".contains("case .selected: .selected"))
+        XCTAssertTrue("case .selected: .selected".contains("case .selected: .selected"))
     }
 }
