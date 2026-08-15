@@ -100,7 +100,7 @@ Global rules:
         precedent vs. point-by-point visual dissimilarity) and which carries more weight
         for tile faces specifically is the open question
   speed: N/A — prose document
-  status: not started
+  status: done
   parallel-group: b
 
 - task: Build StyleGallery, rendering every token in situ
