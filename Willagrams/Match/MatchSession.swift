@@ -130,11 +130,17 @@ public final class MatchSession {
 
     /// Draw requests this device has sent and not yet seen answered.
     ///
-    /// The wire cannot tell the two kinds of grant apart — both read
+    /// The *wire* cannot tell the two kinds of grant apart — both read
     /// `.grant(player: me, …)` — so this counts the answers this device is owed.
     /// A grant with nothing outstanding is the opponent's draw, and becomes an
     /// obligation. Every request produces exactly one of a grant, a
-    /// `.poolExhausted` or a `.rejected`, so any of the three clears one.
+    /// `.poolExhausted` or a `.rejected`, so any of the three clears one — and a
+    /// request that never reached the wire clears its own.
+    ///
+    /// Only the inbound path guesses from this count. The host answers itself
+    /// and knows which request each message it produced belongs to, so
+    /// ``applyProduced(_:answering:)`` passes that answer down rather than
+    /// reading this.
     @ObservationIgnored private var outstandingDrawRequests = 0
 
     /// - Parameters:
@@ -163,10 +169,8 @@ public final class MatchSession {
 
     // MARK: - Lifecycle
 
-    /// Starts consuming the inbound stream. Called from `init`; idempotent, so
-    /// a caller that does not know that cannot start a second consumer.
-    public func beginReceiving() {
-        guard pump == nil else { return }
+    /// Starts consuming the inbound stream. Called from `init` and nowhere else.
+    private func beginReceiving() {
         // Bound once. Reading `inboundMessages` twice and iterating both would
         // divide the messages between the two iterators rather than fail.
         let inbound = transport.inboundMessages
@@ -184,6 +188,13 @@ public final class MatchSession {
     /// never receives its own sends — a host that waited to hear its own start
     /// message would wait forever.
     public func startMatch(seed: UInt64, startingHandSize: Int, countdownSeconds: Int) {
+        // The same election that hands out the pool decides who opens. Both
+        // devices calling this would each honour their own seed and countdown
+        // and ignore the other's, and reach play at different moments.
+        guard HostPool.host(of: localPlayerID, peerPlayerID) == localPlayerID else {
+            lastNote = "only the host opens the match"
+            return
+        }
         send(
             .start(
                 version: WireFormat.current,
@@ -204,7 +215,18 @@ public final class MatchSession {
     public func leave() {
         pump?.cancel()
         countdownTask?.cancel()
+        tail?.cancel()
         transport.leave()
+    }
+
+    /// A session dropped without ``leave()`` would otherwise leave its pump
+    /// iterating the inbound stream and its countdown ticking for the life of
+    /// the process. Safe from a nonisolated `deinit`: no other reference to
+    /// these handles exists by here, and `Task.cancel()` is thread-safe.
+    deinit {
+        pump?.cancel()
+        countdownTask?.cancel()
+        tail?.cancel()
     }
 
     // MARK: - Player actions
@@ -228,6 +250,11 @@ public final class MatchSession {
             pendingDrawTiles = []
             return true
         }
+        // An empty pool can only answer with the same broadcast again, and each
+        // one clears a credit on the device that did not ask. Taking a waiting
+        // tile above is never suppressed: accepting an obligation is how the
+        // board reopens, latch or no latch.
+        guard !poolIsExhausted else { return false }
         outstandingDrawRequests += 1
         request(.drawRequest(player: localPlayerID))
         return true
@@ -253,7 +280,9 @@ public final class MatchSession {
     ///   taken, or ``BoardActionError/placementFailed(_:)`` if the rules refuse.
     ///   State is unchanged either way.
     public func place(tileID: UUID, at coord: Coord) throws(BoardActionError) {
-        guard pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        // A finished match freezes the board for good; the caller's remedy is
+        // the same either way, so it reuses the one refusal this type has.
+        guard !isFinished, pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
         do {
             try state.place(tileID: tileID, at: coord)
         } catch {
@@ -265,7 +294,7 @@ public final class MatchSession {
     ///
     /// - Throws: ``BoardActionError/drawPending`` while a tile is waiting.
     public func recall(from coord: Coord) throws(BoardActionError) {
-        guard pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        guard !isFinished, pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
         state.recall(from: coord)
     }
 
@@ -288,35 +317,51 @@ public final class MatchSession {
             )
 
         case .drawRequest, .swapRequest:
-            // Only the host answers these; on the other device the submission
-            // finds no pool and does nothing.
+            // Only the host answers these, and only once play has begun.
+            // Answered during the countdown, a peer could drain the pool before
+            // the first move and hold this board frozen behind obligations; on a
+            // guest the submission finds no pool and allocates a chain task to
+            // do nothing.
+            // ponytail: nothing caps peer submissions in flight — the transport
+            // buffers unboundedly by contract — add a cap when a real link
+            // shows the buffer is the limit that bites.
+            guard hostPool != nil, state.status == .playing else { break }
             submitToHost(message)
 
-        case let .grant(player, tiles) where player == localPlayerID:
-            applyGrant(tiles)
+        case let .grant(player, tiles):
+            // The host is the sole authority for the three cases below: it mints
+            // them and applies its own half from `handle`'s return value, so one
+            // arriving here is a modified peer minting tiles into the host's
+            // rack, desyncing it from the pool, or latching exhaustion.
+            guard hostPool == nil, player == localPlayerID else { break }
+            applyGrant(tiles, requestedByLocal: clearOneOutstandingDraw())
 
-        case let .swapGrant(player, tiles, returned) where player == localPlayerID:
+        case let .swapGrant(player, tiles, returned):
+            guard hostPool == nil, player == localPlayerID else { break }
             applySwapGrant(tiles: tiles, returned: returned)
 
         case .poolExhausted:
             // A latch, not an end. A grant that arrives after this one — the
             // transport may reorder — is still applied above.
+            guard hostPool == nil else { break }
             poolIsExhausted = true
             clearOneOutstandingDraw()
 
         case let .win(player, _):
-            state.status = .finished(winner: player)
+            // A device declares its own win. One naming this device as the
+            // winner of the peer's own message is a modified peer, not a result.
+            guard player == peerPlayerID else { break }
+            state.status = .finished(winner: peerPlayerID)
 
         case let .resign(player):
-            // The winner is whoever did not resign.
-            state.status = .finished(winner: player == localPlayerID ? peerPlayerID : localPlayerID)
+            // Only the peer can resign to this device, so the winner is this
+            // device. `.resign(player: localPlayerID)` off the wire would
+            // otherwise hand the match to the peer.
+            guard player == peerPlayerID else { break }
+            state.status = .finished(winner: localPlayerID)
 
         case let .rejected(reason):
-            lastNote = "refused: \(reason)"
-
-        case .grant, .swapGrant:
-            // Addressed to the peer. Nothing local to do.
-            break
+            applyRejection(reason, answeredADraw: reason != .notEnoughTilesToSwap)
         }
     }
 
@@ -336,7 +381,9 @@ public final class MatchSession {
         }
         hasStarted = true
         // Negative or absurd values came off the wire; clamp rather than trap.
-        self.startingHandSize = max(0, startingHandSize)
+        // The ceiling is the whole pool: no deal can hand out more tiles than
+        // the match contains.
+        self.startingHandSize = min(max(0, startingHandSize), LetterDistribution.totalTiles)
         // ponytail: the opening deal of `startingHandSize` tiles is a later
         // item — HostPool has no deal API — upgrade when that API exists.
 
@@ -348,7 +395,11 @@ public final class MatchSession {
                 transport: transport
             )
         }
-        beginCountdown(seconds: max(0, countdownSeconds))
+        // Clamped at both ends: one `.start` carrying a huge value off the wire
+        // would otherwise park this session in `.countdown` for the rest of the
+        // process. Ten seconds is the ceiling — longer than any lobby needs and
+        // short enough that a wedged session recovers on its own.
+        beginCountdown(seconds: min(max(0, countdownSeconds), 10))
     }
 
     /// Counts down one second at a time from *now*, not towards an instant the
@@ -379,13 +430,34 @@ public final class MatchSession {
     ///
     /// A grant this device asked for goes straight to the rack. One it did not
     /// means the opponent drew, so this device owes a tile for the same event
-    /// and the board freezes until the player presses Draw.
-    private func applyGrant(_ tiles: [Tile]) {
-        if clearOneOutstandingDraw() {
-            state.hand.append(contentsOf: tiles)
+    /// and the board freezes until the player presses Draw. The caller says
+    /// which: on the host it answered a request it can name, and only the wire
+    /// has to fall back on the outstanding-request count.
+    private func applyGrant(_ tiles: [Tile], requestedByLocal: Bool) {
+        // A duplicated grant is peer input: taking it twice would double a tile
+        // into the rack and leave the two devices disagreeing about the pool.
+        var held = Set(state.hand.map(\.id))
+        held.formUnion(pendingDrawTiles.map(\.id))
+        held.formUnion(state.board.placementList.map(\.tile.id))
+        let fresh = tiles.filter { !held.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+
+        if requestedByLocal {
+            state.hand.append(contentsOf: fresh)
         } else {
-            pendingDrawTiles.append(contentsOf: tiles)
+            pendingDrawTiles.append(contentsOf: fresh)
         }
+    }
+
+    /// Notes a refusal, and closes the request it answered.
+    ///
+    /// A refusal that answered a *swap* must not spend a draw credit: the count
+    /// would drop low and the opponent's next grant would be taken for this
+    /// device's own, so the board would never freeze.
+    private func applyRejection(_ reason: RejectionReason, answeredADraw: Bool) {
+        lastNote = "refused: \(reason)"
+        guard answeredADraw else { return }
+        clearOneOutstandingDraw()
     }
 
     /// A tile this device does not hold cannot leave its rack: the payload came
@@ -435,28 +507,39 @@ public final class MatchSession {
     private func submitToHost(_ message: MatchMessage) {
         enqueue { [weak self] in
             guard let self, let hostPool = self.hostPool else { return }
-            let requestedByLocal = Self.requester(of: message) == self.localPlayerID
             let produced = await hostPool.handle(message)
-            self.applyProduced(produced, requestedByLocal: requestedByLocal)
+            self.applyProduced(produced, answering: message)
         }
     }
 
     /// Applies the half of an authoritative pool movement that belongs to this
     /// device. The grant addressed to the host never travels, so this — not the
     /// inbound stream — is where the host gets its own tile.
-    private func applyProduced(_ produced: [MatchMessage], requestedByLocal: Bool) {
+    ///
+    /// `request` is the message these answer, so which device asked and which
+    /// kind of request it was are both known exactly here. Nothing on this path
+    /// has to guess from the outstanding-request count the way the wire does.
+    private func applyProduced(_ produced: [MatchMessage], answering request: MatchMessage) {
+        let requestedByLocal = Self.requester(of: request) == localPlayerID
+        let wasDrawRequest: Bool
+        if case .drawRequest = request { wasDrawRequest = true } else { wasDrawRequest = false }
+
         for message in produced {
             switch message {
             case let .grant(player, tiles) where player == localPlayerID:
-                applyGrant(tiles)
+                // Closed, not consulted: a peer-initiated grant landing while
+                // this device has a Draw outstanding is still an obligation.
+                if requestedByLocal { clearOneOutstandingDraw() }
+                applyGrant(tiles, requestedByLocal: requestedByLocal)
             case let .swapGrant(player, tiles, returned) where player == localPlayerID:
                 applySwapGrant(tiles: tiles, returned: returned)
             case .poolExhausted:
                 poolIsExhausted = true
-                clearOneOutstandingDraw()
+                // The broadcast names no requester; only the device that asked
+                // is owed an answer by it.
+                if requestedByLocal { clearOneOutstandingDraw() }
             case let .rejected(reason) where requestedByLocal:
-                lastNote = "refused: \(reason)"
-                clearOneOutstandingDraw()
+                applyRejection(reason, answeredADraw: wasDrawRequest)
             default:
                 break
             }
@@ -466,9 +549,16 @@ public final class MatchSession {
     private func send(_ message: MatchMessage) {
         enqueue { [weak self] in
             guard let self else { return }
-            // A send that fails means the peer is gone; the connection-state
-            // stream reports that authoritatively and this is not the place.
-            try? await self.transport.send(message, delivery: .reliable)
+            do {
+                try await self.transport.send(message, delivery: .reliable)
+            } catch {
+                // A send that fails means the peer is gone; the connection-state
+                // stream reports that authoritatively and this is not the place.
+                // But a request that never left is owed no answer, so the credit
+                // it opened must not outlive it and take the opponent's next
+                // grant for this device's own.
+                if case .drawRequest = message { self.clearOneOutstandingDraw() }
+            }
         }
     }
 
@@ -483,6 +573,9 @@ public final class MatchSession {
         let previous = tail
         tail = Task { @MainActor in
             await previous?.value
+            // `await previous?.value` does not propagate cancellation, so this
+            // is where a cancelled chain actually stops.
+            guard !Task.isCancelled else { return }
             await work()
         }
     }

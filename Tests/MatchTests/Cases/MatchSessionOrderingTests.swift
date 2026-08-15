@@ -160,19 +160,34 @@ struct MatchSessionOrderingTests {
         }
     }
 
-    @Test("The pool has exactly one caller in the match sources")
+    @Test("The pool has exactly one caller in the whole app source tree")
     func thePoolHasOneCaller() throws {
-        // `MatchSrc` is the committed symlink to `Willagrams/Match`.
+        // `MatchSrc` is the committed symlink to `Willagrams/Match`; its parent
+        // is every app source. `HostPool.handle` is public, so a caller added in
+        // `Willagrams/App` or in a subdirectory that does not exist yet would
+        // reinstate the wire inversion — a scan of one flat directory would
+        // stay green through it, which is the one way this guard can lie.
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // Cases
             .deletingLastPathComponent()   // MatchTests
             .appendingPathComponent("MatchSrc")
             .resolvingSymlinksInPath()
-        let files = try FileManager.default
-            .contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
+            .deletingLastPathComponent()   // Willagrams — all of it, recursively
+        let walker = try #require(
+            FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil),
+            "expected the app sources at \(sources.path)"
+        )
+        let files = walker
+            .compactMap { $0 as? URL }
             .filter { $0.pathExtension == "swift" }
         // A scan that finds nothing because it looked nowhere proves nothing.
-        #expect(files.count >= 2, "expected the match sources at \(sources.path)")
+        // The match directory alone holds five, and the tree holds more.
+        #expect(files.count > 5, "expected the app sources at \(sources.path)")
+        #expect(files.contains { $0.lastPathComponent == "MatchSession.swift" })
+        #expect(files.contains { $0.lastPathComponent == "WillagramsApp.swift" })
+        // Proof the walk descended: that last file is a directory deeper than
+        // the one the old scan looked in.
+        #expect(files.contains { $0.deletingLastPathComponent().lastPathComponent == "App" })
 
         var callSites: [String] = []
         for file in files {
