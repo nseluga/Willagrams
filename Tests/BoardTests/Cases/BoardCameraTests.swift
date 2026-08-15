@@ -198,6 +198,25 @@ final class BoardCameraTests: XCTestCase {
         XCTAssertEqual(camera.coord(at: CGPoint(x: CGFloat(k) * size + hair, y: 0)).col, k)
     }
 
+    /// Same agreement check at a negative-column boundary (re-verification
+    /// pass, requested explicitly: epsilon removal touched this exact path).
+    func testCoordAtAgreesWithVisibleCoordsAtNegativeCellBoundary() {
+        let camera = BoardCamera(pan: .zero, zoom: 1, baseCellSize: 48)
+        let size = camera.cellSize
+        let k = -7
+
+        let hair: CGFloat = 1e-10
+        let sliverRect = CGRect(x: CGFloat(k) * size - hair, y: 0, width: hair, height: size)
+        let sliverCols = Set(camera.visibleCoords(in: sliverRect).map(\.col))
+        XCTAssertEqual(sliverCols, Set([k - 1]), "visibleCoords half-open rule at a negative boundary")
+
+        let justBelowCol = camera.coord(at: CGPoint(x: CGFloat(k) * size - hair, y: 0)).col
+        XCTAssertEqual(justBelowCol, k - 1, "coord(at:) vs visibleCoords just below a negative cell boundary")
+
+        XCTAssertEqual(camera.coord(at: CGPoint(x: CGFloat(k) * size, y: 0)).col, k)
+        XCTAssertEqual(camera.coord(at: CGPoint(x: CGFloat(k) * size + hair, y: 0)).col, k)
+    }
+
     // MARK: - Probe (b): negative-coordinate correctness
 
     func testNegativeCoordinatesAtCellOriginMidpointAndJustBelowBoundary() {
