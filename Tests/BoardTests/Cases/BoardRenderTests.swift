@@ -239,17 +239,28 @@ final class BoardRenderTests: XCTestCase {
         let camera = BoardCamera(pan: CGSize(width: 13.5, height: -27.25), zoom: 1.25, baseCellSize: 48)
         let board = Self.board()
 
+        // Two different guards are being exercised here, and the empty draw
+        // list alone cannot tell them apart. `emptyExtent` records which one
+        // each case must reach: true means the no-area guard, false means the
+        // case still has to survive `Int(floor(...))` on non-finite input —
+        // the trap family. Without this the non-finite coverage could quietly
+        // become vacuous the day a guard is widened.
+        //
         // A GeometryReader's first layout pass really does report .zero.
-        let degenerate: [(String, CGRect)] = [
-            (".zero", .zero),
-            ("nan origin", CGRect(x: CGFloat.nan, y: 0, width: 640, height: 480)),
-            ("nan size", CGRect(x: 0, y: 0, width: CGFloat.nan, height: CGFloat(480))),
-            ("infinite origin", CGRect(x: -CGFloat.infinity, y: 0, width: 640, height: 480)),
-            ("infinite size", CGRect(x: 0, y: 0, width: CGFloat.infinity, height: CGFloat.infinity)),
-            ("zero width", CGRect(x: 10, y: 10, width: 0, height: 480)),
+        let degenerate: [(name: String, rect: CGRect, emptyExtent: Bool)] = [
+            (".zero", .zero, true),
+            ("zero width", CGRect(x: 10, y: 10, width: 0, height: 480), true),
+            ("nan origin", CGRect(x: CGFloat.nan, y: 0, width: 640, height: 480), false),
+            ("nan size", CGRect(x: 0, y: 0, width: CGFloat.nan, height: CGFloat(480)), false),
+            ("infinite origin", CGRect(x: -CGFloat.infinity, y: 0, width: 640, height: 480), false),
+            ("infinite size", CGRect(x: 0, y: 0, width: CGFloat.infinity, height: CGFloat.infinity), false),
         ]
 
-        for (name, rect) in degenerate {
+        for (name, rect, emptyExtent) in degenerate {
+            XCTAssertEqual(
+                rect.isEmpty, emptyExtent,
+                "\(name) no longer reaches the guard this case exists to cover"
+            )
             XCTAssertTrue(
                 BoardRender.cells(board: board, camera: camera, in: rect).isEmpty,
                 "\(name) rect produced a draw list"
@@ -287,7 +298,17 @@ final class BoardRenderTests: XCTestCase {
         let rect = CGRect(x: 0, y: 0, width: -96, height: -96)
 
         let cells = BoardRender.cells(board: Self.board(), camera: camera, in: rect)
-        XCTAssertEqual(cells.map(\.coord), Array(camera.visibleCoords(in: rect)))
+
+        // Named coords, not `== visibleCoords(...)`: comparing the draw list to
+        // the camera's own range would pass just as happily if a widened
+        // no-area guard swallowed the mirrored rect and both sides came back
+        // empty. The region is real — (-96,-96) to (0,0) at a 48pt cell — so
+        // the exact four cells are the assertion.
+        XCTAssertFalse(rect.isEmpty, "a mirrored rect describes a real region and must still enumerate")
+        XCTAssertEqual(cells.map(\.coord), [
+            Coord(row: -2, col: -2), Coord(row: -2, col: -1),
+            Coord(row: -1, col: -2), Coord(row: -1, col: -1),
+        ])
         for entry in cells {
             XCTAssertEqual(entry.point, camera.point(for: entry.coord))
         }
