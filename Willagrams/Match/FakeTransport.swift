@@ -128,20 +128,30 @@ public actor FakeTransport: MatchTransport {
     ///
     /// The message is discarded on the sending side, which is what a packet
     /// lost in flight looks like to both peers.
+    ///
+    /// Precedence: the filter is checked *before* the peer-terminated check, so
+    /// a dropped message sent after the peer has gone returns normally instead
+    /// of throwing `.peerDisconnected`. That reads right for `.lossy` — a lost
+    /// packet looks sent — and is a known corner for `.reliable`. Do not rely on
+    /// the throw while a filter is installed.
     public func setDropFilter(_ shouldDrop: (@Sendable (MatchMessage) -> Bool)?) {
         dropFilter = shouldDrop
     }
 
-    // MARK: - Hook 3: simulate a disconnect
+    // MARK: - Hook 3: leave the match
 
-    /// Simulates this endpoint dropping out of the match.
+    /// Leaves the match from this endpoint.
+    ///
+    /// Double duty: the real leave path, and the test hook for simulating the
+    /// peer dropping out — from this side the two are the same operation, and
+    /// GameKit reports a graceful leave and a crash as the same state.
     ///
     /// The surviving endpoint sees `.disconnected(localPlayerID)` on its
     /// connection-state stream. Both endpoints' streams then finish, after
     /// their buffered elements are delivered, so no `for await` loop on either
     /// side is left hanging on a peer that will never speak again. Subsequent
     /// sends throw `MatchTransportError.peerDisconnected`.
-    public nonisolated func simulateDisconnect() {
+    public nonisolated func leave() {
         peerStates.yield(.disconnected(localPlayerID))
         peerInbound.finish()
         peerStates.finish()

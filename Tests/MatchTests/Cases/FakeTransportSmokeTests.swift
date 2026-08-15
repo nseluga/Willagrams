@@ -17,6 +17,9 @@ struct FakeTransportSmokeTests {
 
         let sent = MatchMessage.rejected(reason: .poolEmpty)
         try await host.send(sent, delivery: .reliable)
+        // Finishes the stream behind the buffered send, so a message that never
+        // arrives reads as `nil` and fails rather than hanging the run.
+        host.leave()
 
         var inbound = client.inboundMessages.makeAsyncIterator()
         #expect(await inbound.next() == sent)

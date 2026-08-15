@@ -57,9 +57,10 @@ public enum MatchTransportError: Error, Sendable, Equatable {
 ///   start reading.
 /// - **`send` never applies backpressure.** It does not suspend waiting for the
 ///   peer to read, so a slow or absent consumer cannot stall the sender.
-/// - **Termination.** Both streams finish once the peer disconnects, after any
+/// - **Termination.** Both streams finish once either endpoint leaves the match
+///   — `leave()` here, a real drop-out on a networked transport — after any
 ///   already-buffered elements are delivered. A `for await` loop over either
-///   stream therefore ends on disconnect rather than hanging.
+///   stream therefore ends rather than hanging.
 public protocol MatchTransport: Sendable {
 
     /// This device's player. Stable for the life of the match.
@@ -85,4 +86,16 @@ public protocol MatchTransport: Sendable {
     /// - Throws: `MatchTransportError.peerDisconnected` if the peer has already
     ///   gone, or a transport-specific error if handoff itself failed.
     func send(_ message: MatchMessage, delivery: MatchDelivery) async throws
+
+    /// Leaves the match from this endpoint.
+    ///
+    /// The peer observes `.disconnected(localPlayerID)` on its connection-state
+    /// stream. Both endpoints' streams then finish, once their already-buffered
+    /// elements have drained, so no `for await` loop is left hanging on a match
+    /// that is over. A subsequent `send` throws
+    /// `MatchTransportError.peerDisconnected`.
+    ///
+    /// Not `async`, so it is callable from a `deinit` or straight off a UI
+    /// action. Calling it more than once is harmless.
+    func leave()
 }

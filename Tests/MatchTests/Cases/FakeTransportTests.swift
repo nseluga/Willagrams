@@ -52,6 +52,11 @@ struct FakeTransportTests {
         try await host.send(granted, delivery: .reliable)
         try await guest.send(conceded, delivery: .lossy)
 
+        // Leaving finishes both endpoints' streams behind the buffered sends,
+        // so a message the seam failed to deliver reads as `nil` and fails the
+        // expectation instead of suspending this test forever.
+        host.leave()
+
         var guestInbound = guest.inboundMessages.makeAsyncIterator()
         #expect(await guestInbound.next() == granted)
 
@@ -78,6 +83,9 @@ struct FakeTransportTests {
         for message in sent {
             try await host.send(message, delivery: .reliable)
         }
+        // Ends the streams behind the buffered sends: a message that went
+        // missing reads as `nil` here rather than hanging the run.
+        host.leave()
 
         var inbound = guest.inboundMessages.makeAsyncIterator()
         var received: [MatchMessage] = []
@@ -93,10 +101,10 @@ struct FakeTransportTests {
 
     // MARK: - Disconnect
 
-    @Test("A simulated disconnect reaches the surviving endpoint and ends its streams")
+    @Test("One endpoint leaving reaches the surviving endpoint and ends its streams")
     func disconnectReachesSurvivor() async throws {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
-        host.simulateDisconnect()
+        host.leave()
 
         // Draining to completion under a deadline checks both halves at once:
         // the survivor is told who left, and its loop ends instead of hanging.
@@ -136,13 +144,13 @@ struct FakeTransportTests {
         #expect(returnedCleanly == true, "sending a discarded message did not return cleanly in time")
 
         try await host.send(kept, delivery: .reliable)
+        host.leave()
 
         // The peer's first element is the message that was kept, and after the
         // stream finishes there is nothing behind it — so the discarded one
         // never arrived, rather than merely not having arrived yet.
         var inbound = guest.inboundMessages.makeAsyncIterator()
         #expect(await inbound.next() == kept)
-        host.simulateDisconnect()
         #expect(await inbound.next() == nil)
     }
 
@@ -151,7 +159,7 @@ struct FakeTransportTests {
     @Test("A send after the peer is gone throws rather than hanging")
     func sendAfterDisconnectThrows() async throws {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
-        guest.simulateDisconnect()
+        guest.leave()
 
         let message = MatchMessage.rejected(reason: .notYourTurn)
         let threw = await outcome { () -> Bool in

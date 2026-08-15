@@ -7,9 +7,9 @@ import Testing
 @Suite("Match source guardrails")
 struct SourceGuardrailTests {
 
-    /// Built at runtime so this scanner does not match its own source, and so
-    /// an attributed or access-qualified form of the import is still caught.
-    private static let bannedImport = "import " + "GameKit"
+    /// Built at runtime so this scanner does not match its own source even if
+    /// the import gate in ``importsGameCenter(_:)`` is ever loosened.
+    private static let bannedFramework = "Game" + "Kit"
 
     /// This file's own directory — the test sources.
     private static var casesDirectory: URL {
@@ -33,15 +33,21 @@ struct SourceGuardrailTests {
     /// True when `text` has an actual import statement, not merely a comment
     /// saying it must not have one — both source files carry that warning in
     /// their headers, and a scan for the bare words would flag them.
+    ///
+    /// Gated on the line being an import rather than on the exact spelling
+    /// `import GameKit`, so the submodule and attributed forms
+    /// (`import struct GameKit.GKMatch`, `@preconcurrency import GameKit`) are
+    /// caught too.
     private static func importsGameCenter(_ text: String) -> Bool {
         text.components(separatedBy: "\n").contains { line in
             let code = line.trimmingCharacters(in: .whitespaces)
             guard !code.hasPrefix("//") else { return false }
-            return code.contains(bannedImport)
+            guard code.hasPrefix("import ") || code.contains(" import ") else { return false }
+            return code.contains(bannedFramework)
         }
     }
 
-    @Test("Neither the transport sources nor the tests reach for Game Center")
+    @Test("The transport sources hold their compile-time guardrails")
     func noGameCenterFrameworkAnywhere() throws {
         let sources = try Self.swiftFiles(in: Self.matchSourceDirectory)
         let tests = try Self.swiftFiles(in: Self.casesDirectory)
@@ -57,5 +63,16 @@ struct SourceGuardrailTests {
                 "\(file.lastPathComponent) pulls in the Game Center framework"
             )
         }
+
+        // The fake must not exist in a Release build, so the guard has to be the
+        // file's first line of code — items 2-5 all edit this directory.
+        let fake = try String(
+            contentsOf: Self.matchSourceDirectory.appendingPathComponent("FakeTransport.swift"),
+            encoding: .utf8
+        )
+        let firstCode = fake.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.hasPrefix("//") }
+        #expect(firstCode == "#if DEBUG", "FakeTransport.swift must stay entirely behind #if DEBUG")
     }
 }
