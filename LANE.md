@@ -85,7 +85,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - Coord(row: -40, col: -40) maps to a point distinct from Coord(row: 40, col: 40), with no clamping toward the origin
     - visibleCoords(in:) returns exactly the coords whose cells intersect the rect, and its count for a fixed viewport and zoom is the same whether the camera sits at the origin or 500 cells away
     - recenter(over:in:) returns a camera under which every supplied coord's point falls inside the rect, with cell size still inside 24...72pt
-  status: not started
+  status: done
 
 - task: Build BoardView in Willagrams/Board/BoardView.swift — renders the grid and
     the tiles on it through BoardCamera. Draws a cellEmpty background per visible
