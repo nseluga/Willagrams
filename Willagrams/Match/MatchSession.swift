@@ -84,6 +84,13 @@ public enum PeerPresence: Sendable, Equatable {
 /// inside the deadline finds the match exactly where it was. A peer that does
 /// not ends the match with **no winner** — ``isMatchOver`` turns true while
 /// ``winner`` stays `nil`. Only an explicit `.win` or `.resign` ever names one.
+///
+/// One exception, and only for those two messages: a `.win` or `.resign` that
+/// *arrives* while frozen is applied — see ``receive(_:)`` — because the peer
+/// legitimately sent it while it was still here and the two streams are a race.
+/// Nothing else moves. Nothing is sent while frozen either: this device's own
+/// terminal message caught by the freeze is remembered and put on the wire only
+/// once the peer is back and the session is no longer frozen.
 @MainActor
 @Observable
 public final class MatchSession {
@@ -211,6 +218,30 @@ public final class MatchSession {
     /// reading this.
     @ObservationIgnored private var outstandingDrawRequests = 0
 
+    /// This device's own `.win`/`.resign` was caught by the freeze and still
+    /// owes the peer an outcome.
+    ///
+    /// Without it that message is lost for good: ``peerDropped()`` sees a
+    /// finished match and goes straight to `.gone`, so the `!isFrozen` half of
+    /// the exemption in ``blockedByLock(_:)`` never fires again, and a peer that
+    /// reconnects never learns the match ended. `.finished` is terminal on both
+    /// devices, so no later message can put that right — this device shows an
+    /// end screen while the peer plays on alone. ``peerReturned()`` flushes it
+    /// after unfreezing, so a frozen session still sends nothing.
+    ///
+    /// One flag is enough for one message: `claimWin()`/`resign()` both
+    /// `guard !isLocked` and settle the match synchronously, so a second
+    /// terminal message can never be enqueued, and `winner` cannot change once
+    /// this is set. The message itself is rebuilt from `winner` and
+    /// ``winningPlacements`` rather than stored — see ``peerReturned()``.
+    ///
+    /// ponytail: a stored `MatchMessage?` reads better, but adding a field that
+    /// size to this class detonates the Match suite with a `swift_task_dealloc`
+    /// "freed pointer was not the last allocation" abort inside `peerDropped()`'s
+    /// reconnect task — a toolchain fault, reproducible on an otherwise unused
+    /// property and independent of this fix. Store the message when that lands.
+    @ObservationIgnored private var owesTerminalMessage = false
+
     /// - Parameters:
     ///   - transport: the wire. This session becomes the sole consumer of its
     ///     inbound stream immediately.
@@ -329,14 +360,42 @@ public final class MatchSession {
     private func peerIsGone() {
         guard case .reconnecting = peerPresence else { return }
         peerPresence = .gone
+        // Over is over, so `receive` discards everything from here on: against a
+        // real stream, which never finishes, this task would go on decoding and
+        // dropping for the life of the session. The presence pump stays — a peer
+        // can still come back, and may still be owed a terminal message.
+        pump?.cancel()
     }
 
     /// The peer came back inside the deadline. Everything is where it was.
     ///
-    /// `.gone` is terminal, so a late `.connected` cannot restart a match that
-    /// has already ended. `FakeTransport` cannot deliver one — its `leave()`
-    /// finishes both streams — but a real match reports a peer reconnecting.
+    /// `.gone` is terminal for a live match, so a late `.connected` cannot
+    /// restart one that ended with nobody named. `FakeTransport` cannot deliver
+    /// one — its `leave()` finishes both streams — but a real match reports a
+    /// peer reconnecting.
+    ///
+    /// A match that finished here while the peer was on its way out is the one
+    /// case a return does anything with, and it is not a resumption: `isFinished`
+    /// keeps ``isMatchOver`` true and every entry point shut, so nothing goes
+    /// back into play. It is the only chance to hand the returning peer the
+    /// outcome it never heard.
     private func peerReturned() {
+        if isFinished {
+            guard owesTerminalMessage, let outcome = winner else { return }
+            owesTerminalMessage = false
+            // Unfrozen first, so the flush is not a frozen session sending: the
+            // peer really is back, and only `isFinished` locks the session now.
+            peerPresence = .present
+            // Rebuilt, not replayed: `finish()` recorded the same placements
+            // `claimWin()` sent, and a resignation carries nothing but its
+            // sender, so this is the message that was blocked.
+            send(
+                outcome == localPlayerID
+                    ? .win(player: localPlayerID, placements: winningPlacements ?? [])
+                    : .resign(player: localPlayerID)
+            )
+            return
+        }
         guard case .reconnecting = peerPresence else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -378,6 +437,11 @@ public final class MatchSession {
 
     /// Leaves the match and stops every task this session owns.
     public func leave() {
+        // Before the streams go: `tail?.cancel()` reaches the last task enqueued
+        // and not its predecessors, one of which can still be parked inside
+        // `transport.send`. The lock is what actually stops those, and it is read
+        // when each piece of work runs rather than when it was enqueued.
+        peerPresence = .gone
         pump?.cancel()
         presencePump?.cancel()
         countdownTask?.cancel()
@@ -710,8 +774,17 @@ public final class MatchSession {
         countdownTask?.cancel()
         heldCountdownSeconds = nil
         reconnectTask?.cancel()
+        // The window that cancel just closed will never resolve, so a presence
+        // left at `.reconnecting` puts a banner and a countdown to a deadline
+        // nothing reaches over an end screen — the same lie `peerDropped()`
+        // guards against in the opposite ordering.
+        if case .reconnecting = peerPresence { peerPresence = .gone }
         state.status = .finished(winner: winner)
         winningPlacements = placements
+        // Nothing may move a settled match, so every further inbound message is
+        // decoded and discarded. The presence pump stays: a peer coming back is
+        // how an unsent terminal message still gets out.
+        pump?.cancel()
     }
 
     private var isFinished: Bool {
@@ -814,10 +887,18 @@ public final class MatchSession {
     /// suspension between them, so nothing else can have settled the match in
     /// between: a `.win` or `.resign` still on the chain of a finished, unfrozen
     /// session is always this device's own. A frozen session still sends
-    /// nothing, terminal message or not.
+    /// nothing, terminal message or not — it is remembered in
+    /// `owesTerminalMessage` and flushed by ``peerReturned()``.
     private func blockedByLock(_ message: MatchMessage) -> Bool {
         if !isFrozen, Self.endsTheMatch(message) { return false }
         guard isLocked else { return false }
+        // Frozen, with this device's own terminal message still on the chain —
+        // the only way a terminal message reaches here, since `claimWin()` and
+        // `resign()` are its only sources and both are shut once the match is
+        // settled. Remembered rather than dropped: without this the peer that
+        // comes back never learns the match is over, and the two devices are
+        // left disagreeing for good.
+        if Self.endsTheMatch(message) { owesTerminalMessage = true }
         // A request that never left is owed no answer, so the credit it opened
         // must not outlive it: left standing, it would take the opponent's next
         // grant for this device's own and the board would never freeze again.

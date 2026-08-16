@@ -87,14 +87,21 @@ struct MatchSessionTerminalGateTests {
     // MARK: - The exemption cannot fire while frozen
 
     /// A win claimed while the peer was still there, still sitting on the chain
-    /// when the peer goes. The exemption is gated on `!isFrozen`, so this one has
-    /// to be swallowed — a frozen session sends nothing, terminal message or not.
+    /// when the peer goes. The exemption is gated on `!isFrozen`, so nothing goes
+    /// out while the peer is away — a frozen session sends nothing, terminal
+    /// message or not.
+    ///
+    /// Held, though, not swallowed. Dropping it for good is split-brain: this
+    /// device shows finished, and the peer that comes back never hears an outcome
+    /// that `.finished` being terminal means no later message can correct. So the
+    /// second half asserts the flush — nothing on the wire while away, exactly one
+    /// win the moment the peer is back.
     ///
     /// The same drop also arrives at a session that has already finished, which
     /// is the branch that must report `.gone` rather than open a reconnecting
     /// banner over an end screen, and must not disturb the winner it already has.
-    @Test("A win still on the chain when the peer leaves is swallowed, and the drop keeps the winner")
-    func aTerminalMessageQueuedWhenThePeerLeavesNeverReachesTheWire() async throws {
+    @Test("A win still on the chain when the peer leaves waits out the freeze and reaches the peer that comes back")
+    func aTerminalMessageQueuedWhenThePeerLeavesWaitsForTheReturn() async throws {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock)
         try await Terminal.stock(guest, wire)
@@ -128,6 +135,28 @@ struct MatchSessionTerminalGateTests {
         #expect(await wire.drawRequests == 1)
         #expect(await wire.count == 1)
         #expect(guest.winner == Self.bob)
+
+        // The peer comes back. It never heard the outcome, and `.finished` is
+        // terminal on both sides, so this is the only chance to tell it.
+        wire.restore(Self.alice)
+        try await Terminal.waitUntil("the held win to reach the wire") {
+            await Self.terminalsOnTheWire(wire).wins == 1
+        }
+        try await Terminal.settle()
+
+        // Exactly one, and nothing else: the flush is a send, not a resumption.
+        let afterReturn = await Self.terminalsOnTheWire(wire)
+        #expect(afterReturn.wins == 1)
+        #expect(afterReturn.resignations == 0)
+        #expect(await wire.count == 2)
+        #expect(guest.winner == Self.bob)
+        #expect(guest.state.status == .finished(winner: Self.bob))
+        #expect(guest.isMatchOver)
+        // And the board stays shut — the match is over here, peer or no peer.
+        #expect(guest.draw() == false)
+        #expect(guest.claimWin() == false)
+        try await Terminal.settle()
+        #expect(await wire.count == 2)
 
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }
