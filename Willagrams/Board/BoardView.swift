@@ -227,7 +227,7 @@ public struct BoardView: View {
                     offsets: model.tileOffsets
                 )
                 if carried == nil {
-                    model.began(inFlight.grab, haptics: haptics)
+                    model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics)
                 }
                 drag = inFlight
                 model.moved(to: value.translation)

@@ -13,8 +13,8 @@ import UIKit
 /// one thing missing, so this reports it back and `BoardView` composes the zoom
 /// and the pan itself.
 ///
-/// The recognizer goes on the SUPERVIEW, not on the view this makes. A UIKit
-/// view laid over the board would hit-test first and swallow every touch before
+/// The recognizer goes on the WINDOW, not on the view this makes. A UIKit view
+/// laid over the board would hit-test first and swallow every touch before
 /// SwiftUI's drag saw it — the tiles would stop lifting. This view is inert
 /// (`isUserInteractionEnabled = false`) and exists only to name a coordinate
 /// space: the recognizer watches an ancestor, `cancelsTouchesInView` is off and
@@ -30,22 +30,41 @@ struct BoardPinchReporter: UIViewRepresentable {
     /// there is no half-finished pinch to carry forward.
     let onEnd: () -> Void
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+    func makeUIView(context: Context) -> Surface {
+        let view = Surface()
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear
-        // The superview does not exist yet inside `makeUIView`; it does by the
-        // next turn of the run loop.
-        DispatchQueue.main.async { context.coordinator.attach(reporting: view) }
+        // There is no window yet inside `makeUIView`. UIKit says exactly when
+        // there is one, so ask it rather than hopping a run loop and hoping.
+        view.onEnterWindow = { [weak view] in
+            guard let view else { return }
+            context.coordinator.attach(reporting: view)
+        }
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
+    /// A view that does nothing but say when it joins a window.
+    final class Surface: UIView {
+        var onEnterWindow: (() -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { onEnterWindow?() }
+        }
+    }
+
+    func updateUIView(_ uiView: Surface, context: Context) {
         // The closures capture `BoardView` state that changes every frame, so
         // the coordinator is re-pointed at the current ones rather than holding
         // whatever it was built with.
         context.coordinator.onChange = onChange
         context.coordinator.onEnd = onEnd
+        // Attach here too. `makeUIView` runs before this view is in a window,
+        // and a single run-loop hop after it is a guess about when SwiftUI got
+        // around to inserting it — a guess that, when wrong, leaves a pinch
+        // that silently never fires. `attach` is idempotent, so retrying on
+        // every update costs one nil check and removes the timing question.
+        context.coordinator.attach(reporting: uiView)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -66,7 +85,15 @@ struct BoardPinchReporter: UIViewRepresentable {
         }
 
         func attach(reporting view: UIView) {
-            guard let host = view.superview, surface == nil else { return }
+            // The window, not the immediate superview. A recognizer only sees
+            // touches whose hit-test view is its own view or a descendant, and
+            // what SwiftUI puts directly above an overlay's representable is an
+            // implementation detail that need not be an ancestor of the tiles —
+            // when it is not, every pinch lands somewhere the recognizer cannot
+            // see and nothing happens at all. The window is an ancestor of the
+            // board by definition. Midpoints are still reported in this view's
+            // space, so where the recognizer lives changes nothing downstream.
+            guard let host = view.window, surface == nil else { return }
             let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handle(_:)))
             pinch.delegate = self
             // The touches must keep flowing to SwiftUI underneath. Without this

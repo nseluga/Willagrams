@@ -81,6 +81,17 @@ public struct TileDrag: Sendable {
     /// `DesignTokens` is a SwiftUI file this one cannot import. `BoardView`
     /// passes `DesignTokens.Motion.snapThreshold`, so the token stays the one
     /// source of truth and a test can still drive its own distance.
+    /// The board as it reads with the held letters out of it.
+    ///
+    /// Lives here rather than where it is used because taking tiles off a board
+    /// is a move, and every move in this lane goes through this type. Nothing
+    /// is committed: the caller gets a copy to ask a question of.
+    public static func lifting(_ coords: Set<Coord>, from board: Board) -> Board {
+        var next = board
+        for coord in coords { _ = next.remove(at: coord) }
+        return next
+    }
+
     public func drop(
         translation: CGSize,
         on board: Board,

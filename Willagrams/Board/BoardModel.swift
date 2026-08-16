@@ -92,33 +92,27 @@ public struct BoardModel: Sendable {
     /// tint has to be dropped a whole run at a time — see `invalidCoords`.
     private var invalidRuns: [Set<Coord>] = []
 
+    /// The runs as the board reads them WITH the held tiles gone, computed once
+    /// at pickup by `began(_:on:against:haptics:)`. `nil` whenever nothing is
+    /// held — and also for the whole of a hold begun through the plain `began`,
+    /// which has no board to take the letters out of.
+    private var liftedRuns: [Set<Coord>]?
+
     /// Every coord that reads as part of a bad word right now.
     ///
-    /// A run the finger has picked a letter out of is NOT in here. Lifting a
-    /// letter from a bad word used to clear only that letter and leave the rest
-    /// of the run red until the drop committed, because the tint came from
-    /// `validate` at the last commit and the lifted tile only lost its own
-    /// colour through a render exclusion. The word the player just broke is not
-    /// a word any more, and the board should say so the moment it breaks.
+    /// While a letter is held this is the tint of the board the lift LEAVES
+    /// BEHIND, not the tint of the last commit. Both directions matter and only
+    /// a real check gets both: lifting the letter that spoiled a word clears the
+    /// rest of that word, and lifting the `e` out of `cue` turns the `cu` red —
+    /// the second is a word the board has never seen before and no amount of
+    /// arithmetic over the previous answer can discover it.
     ///
-    /// Pure set math over the already-published `invalidWords` — no dictionary
-    /// is consulted, which is what keeps the "no lookups on pickup or mid-drag"
-    /// guarantee intact. Computed rather than stored so it follows the hold with
-    /// no second write site: `revalidate` stays the ONE place validation is
-    /// published.
-    ///
-    /// ponytail: clears tint the lift BROKE, cannot add tint the lift newly
-    /// CAUSES — lifting the middle of a good word leaves the two halves
-    /// untinted until the drop. That is the reported symptom; the general case
-    /// needs `began` to revalidate, which costs the no-lookup guarantee.
+    /// Computed rather than stored so it follows the hold with no write site of
+    /// its own; `revalidate` stays the ONE place *published* validation and
+    /// `canDraw` are written, and a hold never touches either. A board with a
+    /// hole in it is not a board anyone may draw from.
     public var invalidCoords: Set<Coord> {
-        guard let lifted = tileDrag?.origins else {
-            return invalidRuns.reduce(into: Set()) { $0.formUnion($1) }
-        }
-        return invalidRuns.reduce(into: Set()) { total, run in
-            guard run.isDisjoint(with: lifted) else { return }
-            total.formUnion(run)
-        }
+        (liftedRuns ?? invalidRuns).reduce(into: Set()) { $0.formUnion($1) }
     }
 
     /// Where each tile sits INSIDE its cell, in cell units, keyed by tile id.
@@ -230,6 +224,27 @@ public struct BoardModel: Sendable {
         dragTranslation = .zero
         paintCursor = nil
         paintedAny = false
+        liftedRuns = nil
+    }
+
+    /// Takes hold exactly as above, and re-reads the board the hold leaves
+    /// behind so the tint is honest for the whole gesture.
+    ///
+    /// This is the one dictionary pass a gesture makes, and it is made ONCE, at
+    /// touch-down, over a board of at most 144 tiles — not per frame. Nothing
+    /// here writes `validation` or `canDraw`: the answer is a drawing decision
+    /// about a board that is missing letters, and it lives only as long as the
+    /// fingers do.
+    public mutating func began(
+        _ grab: BoardGesture.Grab,
+        on board: Board,
+        against dictionary: some WordList,
+        haptics: some BoardHaptics
+    ) {
+        began(grab, haptics: haptics)
+        guard let held = tileDrag?.origins else { return }
+        let lifted = TileDrag.lifting(held, from: board)
+        liftedRuns = Self.runs(of: lifted.validate(against: dictionary))
     }
 
     /// Enters selection mode, keeping whatever is already swept up. Refused
@@ -336,7 +351,15 @@ public struct BoardModel: Sendable {
     /// `BoardValidation` — no cluster, run or completeness rule is restated.
     private mutating func revalidate(_ board: Board, against dictionary: some WordList) {
         validation = board.validate(against: dictionary)
-        invalidRuns = validation.invalidWords.map { word in
+        invalidRuns = Self.runs(of: validation)
+        tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
+    }
+
+    /// One coord set per bad word. Shared by the committed tint and the tint of
+    /// a board with letters lifted out of it, so the two can never expand the
+    /// same answer two different ways.
+    private static func runs(of validation: BoardValidation) -> [Set<Coord>] {
+        validation.invalidWords.map { word in
             Set(
                 // `text.count` letters from `origin` along `direction`. Every
                 // one of those coords holds a tile by construction — the word
@@ -349,7 +372,6 @@ public struct BoardModel: Sendable {
                 }
             )
         }
-        tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
     }
 
     /// One offset per cluster, handed to every tile in it.
@@ -426,5 +448,6 @@ public struct BoardModel: Sendable {
     public mutating func cancel() {
         tileDrag = nil
         dragTranslation = .zero
+        liftedRuns = nil
     }
 }

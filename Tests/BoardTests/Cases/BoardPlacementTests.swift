@@ -527,7 +527,10 @@ final class BoardPlacementDropTests: XCTestCase {
         // Lift the MIDDLE letter: the two it leaves behind are the ones that
         // used to stay red.
         let lifted = try XCTUnwrap(board.tile(at: Coord(row: 0, col: 1)))
-        model.began(.tile(lifted, at: Coord(row: 0, col: 1)), haptics: SilentHaptics())
+        model.began(
+            .tile(lifted, at: Coord(row: 0, col: 1)),
+            on: board, against: dictionary, haptics: SilentHaptics()
+        )
         XCTAssertTrue(
             model.invalidCoords.isEmpty,
             "the rest of the word stayed tinted while a letter was lifted out of it"
@@ -537,5 +540,35 @@ final class BoardPlacementDropTests: XCTestCase {
         // commit — nothing here rewrote what the checker published.
         model.cancel()
         XCTAssertEqual(Set(run), model.invalidCoords, "cancelling a lift lost the published tint")
+    }
+
+    func testLiftingALetterTurnsTheWordItLeavesBehindRedAtOnce() throws {
+        // The other direction, and the one arithmetic over the last answer can
+        // never reach: CUE is a word, CU is not, and CU has never been on this
+        // board before. Only a real check of the board the lift leaves behind
+        // can know it is bad.
+        let dictionary = EnableWordList(words: ["CUE"])
+        var board = Board()
+        for (index, letter) in "CUE".enumerated() {
+            try board.place(Self.tile(letter, UInt8(60 + index * 30)), at: Coord(row: 0, col: index))
+        }
+
+        var model = BoardModel(board: board, against: dictionary)
+        XCTAssertTrue(model.invalidCoords.isEmpty, "a good word was tinted before anything moved")
+
+        let lifted = try XCTUnwrap(board.tile(at: Coord(row: 0, col: 2)))
+        model.began(
+            .tile(lifted, at: Coord(row: 0, col: 2)),
+            on: board, against: dictionary, haptics: SilentHaptics()
+        )
+        XCTAssertEqual(
+            Set([Coord(row: 0, col: 0), Coord(row: 0, col: 1)]), model.invalidCoords,
+            "the CU left behind stayed uncoloured until the drop"
+        )
+
+        // Nothing about the hold reached the published answer: cancelling gets
+        // the good word back with no re-check.
+        model.cancel()
+        XCTAssertTrue(model.invalidCoords.isEmpty, "cancelling left the restored word red")
     }
 }
