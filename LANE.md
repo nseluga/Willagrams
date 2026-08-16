@@ -168,7 +168,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - With inputLocked set, panning, pinch zoom, and recenter all still work
     - Setting inputLocked during an in-flight drag returns the tile to the coord it started from
     - Clearing inputLocked restores dragging with no residual selected state on any tile
-  status: not started
+  status: done
 
 - task: Add live validation to Willagrams/Board/BoardModel.swift — after every
     committed move, call board.validate(against:) on the frozen dictionary and
