@@ -21,6 +21,11 @@ public enum BoardGesture {
         /// coord travel with the decision so that item needs no second
         /// hit test.
         case tile(Tile, at: Coord)
+        /// The surface is in selection mode and the touch did not land on a
+        /// tile the selection already holds, so the finger sweeps tiles into
+        /// the selection instead of moving the camera or a tile. The cell it
+        /// started on rides along so the sweep needs no second hit test.
+        case paint(at: Coord)
     }
 
     /// One one-finger drag, from touch-down to release.
@@ -62,9 +67,15 @@ public enum BoardGesture {
         /// reverting a tile that was already lifted. A locked touch becomes a
         /// `.pan`, which is why panning, and with it zooming and recentering,
         /// keep working while the tiles are inert — the camera never asks.
+        /// `selection` is read here and nowhere else in this type: whether the
+        /// finger sweeps, moves the selection, moves one tile or moves the
+        /// camera is one decision, taken once, at the same instant as all the
+        /// others. A second seam that re-decided "is this a sweep?" mid-gesture
+        /// would be the thing this whole type exists to prevent.
         public init(
             at startLocation: CGPoint,
             in board: Board,
+            selection: BoardSelection = BoardSelection(),
             camera: BoardCamera,
             inputLocked: Bool = false
         ) {
@@ -99,7 +110,24 @@ public enum BoardGesture {
                 return
             }
 
-            self.grab = board.tile(at: coord).map { .tile($0, at: coord) } ?? .pan
+            let hit = board.tile(at: coord)
+
+            // In selection mode the camera does not take one-finger drags at
+            // all: the finger either moves the selection it took hold of or
+            // paints. Refusing `.pan` here is what makes a sweep across the
+            // surface paint rather than pan, without a second flag anywhere
+            // downstream deciding it again. Two fingers are untouched, so the
+            // pinch stays live and the player can see what they are sweeping.
+            guard !selection.isActive else {
+                if let hit, selection.contains(coord) {
+                    self.grab = .tile(hit, at: coord)
+                } else {
+                    self.grab = .paint(at: coord)
+                }
+                return
+            }
+
+            self.grab = hit.map { .tile($0, at: coord) } ?? .pan
         }
 
         /// `camera` after a cumulative `translation`: the LIVE camera with its

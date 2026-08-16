@@ -93,20 +93,39 @@ public struct TileDrag: Sendable {
             return board
         }
         haptics.fire(.snap)
-        return next
+        return next.board
     }
 
-    /// The moved board, or nil when the drop is refused for any reason at all.
+    /// Where the carried coords would land, or nil when this release is refused
+    /// — the same answer `drop` acts on, asked without acting on it.
+    ///
+    /// Fires no feel and builds no board: a caller that has to follow the move
+    /// with something of its own (a selection that must stay on the tiles it
+    /// swept up) asks this rather than deriving a delta of its own from the
+    /// board that came back, which would be a second copy of the rule below.
+    public func landed(
+        translation: CGSize,
+        on board: Board,
+        camera: BoardCamera,
+        threshold: CGFloat
+    ) -> Set<Coord>? {
+        landing(translation: translation, on: board, camera: camera, threshold: threshold)?.origins
+    }
+
+    /// The moved board and the coords the carried tiles ended on, or nil when
+    /// the drop is refused for any reason at all.
     ///
     /// Every refusal returns nil before `next` is ever handed back, and `next`
     /// is a copy, so the caller above can only ever see a whole move or the
-    /// untouched original.
+    /// untouched original. The landed coords come out of the SAME walk that
+    /// built the board, so nothing above can hold a set of coords the board
+    /// does not agree with.
     private func landing(
         translation: CGSize,
         on board: Board,
         camera: BoardCamera,
         threshold: CGFloat
-    ) -> Board? {
+    ) -> (board: Board, origins: Set<Coord>)? {
         // Live gesture floats. A NaN sails through every comparison below as
         // "false", so it is refused up front rather than reasoned about.
         guard translation.width.isFinite, translation.height.isFinite,
@@ -182,6 +201,6 @@ public struct TileDrag: Sendable {
             // tile's `id` is the id it had before the drag.
             do { try next.place(step.tile, at: step.to) } catch { return nil }
         }
-        return next
+        return (board: next, origins: Set(steps.map(\.to)))
     }
 }

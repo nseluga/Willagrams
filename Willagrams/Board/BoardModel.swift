@@ -25,8 +25,15 @@ public struct BoardModel: Sendable {
     /// The `didSet` is what makes a bare assignment enough. A lock arriving
     /// mid-hold drops the hold on the spot, so no caller has to remember a
     /// second call to make the surface actually inert.
+    /// A lock landing also drops the selection, not just the hold. A selection
+    /// that survived the lock would keep painting the moment the finger moved
+    /// again, and "no selection may begin or continue while locked" would be
+    /// true of beginning only. It is two statements in one `didSet` rather than
+    /// a second cancel path: `cancel` is taken by a pinch stealing the gesture
+    /// too, and a pinch must NOT cost the player what they have swept up —
+    /// zooming is how they see it.
     public var inputLocked: Bool {
-        didSet { if inputLocked { cancel() } }
+        didSet { if inputLocked { cancel(); selection.clear() } }
     }
 
     /// The hold in flight, or nil when nothing is held.
@@ -47,6 +54,28 @@ public struct BoardModel: Sendable {
     /// `BoardRender.cells(dragging:)` takes. `TileDrag.origins` is never empty,
     /// so an empty set here means no hold, with no second flag to disagree.
     public var dragging: Set<Coord> { tileDrag?.origins ?? [] }
+
+    /// What the player has swept up, and whether the surface is sweeping.
+    /// Written only through the transitions below, so a caller cannot put a
+    /// selection here while the surface is locked.
+    public private(set) var selection = BoardSelection()
+
+    /// Every coord that reads `.selected` right now: the hold if there is one,
+    /// otherwise the swept-up set. One property rather than two handed to the
+    /// draw list, because they are never both wanted — a hold taken in
+    /// selection mode IS the selection, and outside it the selection is empty.
+    /// `BoardRender` offsets exactly these by `dragTranslation`, which is
+    /// `.zero` unless a hold is in flight, so a swept-up tile nobody is
+    /// dragging sits still.
+    public var selected: Set<Coord> { tileDrag?.origins ?? selection.coords }
+
+    /// Where the last painted sample was, so a sweep paints the line between
+    /// two reported positions rather than the two positions themselves.
+    private var paintCursor: CGPoint?
+
+    /// Whether this sweep has crossed a tile at all. A sweep that crossed none
+    /// is a tap on empty space, which is the way out of selection mode.
+    private var paintedAny = false
 
     /// What the frozen checker said about the board after the last committed
     /// move. Published state, never recomputed by a reader: `BoardRender` and
@@ -133,10 +162,62 @@ public struct BoardModel: Sendable {
     ///
     /// Call once per gesture. Calling it per frame would fire a pickup per
     /// frame, which is the caller's bug and is not papered over here.
+    /// Takes hold of the WHOLE selection when the grab landed on a tile the
+    /// selection already holds, and of the one tile otherwise. `TileDrag`
+    /// carries a set and one lattice delta either way, so a group move is the
+    /// ordinary move with more coords in it — there is no second commit path
+    /// here for a batch, and so no second place for a batch to land half done.
     public mutating func began(_ grab: BoardGesture.Grab, haptics: some BoardHaptics) {
         guard !inputLocked else { return }
-        tileDrag = TileDrag(grab: grab, haptics: haptics)
+        if case .tile(_, let coord) = grab, selection.isActive, selection.contains(coord) {
+            tileDrag = TileDrag(origins: selection.coords, anchor: coord, haptics: haptics)
+        } else {
+            tileDrag = TileDrag(grab: grab, haptics: haptics)
+        }
         dragTranslation = .zero
+        paintCursor = nil
+        paintedAny = false
+    }
+
+    /// Enters selection mode, keeping whatever is already swept up. Refused
+    /// while locked: a mode entered behind a lock would be a selection begun
+    /// while locked, one finger-move later.
+    public mutating func enterSelection() {
+        guard !inputLocked else { return }
+        selection.enter()
+    }
+
+    /// Sweeps the tiles between the last reported position and this one into
+    /// the selection. `board` is read, never written — a painted selection is a
+    /// drawing decision, and the board does not change until a group drag
+    /// commits through `commit` below.
+    ///
+    /// A no-op outside selection mode and while locked, so the ordinary drag
+    /// path can call it unguarded.
+    public mutating func painting(
+        from start: CGPoint,
+        to point: CGPoint,
+        on board: Board,
+        camera: BoardCamera
+    ) {
+        guard !inputLocked, selection.isActive else { return }
+        let crossed = selection.paint(
+            from: paintCursor ?? start, to: point, on: board, camera: camera
+        )
+        if crossed > 0 { paintedAny = true }
+        paintCursor = point
+    }
+
+    /// Ends a sweep. One that crossed no tile at all is a tap on empty space,
+    /// and that clears the selection and leaves the mode.
+    ///
+    /// Crossed, not newly selected: sweeping back over tiles already swept up
+    /// must not read as a tap. This is the way out, and it costs no tile move,
+    /// which is why it is answered here rather than by any board state.
+    public mutating func endedPainting() {
+        if !paintedAny { selection.clear() }
+        paintCursor = nil
+        paintedAny = false
     }
 
     /// A no-op when nothing is held, so a finger that took hold of the camera
@@ -168,6 +249,17 @@ public struct BoardModel: Sendable {
         let next = tileDrag.drop(
             translation: translation, on: board, camera: camera, threshold: threshold
         )
+        // The selection follows the tiles it was holding. Asked of the drag
+        // rather than derived from the board that came back: the drag is the
+        // one place the delta is decided, and it answers nil on exactly the
+        // refusals that left the board alone, so a refused group move leaves
+        // the selection on the cells the tiles are still standing on.
+        if selection.isActive, tileDrag.origins == selection.coords,
+           let landed = tileDrag.landed(
+               translation: translation, on: board, camera: camera, threshold: threshold
+           ) {
+            selection.replace(with: landed)
+        }
         // On the committed board, not on the one handed in — and on the refused
         // path too, where `drop` hands the original straight back and this is
         // therefore the same answer recomputed rather than a different one.

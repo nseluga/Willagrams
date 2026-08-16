@@ -100,7 +100,7 @@ public struct BoardView: View {
                 board: board,
                 camera: camera,
                 rect: rect,
-                dragging: model.dragging,
+                selected: model.selected,
                 dragTranslation: model.dragTranslation,
                 invalid: model.invalidCoords
             )
@@ -118,6 +118,19 @@ public struct BoardView: View {
                 // matters more now the drag has no minimum distance of its own
                 // to filter the second finger out.
                 .gesture(magnifyGesture.exclusively(before: dragGesture))
+                // Attached AFTER the camera gestures on purpose: the later
+                // modifier is the outer one, so the double tap gets first look
+                // and a single tap falls straight through to the drag. It is a
+                // separate attachment rather than another arm of the exclusive
+                // chain because the pinch must keep first refusal over
+                // everything one finger does, and a double tap must not have to
+                // fail before a drag can start.
+                //
+                // ponytail: which recognizer SwiftUI hands a two-tap sequence to
+                // is not observable in a headless test, so this wiring is pinned
+                // by source text only. Move it into the exclusive chain if a
+                // device session shows the drag swallowing the second tap.
+                .onTapGesture(count: 2) { model.enterSelection() }
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
                 // The lock is a plain assignment: `BoardModel` cancels an
                 // in-flight hold on its own when it lands, so there is no
@@ -169,7 +182,8 @@ public struct BoardView: View {
                 // already spent.
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
                 let inFlight = carried ?? BoardGesture.Drag(
-                    at: value.startLocation, in: board, camera: camera, inputLocked: model.inputLocked
+                    at: value.startLocation, in: board, selection: model.selection,
+                    camera: camera, inputLocked: model.inputLocked
                 )
                 if carried == nil {
                     model.began(inFlight.grab, haptics: haptics)
@@ -177,6 +191,13 @@ public struct BoardView: View {
                 drag = inFlight
                 model.moved(to: value.translation)
                 camera = inFlight.camera(camera, translatedBy: value.translation)
+                // The sweep, on the decision already taken at touch-down. Two
+                // points from SwiftUI and no arithmetic here: the session walks
+                // the line between them, so a fast finger paints the tiles it
+                // crossed rather than the ones two frames happened to land on.
+                if case .paint = inFlight.grab {
+                    model.painting(from: value.startLocation, to: value.location, on: board, camera: camera)
+                }
             }
             .onEnded { value in
                 if !model.dragging.isEmpty {
@@ -198,6 +219,13 @@ public struct BoardView: View {
                             against: dictionary
                         )
                     }
+                } else if case .some(.paint) = drag?.grab {
+                    // A sweep that crossed no tile is a tap on empty space, and
+                    // that is the way out of selection mode. It runs on the
+                    // release of the gesture that was decided a sweep, never on
+                    // a pan or a hold, so nothing else can clear a selection by
+                    // accident.
+                    model.endedPainting()
                 }
                 drag = nil
             }
@@ -274,8 +302,9 @@ private struct BoardSurface: View, Animatable {
     let board: Board
     var camera: BoardCamera
     let rect: CGRect
-    /// Empty between drags. `BoardRender` turns these into `.selected` cells.
-    let dragging: Set<Coord>
+    /// The held tiles, or the swept-up ones when nothing is held. `BoardRender`
+    /// turns these into `.selected` cells.
+    let selected: Set<Coord>
     let dragTranslation: CGSize
     /// The coords the session published after the last committed move. This
     /// view checks nothing itself — it has no word list to check against.
@@ -298,7 +327,7 @@ private struct BoardSurface: View, Animatable {
     var body: some View {
         let cells = BoardRender.cells(
             board: board, camera: camera, in: rect,
-            dragging: dragging, by: dragTranslation, invalid: invalid
+            dragging: selected, by: dragTranslation, invalid: invalid
         )
         let cellSize = camera.cellSize
 

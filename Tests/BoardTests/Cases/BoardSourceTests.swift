@@ -188,7 +188,8 @@ final class BoardSourceTests: XCTestCase {
         // them stops the whole package compiling, so this is the early, legible
         // failure rather than a wall of build errors.
         for name in ["BoardCamera.swift", "BoardRender.swift", "BoardGesture.swift",
-                     "BoardDrag.swift", "BoardModel.swift", "BoardLayout.swift"] {
+                     "BoardDrag.swift", "BoardModel.swift", "BoardLayout.swift",
+                     "BoardSelection.swift"] {
             let text = BoardSource.strippingComments(try BoardSource.text(name))
             let uiImports = BoardSource.matches(#"import\s+(SwiftUI|UIKit|AppKit)"#, in: text)
             XCTAssertTrue(uiImports.isEmpty, "\(name) imports \(uiImports) and is no longer host-compilable")
@@ -736,6 +737,111 @@ final class BoardSourceTests: XCTestCase {
         // marker the pure draw list carries.
         XCTAssertFalse("if badWords.contains(cell.coord)".contains("cell.isInvalid"))
         XCTAssertTrue("cell.isInvalid ? DesignTokens.Palette.danger : Color.clear".contains("cell.isInvalid"))
+    }
+
+    // MARK: - Selection: the view wires the sweep, the pure layer decides it
+
+    func testViewWiresTheDoubleTapAndTheSweepAndDecidesNeitherItself() throws {
+        let text = try view()
+
+        // Entering the mode, sweeping, and releasing a sweep: three wires into
+        // the session, each named on its own so a missing one cannot hide
+        // behind the other two.
+        XCTAssertTrue(
+            text.contains(".onTapGesture(count: 2) { model.enterSelection() }"),
+            "BoardView has no double tap into selection mode"
+        )
+        XCTAssertTrue(
+            text.contains("selection: model.selection"),
+            "BoardView decides the grab without the selection, so a sweep cannot be told from a pan"
+        )
+        XCTAssertTrue(text.contains("model.painting("), "BoardView never sweeps")
+        XCTAssertTrue(
+            text.contains("model.endedPainting()"),
+            "BoardView never releases a sweep, so a tap on empty space cannot get the player out"
+        )
+        XCTAssertTrue(
+            text.contains("selected: model.selected"),
+            "BoardView does not hand the draw list what reads selected"
+        )
+
+        // The sweep runs on the grab decided at touch-down, not on a second
+        // decision of the view's own.
+        XCTAssertTrue(
+            text.contains("if case .paint = inFlight.grab"),
+            "BoardView sweeps without reading the grab decided at touch-down"
+        )
+        for decision in ["selection.paint(", "selection.clear(", "selection.enter(", "BoardSelection("] {
+            XCTAssertFalse(text.contains(decision), "BoardView decides the selection itself via \(decision)")
+        }
+
+        // And the pinch keeps first refusal over everything one finger does, so
+        // zooming stays live while the player sweeps.
+        XCTAssertTrue(
+            text.contains("magnifyGesture.exclusively(before: dragGesture)"),
+            "the pinch no longer has first refusal, so zoom does not stay live through a sweep"
+        )
+    }
+
+    func testPaintingATileCanNeverReachTheBoard() throws {
+        // The guardrail is structural, not a rule to remember: neither the
+        // selection nor the session takes a board it could write through, so a
+        // painted set is view state by construction until a drag commits.
+        let selection = BoardSource.strippingComments(try BoardSource.text("BoardSelection.swift"))
+        for write in ["inout Board", ".place(", ".remove(", "placements"] {
+            XCTAssertFalse(selection.contains(write), "BoardSelection writes to the board via \(write)")
+        }
+        XCTAssertTrue(selection.contains("on board: Board"), "BoardSelection no longer reads a board at all")
+
+        let model = try self.model()
+        XCTAssertFalse(model.contains("inout Board"), "BoardModel's sweep can write to the caller's board")
+        XCTAssertTrue(model.contains("selection.paint("), "BoardModel sweeps through something other than the selection")
+
+        // The one commit path is still the drag's, so a group move cannot have
+        // acquired a batch path of its own.
+        XCTAssertEqual(
+            BoardSource.matches(#"(\.drop\()"#, in: model).count, 1,
+            "BoardModel lands a move somewhere other than the one drop"
+        )
+        for write in [".place(", ".remove("] {
+            XCTAssertFalse(model.contains(write), "BoardModel commits a move itself via \(write)")
+        }
+    }
+
+    func testTheGestureLayerDecidesTheSweepOnceAndNeverPansThroughOne() throws {
+        let gesture = BoardSource.strippingComments(try BoardSource.text("BoardGesture.swift"))
+        XCTAssertTrue(gesture.contains("case paint(at: Coord)"), "the grab has no sweep outcome")
+        XCTAssertTrue(
+            gesture.contains("guard !selection.isActive else"),
+            "the grab decision never reads the selection, so a sweep is decided somewhere else"
+        )
+        // The lock is read BEFORE the selection, so a locked touch is a pan
+        // rather than a sweep.
+        let lock = try XCTUnwrap(gesture.range(of: "guard !inputLocked else"))
+        let sweep = try XCTUnwrap(gesture.range(of: "guard !selection.isActive else"))
+        XCTAssertTrue(lock.lowerBound < sweep.lowerBound, "the lock is read after the sweep decision")
+    }
+
+    func testTheSelectionWiringChecksHaveTeeth() {
+        // A view that swept versus one that only moved a tile.
+        XCTAssertTrue("model.painting(from: value.startLocation".contains("model.painting("))
+        XCTAssertFalse("model.moved(to: value.translation)".contains("model.painting("))
+
+        // A single tap versus the double tap the criterion names.
+        XCTAssertTrue(".onTapGesture(count: 2) { model.enterSelection() }".contains(".onTapGesture(count: 2)"))
+        XCTAssertFalse(".onTapGesture { model.enterSelection() }".contains(".onTapGesture(count: 2)"))
+
+        // A paint that could write to the caller's board versus one that cannot.
+        XCTAssertTrue("func paint(from: CGPoint, to: CGPoint, on board: inout Board)".contains("inout Board"))
+        XCTAssertFalse("func paint(from: CGPoint, to: CGPoint, on board: Board)".contains("inout Board"))
+
+        // A view that decided the sweep itself versus one that read the grab.
+        XCTAssertFalse("if model.selection.isActive { model.painting(".contains("if case .paint = inFlight.grab"))
+        XCTAssertTrue("if case .paint = inFlight.grab {".contains("if case .paint = inFlight.grab"))
+
+        // A second commit path for a batch versus the one drop.
+        XCTAssertEqual(BoardSource.matches(#"(\.drop\()"#, in: "a.drop(x) \n b.drop(y)").count, 2)
+        XCTAssertEqual(BoardSource.matches(#"(\.drop\()"#, in: "tileDrag.drop(translation:)").count, 1)
     }
 
     // MARK: - Lane vocabulary guardrails
