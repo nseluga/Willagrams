@@ -187,7 +187,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - Tiles belonging to a word in invalidWords render in Palette.danger; tiles in valid words and loose tiles do not
     - The published canDraw equals board.validate(against:).isComplete, obtained by calling the frozen method rather than re-deriving the condition
     - Median of 5 runs, revalidating and republishing after a move on a 144-tile board completes in under 16ms
-  status: not started
+  status: done
 
 - task: Add the opening layout and Draw landing to BoardModel — a new match takes
     its opening tiles from outside and places them as Board placements in a block
