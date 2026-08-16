@@ -256,7 +256,7 @@ final class BoardSourceTests: XCTestCase {
             "BoardView does not attach the drag on its own, so one finger may never reach it"
         )
         XCTAssertTrue(
-            text.contains(".simultaneousGesture(magnifyGesture)"),
+            text.contains("BoardPinchReporter("),
             "BoardView does not attach the pinch alongside the drag"
         )
         XCTAssertFalse(
@@ -423,7 +423,7 @@ final class BoardSourceTests: XCTestCase {
         // The pinch path has to drop that pickup, and must NOT call it a
         // rejected drop — criterion 4 counts exactly one reject per refusal.
         let text = try view()
-        let magnify = try section(of: text, from: "private var magnifyGesture", to: "private func recenterControl")
+        let magnify = try section(of: text, from: "private func pinched(", to: "private func recenterControl")
         XCTAssertTrue(magnify.contains("model.cancel()"), "a pinch leaves a stolen tile drag lifted")
         XCTAssertFalse(magnify.contains("haptics"), "the pinch path fires a feel for a cancellation")
         XCTAssertFalse(magnify.contains(".drop("), "the pinch path commits a drop")
@@ -484,7 +484,7 @@ final class BoardSourceTests: XCTestCase {
         // Panning, zooming and recentering stay live while the tiles are inert,
         // and the way that is guaranteed is that neither path can see the flag.
         let text = try view()
-        let magnify = try section(of: text, from: "private var magnifyGesture", to: "private func recenterControl")
+        let magnify = try section(of: text, from: "private func pinched(", to: "private func recenterControl")
         let recenter = try section(of: text, from: "private func recenterControl", to: "private static let recenterLabel")
         for (name, path) in [("the pinch path", magnify), ("the recenter path", recenter)] {
             XCTAssertFalse(path.contains("inputLocked"), "\(name) consults the lock")
@@ -539,7 +539,7 @@ final class BoardSourceTests: XCTestCase {
         // And the camera gestures are still attached unconditionally, so the
         // checks above are not passing on a body that stopped attaching them.
         XCTAssertTrue(
-            body.contains(".gesture(dragGesture)") && body.contains(".simultaneousGesture(magnifyGesture)"),
+            body.contains(".gesture(dragGesture)") && body.contains("BoardPinchReporter("),
             "BoardView no longer attaches the camera gestures"
         )
     }
@@ -812,7 +812,7 @@ final class BoardSourceTests: XCTestCase {
         // front of it, so zoom stays live while the player sweeps AND the sweep
         // itself — a one-finger drag — actually reaches the drag recognizer.
         XCTAssertTrue(
-            text.contains(".simultaneousGesture(magnifyGesture)"),
+            text.contains("BoardPinchReporter("),
             "the pinch is no longer attached alongside the drag, so zoom does not stay live through a sweep"
         )
     }
@@ -1133,8 +1133,8 @@ final class BoardSourceTests: XCTestCase {
 
         // And the section slicer must actually slice, or every path check above
         // is reading the whole file.
-        let file = "private var magnifyGesture {\n  zoom()\n}\nprivate func recenterControl() {\n  frame()\n}"
-        let sliced = try section(of: file, from: "private var magnifyGesture", to: "private func recenterControl")
+        let file = "private func pinched(s: CGFloat) {\n  zoom()\n}\nprivate func recenterControl() {\n  frame()\n}"
+        let sliced = try section(of: file, from: "private func pinched(", to: "private func recenterControl")
         XCTAssertTrue(sliced.contains("zoom()"))
         XCTAssertFalse(sliced.contains("frame()"))
     }

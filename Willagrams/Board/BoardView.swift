@@ -41,7 +41,7 @@ public struct BoardView: View {
     /// in `BoardModel`, which is pure and executable by `Tests/BoardTests`;
     /// this view only reports touches into it and draws what comes back.
     ///
-    /// A second finger arriving is handled — `magnifyGesture` cancels the
+    /// A second finger arriving is handled — the pinch path cancels the
     /// session on its first change, because with no minimum distance the first
     /// finger has usually picked a tile up by then.
     ///
@@ -123,7 +123,18 @@ public struct BoardView: View {
                 // which is checked state rather than an inferred recognizer
                 // outcome.
                 .gesture(dragGesture)
-                .simultaneousGesture(magnifyGesture)
+                // The pinch is a UIKit recognizer, not a SwiftUI gesture:
+                // `MagnifyGesture` freezes its midpoint at the instant the
+                // second finger lands, so a pinch could only ever zoom about
+                // where it began. The reporter is inert and sits over the board
+                // purely to name a coordinate space — it takes no touches away
+                // from the drag beneath it.
+                .overlay(
+                    BoardPinchReporter(
+                        onChange: { scale, midpoint in pinched(scale: scale, midpoint: midpoint) },
+                        onEnd: { pinch = nil }
+                    )
+                )
                 // Attached AFTER the camera gestures on purpose: the later
                 // modifier is the outer one, so the double tap gets first look
                 // and a single tap falls straight through to the drag. It is a
@@ -268,30 +279,31 @@ public struct BoardView: View {
     ///
     /// The stored start is carried over only while the midpoint is unchanged,
     /// for the same cancelled-gesture reason as `drag`.
-    private var magnifyGesture: some Gesture {
-        MagnifyGesture()
-            .onChanged { value in
-                // A second finger landing takes the gesture away from
-                // `DragGesture`, which then never reaches `onEnded` — and with
-                // no minimum distance the first finger may already have picked
-                // a tile up. Drop that pickup here or the tile stays lifted
-                // under a pinch that has nothing to do with it.
-                //
-                // No haptic fires on this path. A pinch stealing the gesture is
-                // a cancellation, not a refused drop, and firing `.reject` here
-                // would put a second reject in a count that must record exactly
-                // one per rejected drop. The board is untouched either way.
-                //
-                // The same one cancel the model takes when it is locked, not a
-                // second copy of it: two cancel paths are two chances to clear
-                // half of one.
-                model.cancel()
-                let carried = pinch.flatMap { $0.anchor == value.startLocation ? $0.camera : nil }
-                let start = carried ?? camera
-                pinch = (anchor: value.startLocation, camera: start)
-                camera = start.magnified(by: value.magnification, about: value.startLocation)
-            }
-            .onEnded { _ in pinch = nil }
+    /// Zoom and pan in one motion, composed from the live midpoint.
+    ///
+    /// `magnified(by:about:)` holds the board point under the midpoint the
+    /// fingers STARTED at fixed, and the pan then carries that point to where
+    /// the midpoint is now. So the board position the fingers landed on stays
+    /// under the fingers however far they spread and however far they slide —
+    /// which is "zoom and scroll together, about where the zoom happens".
+    ///
+    /// Both are computed from the snapshot taken when the pinch began, so the
+    /// two never accumulate on each other: every frame is a whole answer.
+    private func pinched(scale: CGFloat, midpoint: CGPoint) {
+        // A second finger landing may arrive after the first has already lifted
+        // a tile, and with no minimum distance it usually has. Drop that pickup
+        // or the tile stays lifted under a pinch that has nothing to do with it.
+        // No haptic: a pinch stealing the gesture is a cancellation, not a
+        // refused drop.
+        model.cancel()
+        let start = pinch ?? (anchor: midpoint, camera: camera)
+        if pinch == nil { pinch = start }
+        camera = start.camera
+            .magnified(by: scale, about: start.anchor)
+            .panned(by: CGSize(
+                width: midpoint.x - start.anchor.x,
+                height: midpoint.y - start.anchor.y
+            ))
     }
 
     // MARK: - Recenter
