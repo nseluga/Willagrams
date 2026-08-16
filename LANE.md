@@ -210,7 +210,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - The initial camera frames every opening tile with margin, in landscape, on both an iPad and an iPhone viewport
     - Tiles delivered by a Draw land at coords inside the viewport rect at the moment of delivery, and none is adjacent to an existing tile
     - Delivering onto a board whose cells below are already occupied still places every tile, and Board.placementList grows by exactly the number delivered
-  status: not started
+  status: done
 
 - task: Add multi-tile selection and group drag to BoardView. A double-tap enters
     selection mode. While in it, a one-finger drag across the surface paints every
