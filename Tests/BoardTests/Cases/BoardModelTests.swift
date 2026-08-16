@@ -244,7 +244,12 @@ final class BoardModelTests: XCTestCase {
         XCTAssertTrue(model.dragging.isEmpty)
         XCTAssertEqual(model.dragTranslation, .zero)
         XCTAssertEqual(feel.events, [.pickup], "the cancel path fired a feel")
-        XCTAssertFalse(model.inputLocked, "cancelling set the lock")
+
+        // Cancelling drops the HOLD, never the lock: a `cancel()` that cleared
+        // the flag would let the touch after a lock-cancelled one take a tile.
+        model.inputLocked = true
+        model.cancel()
+        XCTAssertTrue(model.inputLocked, "cancelling cleared the lock")
 
         let released = model.commit(
             translation: Self.oneCell, on: fixture.board,
@@ -286,6 +291,47 @@ final class BoardModelTests: XCTestCase {
         )
         XCTAssertEqual(released.placementList, fixture.board.placementList, "the release committed under the lock")
         XCTAssertEqual(feel.events, [.pickup], "the release fired a feel under the lock")
+    }
+
+    func testAGestureCaughtMidFlightMovesNeitherTileNorCameraWhileTheNextTouchStillPans() throws {
+        // Deliberate: a finger already holding a tile when the lock lands goes
+        // inert for the rest of ITS touch — the tile stops following it and the
+        // board does not start following it either. Panning comes back on the
+        // next touch down, which is the half that makes "panning stays live
+        // while locked" true rather than a surface that is inert forever.
+        let fixture = self.fixture()
+        let feel = SessionHaptics()
+        var model = BoardModel()
+
+        let inFlight = BoardGesture.Drag(
+            at: Self.touch, in: fixture.board, camera: Self.camera, inputLocked: model.inputLocked
+        )
+        XCTAssertEqual(inFlight.grab, .tile(fixture.tile, at: Self.home))
+        model.began(inFlight.grab, haptics: feel)
+        model.moved(to: Self.oneCell)
+
+        model.inputLocked = true
+
+        // The rest of that same touch: the view carries `inFlight` rather than
+        // deciding again, so these are the only two things it can still do.
+        let travel = CGSize(width: 144, height: 60)
+        model.moved(to: travel)
+        let carriedCamera = inFlight.camera(Self.camera, translatedBy: travel)
+
+        XCTAssertTrue(model.dragging.isEmpty, "the caught gesture kept holding the tile")
+        XCTAssertEqual(model.dragTranslation, .zero, "the caught gesture kept moving the tile")
+        XCTAssertEqual(carriedCamera.pan, Self.camera.pan, "the caught gesture started panning mid-touch")
+        XCTAssertEqual(carriedCamera.zoom, Self.camera.zoom)
+
+        // The NEXT touch, still locked, on the very same tile: it pans.
+        let next = BoardGesture.Drag(
+            at: Self.touch, in: fixture.board, camera: Self.camera, inputLocked: model.inputLocked
+        )
+        XCTAssertEqual(next.grab, .pan, "a touch under the lock still took hold of a tile")
+        let panned = next.camera(Self.camera, translatedBy: travel)
+        XCTAssertEqual(panned.pan, CGSize(width: Self.camera.pan.width + travel.width,
+                                          height: Self.camera.pan.height + travel.height),
+                       "panning is dead while the lock is set")
     }
 
     func testMovedWritesNoOffsetWhileNothingIsHeld() {

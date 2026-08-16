@@ -495,6 +495,14 @@ final class BoardSourceTests: XCTestCase {
             XCTAssertFalse(body.contains(killer), "BoardView's body spends the lock on \(killer), stopping the camera too")
         }
 
+        // The same two, over the WHOLE file: the body slice ends at
+        // `dragGesture`, so a `.disabled(` on the surface inside `BoardSurface`
+        // — or on any modifier below the slice — would sail past the check
+        // above while taking the camera down just the same.
+        for killer in [".disabled(", ".allowsHitTesting("] {
+            XCTAssertFalse(text.contains(killer), "BoardView spends the lock on \(killer) outside its body, stopping the camera too")
+        }
+
         // The body names the lock exactly once, and that once is the sync into
         // the session. A second mention is a second decision.
         let named = body.split(separator: "\n").filter { $0.contains("Locked") }
@@ -536,6 +544,26 @@ final class BoardSourceTests: XCTestCase {
         let conditional = "if !inputLocked { surface.gesture(dragGesture) } else { surface }"
         XCTAssertEqual(conditional.split(separator: "\n").filter { $0.contains("Locked") }.count, 1)
         XCTAssertFalse(conditional.contains(".onChange(of: inputLocked, initial: true)"))
+
+        // And the widened whole-file half: a `.disabled(` planted BELOW the
+        // body slice — inside `BoardSurface`, say — is invisible to the slice
+        // and must still be caught by the file-wide check.
+        let plantedOutsideTheBody = """
+            public var body: some View {
+                BoardSurface(board: board, camera: camera, rect: rect)
+                    .gesture(magnifyGesture.exclusively(before: dragGesture))
+                    .onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }
+            }
+            private var dragGesture: some Gesture { DragGesture() }
+            private struct BoardSurface: View {
+                var body: some View { ZStack { Canvas { _, _ in } }.disabled(locked) }
+            }
+            """
+        let slice = plantedOutsideTheBody
+            .range(of: "private var dragGesture")
+            .map { String(plantedOutsideTheBody[..<$0.lowerBound]) }
+        XCTAssertEqual(slice?.contains(".disabled("), false, "the plant must be outside the body slice")
+        XCTAssertTrue(plantedOutsideTheBody.contains(".disabled("), "the file-wide check must catch the plant")
     }
 
     func testFeedbackHoldsPreparedGeneratorsAndNeverTrapsOffTheMainActor() throws {

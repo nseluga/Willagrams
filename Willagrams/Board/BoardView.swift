@@ -129,6 +129,16 @@ public struct BoardView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                // ponytail: a lock landing mid-gesture leaves the carried grab
+                // `.tile`, so that finger neither drags nor pans until it lifts
+                // — the next touch down pans normally. Rebuilding the `Drag`
+                // here would be worse, not better: `value.translation` is
+                // cumulative from touch-down, so a fresh `Drag` would take the
+                // current pan as its origin and then jump the board by all the
+                // pre-lock travel at once. Upgrade when a real session shows the
+                // inert finger mattering: give `Drag` a translation offset it
+                // subtracts, so a mid-gesture rebuild can discount the travel
+                // already spent.
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
                 let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, camera: camera, inputLocked: model.inputLocked
