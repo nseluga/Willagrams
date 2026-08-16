@@ -156,13 +156,21 @@ public enum DesignTokens {
         /// How far a selected tile rises off the board, in points. Negative is up.
         public static let tileLift: CGFloat = -8
 
-        /// How near an occupied edge a dragged tile must be released before it
-        /// clicks into place, in points.
+        /// How far off a cell's centre a tile may be released and still land on
+        /// it, in points.
         ///
-        /// This is the magnetic feel, and it is the knob to turn when tiles
-        /// snap too eagerly or not eagerly enough. Too low and placing feels
-        /// fiddly; too high and tiles jump to cells the player did not mean.
-        public static let snapThreshold: CGFloat = 22
+        /// Large enough to cover a whole cell at every zoom: the furthest a
+        /// release can fall from the nearest cell's centre is half a cell
+        /// diagonally, `hypot(36, 36) ≈ 51` at the 72pt ceiling. So every drop
+        /// lands, and a tile is refused only when the cell is genuinely taken.
+        ///
+        /// It was 22 against a 48pt cell, which is an acceptance circle over
+        /// two thirds of the cell's area — a third of all releases reverted,
+        /// and the faster the drag the likelier the release fell in the band.
+        /// There is no "too far" to refuse here: the nearest cell has already
+        /// been chosen by the time this is read, so a distance refusal only
+        /// ever threw away a drop the player had already aimed.
+        public static let snapThreshold: CGFloat = 96
     }
 }
 
