@@ -233,7 +233,7 @@ player navigates by panning and zooming rather than by the board having edges.
     - Dragging one selected tile moves all of them, and every pairwise row/col offset within the selection is identical before and after
     - A group move whose destination overlaps a non-selected tile leaves Board.placementList unchanged
     - Tapping empty space clears the selection and restores ordinary panning and single-tile dragging
-  status: not started
+  status: done
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
 
