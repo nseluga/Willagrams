@@ -10,17 +10,20 @@ struct WillagramsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // TESTING HARNESS — branch `testing/board-harness` only. Never merge.
-            // The shell lane owns this file and the real root; until it lands
-            // there is no way to reach BoardView on a device, so this stands one
-            // up with a standard opening so the board lane can be tried by hand.
+            // ponytail: the app root is a TEST HARNESS, deliberately, on main.
+            // The `shell` lane owns this file and writes the real root; until it
+            // lands there is no way to reach BoardView on a device, and every
+            // board fix so far came from driving it by hand — no test in this
+            // repo reaches a gesture. So the harness stays and the entry point
+            // is a demo with a fixed seed. Delete `BoardHarness` and everything
+            // below it the moment `shell` authors this file.
             BoardHarness()
         }
     }
 }
 
 /// Throwaway. Stands up a 21-tile opening framed on an iPad viewport so the
-/// board can be driven by hand. Delete with the branch.
+/// board can be driven by hand. Delete with the `shell` lane, not with a branch.
 private struct BoardHarness: View {
 
     private let board: Board
