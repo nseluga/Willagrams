@@ -335,3 +335,172 @@ final class BoardPlacementTests: XCTestCase {
         XCTAssertTrue(selection.contains(Coord(row: 0, col: 0)))
     }
 }
+
+/// Tuning follow-up: the two reasons a drag reverted or landed a cell wide of
+/// where it looked, both of which arrived WITH the offsets and neither of which
+/// any existing test covered.
+final class BoardPlacementDropTests: XCTestCase {
+
+    private final class SilentHaptics: BoardHaptics, @unchecked Sendable {
+        func fire(_ event: BoardHapticEvent) {}
+    }
+
+
+    /// The real `DesignTokens.Motion.snapThreshold`, read out of the source.
+    ///
+    /// `DesignTokens` is a SwiftUI file this package cannot import, and a
+    /// literal copied here would let the token drift back to a value that
+    /// reverts drops while these stayed green. Parsing it keeps the token the
+    /// one source of truth for the number these tests depend on.
+    private static let snapThreshold: CGFloat = {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Cases
+            .deletingLastPathComponent()   // BoardTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("Willagrams/Style/DesignTokens.swift")
+        guard let text = try? String(contentsOf: url, encoding: .utf8),
+              let match = try? NSRegularExpression(pattern: #"snapThreshold:\s*CGFloat\s*=\s*([0-9.]+)"#)
+                .firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text),
+              let value = Double(text[range])
+        else { return 0 }
+        return CGFloat(value)
+    }()
+
+    private static func tile(_ letter: Character, _ seed: UInt8) -> Tile {
+        Tile(
+            id: UUID(uuid: (seed, 255 &- seed, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+            letter: letter
+        )
+    }
+
+    /// The reported "some letters won't let me connect".
+    ///
+    /// Two clusters leaning opposite ways: the target sits 0.4 cells right of
+    /// its lattice, the carried tile 0.4 cells left of its own. Releasing the
+    /// carried tile where it LOOKS flush against the target therefore leaves it
+    /// 0.8 cells off its own lattice position — and measuring that from the
+    /// bare cell puts the drop 1.3 cells along, so it indexes the cell BEYOND
+    /// the one the player aimed at. The tile lands with a gap and does not join
+    /// the word, which is the bug seen by hand.
+    func testATileReleasedWhereItLooksFlushLandsInTheCellItLooksFlushWith() throws {
+        let target = Self.tile("W", 10)
+        let carried = Self.tile("E", 200)
+        var board = Board()
+        try board.place(target, at: Coord(row: 0, col: 0))
+        try board.place(carried, at: Coord(row: 0, col: 5))
+
+        let camera = BoardCamera()
+        let size = camera.cellSize
+        let offsets: [UUID: CGSize] = [
+            target.id: CGSize(width: 0.4, height: 0),
+            carried.id: CGSize(width: -0.4, height: 0),
+        ]
+
+        // Where the finger has to let go for the carried tile to be DRAWN
+        // exactly one cell right of the target, sharing its lean.
+        let from = BoardHit.origin(of: Coord(row: 0, col: 5), tile: carried, offsets: offsets, camera: camera)
+        let to = BoardHit.origin(of: Coord(row: 0, col: 1), tile: target, offsets: offsets, camera: camera)
+        let translation = CGSize(width: to.x - from.x, height: to.y - from.y)
+
+        let drag = try XCTUnwrap(
+            TileDrag(origins: [Coord(row: 0, col: 5)], anchor: Coord(row: 0, col: 5), haptics: SilentHaptics())
+        )
+        let landed = drag.landed(
+            translation: translation, on: board, camera: camera,
+            threshold: Self.snapThreshold, offsets: offsets
+        )
+        XCTAssertEqual(
+            landed, [Coord(row: 0, col: 1)],
+            "a tile released looking flush against a word did not land beside it"
+        )
+
+        // Teeth: the same release measured from the bare lattice — what the
+        // drag did before the offsets were threaded through — lands somewhere
+        // else entirely. If this ever stops differing, the assertion above has
+        // stopped testing the fix.
+        let blind = drag.landed(
+            translation: translation, on: board, camera: camera,
+            threshold: Self.snapThreshold, offsets: [:]
+        )
+        XCTAssertNotEqual(blind, [Coord(row: 0, col: 1)])
+        XCTAssertGreaterThan(size, 0)
+    }
+
+    /// The reported "dragging quickly reverts to where it started".
+    ///
+    /// Nothing about the drop is wrong here — it is simply released nearer a
+    /// cell's corner than its centre. The old 22pt window against a 48pt cell
+    /// accepted an acceptance circle covering two thirds of the cell's area, so
+    /// a release anywhere in the remaining third reverted, and the faster the
+    /// drag the likelier it fell there.
+    func testAReleaseNearACellsCornerStillLands() throws {
+        let moving = Self.tile("W", 10)
+        var board = Board()
+        try board.place(moving, at: Coord(row: 0, col: 0))
+
+        let camera = BoardCamera()
+        let size = camera.cellSize
+        // 0.45 of a cell along both axes: reach ≈ 30pt, inside the cell and
+        // well outside the old 22pt window.
+        let translation = CGSize(width: size * 1.45, height: size * 0.45)
+        let reach = hypot(size * 0.45, size * 0.45)
+        XCTAssertGreaterThan(reach, 22, "this release no longer sits in the band that used to revert")
+        XCTAssertLessThan(reach, size / 2 * 2.squareRoot(), "this release is not inside the cell")
+
+        let drag = try XCTUnwrap(
+            TileDrag(origins: [Coord(row: 0, col: 0)], anchor: Coord(row: 0, col: 0), haptics: SilentHaptics())
+        )
+        let landed = drag.landed(
+            translation: translation, on: board, camera: camera,
+            threshold: Self.snapThreshold, offsets: [:]
+        )
+        XCTAssertEqual(landed, [Coord(row: 0, col: 1)], "a release inside the cell reverted")
+    }
+
+    /// A blob must not move because something joined it.
+    ///
+    /// The offset used to be derived from the cluster's lowest coord in reading
+    /// order, so a letter landing above or left of a word renamed the whole
+    /// cluster and slid every letter in it to a new offset — the word visibly
+    /// jumped at the instant it was completed. The offset the cluster already
+    /// carries wins instead, and the joining letter adopts it.
+    func testAWordDoesNotMoveWhenALetterJoinsItFromTheLeft() throws {
+        let dictionary = EnableWordList(words: ["WILL", "AM"])
+        var board = Board()
+        // "ILL" at cols 1...3, so a "W" joining at col 0 becomes the cluster's
+        // new lowest coord — exactly the case that used to rename it.
+        for (index, letter) in "ILL".enumerated() {
+            try board.place(Self.tile(letter, UInt8(60 + index * 20)), at: Coord(row: 0, col: index + 1))
+        }
+        let joiner = Self.tile("W", 250)
+        try board.place(joiner, at: Coord(row: 4, col: 1))
+
+        var model = BoardModel(board: board, against: dictionary)
+        let before = model.tileOffsets
+        let word = try (1...3).map { try XCTUnwrap(board.tile(at: Coord(row: 0, col: $0))) }
+        let settled = try XCTUnwrap(before[word[0].id])
+
+        let camera = BoardCamera()
+        let size = camera.cellSize
+        model.began(.tile(joiner, at: Coord(row: 4, col: 1)), haptics: SilentHaptics())
+        let next = model.commit(
+            translation: CGSize(width: -size, height: -4 * size),
+            on: board, camera: camera,
+            threshold: Self.snapThreshold, against: dictionary
+        )
+
+        XCTAssertNotNil(next.tile(at: Coord(row: 0, col: 0)), "the joining letter did not land beside the word")
+        for tile in word {
+            XCTAssertEqual(
+                model.tileOffsets[tile.id], settled,
+                "the word moved because a letter joined it"
+            )
+        }
+        XCTAssertEqual(
+            model.tileOffsets[joiner.id], settled,
+            "the joining letter did not adopt the word's offset"
+        )
+    }
+}

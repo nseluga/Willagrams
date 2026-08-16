@@ -273,8 +273,14 @@ public struct BoardModel: Sendable {
         against dictionary: some WordList
     ) -> Board {
         guard let tileDrag else { return board }
+        // The offsets as they stand BEFORE this commit, which is what the tiles
+        // were drawn at while the finger was down — read once here because
+        // `revalidate` below overwrites the table with the offsets of the board
+        // that results from this very move.
+        let drawn = tileOffsets
         let next = tileDrag.drop(
-            translation: translation, on: board, camera: camera, threshold: threshold
+            translation: translation, on: board, camera: camera,
+            threshold: threshold, offsets: drawn
         )
         // The selection follows the tiles it was holding. Asked of the drag
         // rather than derived from the board that came back: the drag is the
@@ -283,7 +289,8 @@ public struct BoardModel: Sendable {
         // the selection on the cells the tiles are still standing on.
         if selection.isActive, tileDrag.origins == selection.coords,
            let landed = tileDrag.landed(
-               translation: translation, on: board, camera: camera, threshold: threshold
+               translation: translation, on: board, camera: camera,
+               threshold: threshold, offsets: drawn
            ) {
             selection.replace(with: landed)
         }
@@ -313,27 +320,53 @@ public struct BoardModel: Sendable {
                 }
             }
         )
-        tileOffsets = Self.offsets(for: board)
+        tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
     }
 
     /// One offset per cluster, handed to every tile in it.
     ///
-    /// The cluster's lowest coord in reading order names it, and that tile's id
-    /// is what the offset is drawn from — so the answer depends on the board
-    /// alone and not on the order a `Set` happened to iterate. A cluster that
-    /// gains or loses a letter is renamed by that rule and shifts as one piece,
-    /// which is the visible "the word settles when you complete it".
-    private static func offsets(for board: Board) -> [UUID: CGSize] {
+    /// The offset a cluster ALREADY had wins, so a blob does not move because
+    /// something joined it. Offsets are history, not a function of the board:
+    /// where a word sits on the table is where the player last put it, and a
+    /// rule derived from the board alone would slide the whole blob sideways
+    /// every time a letter landed on its edge.
+    ///
+    /// The offset most of the cluster is already carrying wins the merge — so
+    /// the big blob holds its place and the joining letter is the one that
+    /// snaps flush into it, which is the "connect letters and they grid"
+    /// behaviour seen from the other side. Ties, and clusters made only of
+    /// tiles no table has ever held, fall back to the deterministic scatter
+    /// below, seeded from the cluster's lowest coord in reading order.
+    private static func offsets(
+        for board: Board, carrying previous: [UUID: CGSize]
+    ) -> [UUID: CGSize] {
         var table: [UUID: CGSize] = [:]
         for cluster in board.clusters {
             guard let anchor = cluster.min(by: { ($0.row, $0.col) < ($1.row, $1.col) }),
                   let seed = board.tile(at: anchor)
             else { continue }
-            let offset = Self.scattered(seed.id)
-            for coord in cluster {
-                guard let tile = board.tile(at: coord) else { continue }
-                table[tile.id] = offset
+
+            let tiles = cluster.compactMap { board.tile(at: $0) }
+            // A linear tally rather than a dictionary: `CGSize` only conforms
+            // to `Hashable` on macOS 15, which the test package predates, and a
+            // cluster holds a handful of tiles.
+            var tally: [(offset: CGSize, count: Int)] = []
+            for tile in tiles {
+                guard let held = previous[tile.id] else { continue }
+                if let seen = tally.firstIndex(where: { $0.offset == held }) {
+                    tally[seen].count += 1
+                } else {
+                    tally.append((offset: held, count: 1))
+                }
             }
+            // A tie falls to the scatter rather than to whichever tile the set
+            // happened to iterate first, so two loose letters meeting land the
+            // same way every time — and so this answer does not depend on
+            // `Set` ordering, which the offsets must never do.
+            let leaders = tally.filter { $0.count == (tally.map(\.count).max() ?? 0) }
+            let offset = leaders.count == 1 ? leaders[0].offset : Self.scattered(seed.id)
+
+            for tile in tiles { table[tile.id] = offset }
         }
         return table
     }

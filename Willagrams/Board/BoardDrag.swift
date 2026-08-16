@@ -85,9 +85,13 @@ public struct TileDrag: Sendable {
         translation: CGSize,
         on board: Board,
         camera: BoardCamera,
-        threshold: CGFloat
+        threshold: CGFloat,
+        offsets: [UUID: CGSize] = [:]
     ) -> Board {
-        guard let next = landing(translation: translation, on: board, camera: camera, threshold: threshold)
+        guard let next = landing(
+            translation: translation, on: board, camera: camera,
+            threshold: threshold, offsets: offsets
+        )
         else {
             haptics.fire(.reject)
             return board
@@ -107,9 +111,13 @@ public struct TileDrag: Sendable {
         translation: CGSize,
         on board: Board,
         camera: BoardCamera,
-        threshold: CGFloat
+        threshold: CGFloat,
+        offsets: [UUID: CGSize] = [:]
     ) -> Set<Coord>? {
-        landing(translation: translation, on: board, camera: camera, threshold: threshold)?.origins
+        landing(
+            translation: translation, on: board, camera: camera,
+            threshold: threshold, offsets: offsets
+        )?.origins
     }
 
     /// The moved board and the coords the carried tiles ended on, or nil when
@@ -124,7 +132,8 @@ public struct TileDrag: Sendable {
         translation: CGSize,
         on board: Board,
         camera: BoardCamera,
-        threshold: CGFloat
+        threshold: CGFloat,
+        offsets: [UUID: CGSize]
     ) -> (board: Board, origins: Set<Coord>)? {
         // Live gesture floats. A NaN sails through every comparison below as
         // "false", so it is refused up front rather than reasoned about.
@@ -136,9 +145,25 @@ public struct TileDrag: Sendable {
         guard size > 0, size.isFinite else { return nil }
         let half = size / 2
 
-        // Where the anchor cell's CENTRE ended up. Centre, not corner, because
-        // the distance being measured is centre-to-centre.
-        let start = camera.point(for: anchor)
+        // Where the anchor tile's DRAWN centre ended up — its offset included,
+        // through the same `BoardHit.origin` the renderer positions it with.
+        //
+        // The lattice corner is the wrong origin to measure from. A tile is
+        // drawn at its cell plus its cluster's offset, so measuring from the
+        // bare cell puts the whole offset into the residual below: to make a
+        // tile LOOK flush against a blob the player has to leave it
+        // `|theirOffset - myOffset|` cells off its own lattice position, up to
+        // most of a cell, and the drop is refused for a distance the eye can
+        // not see. Aiming where it looks right would revert; aiming where it
+        // looks wrong would snap. Measuring from the drawn position makes
+        // "where it lands" and "where it looks" the same question again.
+        //
+        // A tile with no entry sits on its cell, which is what `origin` answers
+        // for an empty table — so a board drawn before the first publish still
+        // measures from exactly where it is drawn.
+        let start = board.tile(at: anchor).map {
+            BoardHit.origin(of: anchor, tile: $0, offsets: offsets, camera: camera)
+        } ?? camera.point(for: anchor)
         let dropped = CGPoint(
             x: start.x + translation.width + half,
             y: start.y + translation.height + half
