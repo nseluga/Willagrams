@@ -177,7 +177,7 @@ declared without editing them, stop and report rather than editing either.
     - A simulated peer disconnect freezes the session — attempts to place a tile or send
       a request are refused — and the exposed reconnecting deadline is in the future
     - Letting the deadline pass ends the match with no winner named
-  status: not started
+  status: done
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
 
