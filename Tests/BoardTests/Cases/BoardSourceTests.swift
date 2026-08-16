@@ -227,22 +227,36 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertTrue(text.contains("drag = nil"), "BoardView never releases the drag")
     }
 
-    func testViewComposesTheGesturesExclusivelyRatherThanSimultaneously() throws {
-        // Two fingers drift far enough to feed a drag recognizer — and the drag
-        // now has no minimum distance of its own to filter them out — so under
-        // `.simultaneousGesture` a pinch feeds BOTH recognizers and
-        // each writes the whole camera from its own start snapshot — pan and
-        // zoom alternate instead of composing. Whether SwiftUI's recognizers
-        // actually fire that way is not observable headlessly; the wiring that
-        // decides it is, so the wiring is what gets pinned.
+    func testViewAttachesTheGesturesSeparatelyAndGuardsThePinch() throws {
+        // This pin was the inverse of this until a device session ran it: it
+        // required `magnifyGesture.exclusively(before: dragGesture)`, and that
+        // wiring is dead on hardware. `ExclusiveGesture` runs its second gesture
+        // only once the FIRST fails, and a pinch recognizer holding one touch
+        // never fails — it stays `.possible` for the life of the touch. One
+        // finger therefore reached `DragGesture` never: the board pinched but
+        // would not pan, and no tile could be picked up.
+        //
+        // What that chain was there to prevent — two fingers drifting into the
+        // drag recognizer so pan and zoom alternate writing the camera from
+        // their own start snapshots — is now the `pinch` guard below, which is
+        // read state rather than an inferred recognizer outcome. Both halves are
+        // pinned: the attachment without the guard would bring the fight back.
         let text = try view()
         XCTAssertTrue(
-            text.contains("magnifyGesture.exclusively(before: dragGesture)"),
-            "BoardView does not give the pinch first refusal over the drag"
+            text.contains(".gesture(dragGesture)"),
+            "BoardView does not attach the drag on its own, so one finger may never reach it"
+        )
+        XCTAssertTrue(
+            text.contains(".simultaneousGesture(magnifyGesture)"),
+            "BoardView does not attach the pinch alongside the drag"
         )
         XCTAssertFalse(
-            text.contains(".simultaneousGesture"),
-            "BoardView still feeds both recognizers, so pan and zoom fight over the camera"
+            text.contains("exclusively(before:"),
+            "BoardView is back on an exclusive chain, which starves the drag of every single-finger touch"
+        )
+        XCTAssertTrue(
+            text.contains("guard pinch == nil else { return }"),
+            "BoardView drops no drag frame while a pinch is live, so pan and zoom fight over the camera"
         )
     }
 
@@ -516,7 +530,7 @@ final class BoardSourceTests: XCTestCase {
         // And the camera gestures are still attached unconditionally, so the
         // checks above are not passing on a body that stopped attaching them.
         XCTAssertTrue(
-            body.contains(".gesture(magnifyGesture.exclusively(before: dragGesture))"),
+            body.contains(".gesture(dragGesture)") && body.contains(".simultaneousGesture(magnifyGesture)"),
             "BoardView no longer attaches the camera gestures"
         )
     }
@@ -775,11 +789,12 @@ final class BoardSourceTests: XCTestCase {
             XCTAssertFalse(text.contains(decision), "BoardView decides the selection itself via \(decision)")
         }
 
-        // And the pinch keeps first refusal over everything one finger does, so
-        // zooming stays live while the player sweeps.
+        // And the pinch is still attached alongside the drag rather than in
+        // front of it, so zoom stays live while the player sweeps AND the sweep
+        // itself — a one-finger drag — actually reaches the drag recognizer.
         XCTAssertTrue(
-            text.contains("magnifyGesture.exclusively(before: dragGesture)"),
-            "the pinch no longer has first refusal, so zoom does not stay live through a sweep"
+            text.contains(".simultaneousGesture(magnifyGesture)"),
+            "the pinch is no longer attached alongside the drag, so zoom does not stay live through a sweep"
         )
     }
 

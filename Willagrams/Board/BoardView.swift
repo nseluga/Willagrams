@@ -108,16 +108,21 @@ public struct BoardView: View {
                 // already hit-testable, but the empty cells between tiles have
                 // to be too or a pan could only start on the background.
                 .contentShape(Rectangle())
-                // One gesture, not two simultaneous ones. Two fingers drift
-                // far enough to feed a drag recognizer, so under
-                // `.simultaneousGesture` a pinch feeds BOTH recognizers and
-                // they alternate writing the camera from their own start
-                // snapshots — pan and zoom fight instead of composing.
-                // `.exclusively(before:)` gives the pinch first refusal, so a
-                // two-finger touch never reaches `DragGesture` at all. That
-                // matters more now the drag has no minimum distance of its own
-                // to filter the second finger out.
-                .gesture(magnifyGesture.exclusively(before: dragGesture))
+                // Two attachments, not an exclusive chain. `.exclusively(before:)`
+                // only runs its second gesture once the FIRST fails, and a pinch
+                // recognizer holding a single touch never fails — it sits in
+                // `.possible` for the life of the touch. Under that chain one
+                // finger reached `DragGesture` never: on a device the board could
+                // be pinched but not panned and no tile could be picked up at all.
+                //
+                // The fight `.exclusively` was there to prevent — two fingers
+                // drifting far enough to feed the drag recognizer, so pan and zoom
+                // alternate writing the camera from their own start snapshots — is
+                // now refused by the `pinch` guard in `dragGesture.onChanged`,
+                // which is checked state rather than an inferred recognizer
+                // outcome.
+                .gesture(dragGesture)
+                .simultaneousGesture(magnifyGesture)
                 // Attached AFTER the camera gestures on purpose: the later
                 // modifier is the outer one, so the double tap gets first look
                 // and a single tap falls straight through to the drag. It is a
@@ -170,6 +175,12 @@ public struct BoardView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                // The other half of dropping `.exclusively(before:)`: while two
+                // fingers are down the pinch owns the camera outright, so the
+                // drag frames a second finger produces are dropped rather than
+                // writing a pan from a stale snapshot. Checked state, not a
+                // recognizer failing.
+                guard pinch == nil else { return }
                 // ponytail: a lock landing mid-gesture leaves the carried grab
                 // `.tile`, so that finger neither drags nor pans until it lifts
                 // — the next touch down pans normally. Rebuilding the `Drag`
