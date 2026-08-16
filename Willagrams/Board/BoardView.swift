@@ -41,7 +41,7 @@ public struct BoardView: View {
     /// in `BoardModel`, which is pure and executable by `Tests/BoardTests`;
     /// this view only reports touches into it and draws what comes back.
     ///
-    /// A second finger arriving is handled — `magnifyGesture` cancels the
+    /// A second finger arriving is handled — the pinch path cancels the
     /// session on its first change, because with no minimum distance the first
     /// finger has usually picked a tile up by then.
     ///
@@ -102,7 +102,8 @@ public struct BoardView: View {
                 rect: rect,
                 selected: model.selected,
                 dragTranslation: model.dragTranslation,
-                invalid: model.invalidCoords
+                invalid: model.invalidCoords,
+                offsets: model.tileOffsets
             )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
@@ -122,7 +123,18 @@ public struct BoardView: View {
                 // which is checked state rather than an inferred recognizer
                 // outcome.
                 .gesture(dragGesture)
-                .simultaneousGesture(magnifyGesture)
+                // The pinch is a UIKit recognizer, not a SwiftUI gesture:
+                // `MagnifyGesture` freezes its midpoint at the instant the
+                // second finger lands, so a pinch could only ever zoom about
+                // where it began. The reporter is inert and sits over the board
+                // purely to name a coordinate space — it takes no touches away
+                // from the drag beneath it.
+                .overlay(
+                    BoardPinchReporter(
+                        onChange: { scale, midpoint in pinched(scale: scale, midpoint: midpoint) },
+                        onEnd: { pinch = nil }
+                    )
+                )
                 // Attached AFTER the camera gestures on purpose: the later
                 // modifier is the outer one, so the double tap gets first look
                 // and a single tap falls straight through to the drag. It is a
@@ -131,11 +143,24 @@ public struct BoardView: View {
                 // everything one finger does, and a double tap must not have to
                 // fail before a drag can start.
                 //
-                // ponytail: which recognizer SwiftUI hands a two-tap sequence to
-                // is not observable in a headless test, so this wiring is pinned
-                // by source text only. Move it into the exclusive chain if a
-                // device session shows the drag swallowing the second tap.
-                .onTapGesture(count: 2) { model.enterSelection() }
+                // A device session DID show the drag swallowing the second tap:
+                // double tap did nothing, and with it multi-select was
+                // unreachable, since every path into the selection set is gated
+                // on `isActive` and nothing else calls `enterSelection`.
+                //
+                // `.onTapGesture` attaches a COMPETING gesture, and
+                // `DragGesture(minimumDistance: 0)` leaves `.possible` the
+                // instant a finger lands, so the drag won every sequence and the
+                // tap never completed. `.simultaneousGesture` lets both see the
+                // touches, which is what this needs: the taps enter selection
+                // while the drag keeps doing exactly what it already does.
+                //
+                // Deliberately NOT `.highPriorityGesture` or
+                // `TapGesture.exclusively(before:)` — both make the drag wait out
+                // the double-tap timeout, which is ~0.3s of dead time on every
+                // single pickup. Removing that dead time is the whole reason
+                // `minimumDistance: 0` is there.
+                .simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
                 // The lock is a plain assignment: `BoardModel` cancels an
                 // in-flight hold on its own when it lands, so there is no
@@ -194,10 +219,15 @@ public struct BoardView: View {
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
                 let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, selection: model.selection,
-                    camera: camera, inputLocked: model.inputLocked
+                    camera: camera, inputLocked: model.inputLocked,
+                    // The grab is decided against where the tiles are DRAWN.
+                    // Without this a scattered tile refuses to lift along the
+                    // edge it overhangs, which is the dead-input bug back in
+                    // geometric form.
+                    offsets: model.tileOffsets
                 )
                 if carried == nil {
-                    model.began(inFlight.grab, haptics: haptics)
+                    model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics)
                 }
                 drag = inFlight
                 model.moved(to: value.translation)
@@ -249,30 +279,31 @@ public struct BoardView: View {
     ///
     /// The stored start is carried over only while the midpoint is unchanged,
     /// for the same cancelled-gesture reason as `drag`.
-    private var magnifyGesture: some Gesture {
-        MagnifyGesture()
-            .onChanged { value in
-                // A second finger landing takes the gesture away from
-                // `DragGesture`, which then never reaches `onEnded` — and with
-                // no minimum distance the first finger may already have picked
-                // a tile up. Drop that pickup here or the tile stays lifted
-                // under a pinch that has nothing to do with it.
-                //
-                // No haptic fires on this path. A pinch stealing the gesture is
-                // a cancellation, not a refused drop, and firing `.reject` here
-                // would put a second reject in a count that must record exactly
-                // one per rejected drop. The board is untouched either way.
-                //
-                // The same one cancel the model takes when it is locked, not a
-                // second copy of it: two cancel paths are two chances to clear
-                // half of one.
-                model.cancel()
-                let carried = pinch.flatMap { $0.anchor == value.startLocation ? $0.camera : nil }
-                let start = carried ?? camera
-                pinch = (anchor: value.startLocation, camera: start)
-                camera = start.magnified(by: value.magnification, about: value.startLocation)
-            }
-            .onEnded { _ in pinch = nil }
+    /// Zoom and pan in one motion, composed from the live midpoint.
+    ///
+    /// `magnified(by:about:)` holds the board point under the midpoint the
+    /// fingers STARTED at fixed, and the pan then carries that point to where
+    /// the midpoint is now. So the board position the fingers landed on stays
+    /// under the fingers however far they spread and however far they slide —
+    /// which is "zoom and scroll together, about where the zoom happens".
+    ///
+    /// Both are computed from the snapshot taken when the pinch began, so the
+    /// two never accumulate on each other: every frame is a whole answer.
+    private func pinched(scale: CGFloat, midpoint: CGPoint) {
+        // A second finger landing may arrive after the first has already lifted
+        // a tile, and with no minimum distance it usually has. Drop that pickup
+        // or the tile stays lifted under a pinch that has nothing to do with it.
+        // No haptic: a pinch stealing the gesture is a cancellation, not a
+        // refused drop.
+        model.cancel()
+        let start = pinch ?? (anchor: midpoint, camera: camera)
+        if pinch == nil { pinch = start }
+        camera = start.camera
+            .magnified(by: scale, about: start.anchor)
+            .panned(by: CGSize(
+                width: midpoint.x - start.anchor.x,
+                height: midpoint.y - start.anchor.y
+            ))
     }
 
     // MARK: - Recenter
@@ -320,6 +351,10 @@ private struct BoardSurface: View, Animatable {
     /// The coords the session published after the last committed move. This
     /// view checks nothing itself — it has no word list to check against.
     let invalid: Set<Coord>
+    /// Where each tile sits inside its cell, in cell units. Published by the
+    /// session and read straight through to `BoardRender` — this view decides
+    /// no position of its own.
+    let offsets: [UUID: CGSize]
 
     /// Pan width, pan height, zoom — the whole of what an animation between
     /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
@@ -338,37 +373,18 @@ private struct BoardSurface: View, Animatable {
     var body: some View {
         let cells = BoardRender.cells(
             board: board, camera: camera, in: rect,
-            dragging: selected, by: dragTranslation, invalid: invalid
+            dragging: selected, by: dragTranslation, invalid: invalid, offsets: offsets
         )
         let cellSize = camera.cellSize
 
         ZStack(alignment: .topLeading) {
+            // The whole surface. No cell is drawn: the lattice is how the
+            // checker decides which letters form a word, and the player is
+            // never shown it — they are looking at a bare table with letters
+            // lying on it. Deleting the empty-cell Canvas that used to paint
+            // one rounded rect per visible coord IS that change, and it takes
+            // the ~2,400-fill-per-frame draw cost with it.
             DesignTokens.Palette.boardSurface
-
-            // One Canvas, not one view per cell: at the 24pt cell floor a
-            // landscape iPad viewport holds ~2,400 cells, and 2,400 shape
-            // views would make panning and zooming unusable. Canvas resolves
-            // the asset-catalog Color in the current environment, so light
-            // and dark still come from the catalog.
-            Canvas { context, _ in
-                let shading = GraphicsContext.Shading.color(DesignTokens.Palette.cellEmpty)
-                for cell in cells {
-                    context.fill(
-                        Path(
-                            roundedRect: CGRect(
-                                origin: cell.point,
-                                size: CGSize(width: cellSize, height: cellSize)
-                            )
-                            .insetBy(
-                                dx: DesignTokens.Stroke.hairline,
-                                dy: DesignTokens.Stroke.hairline
-                            ),
-                            cornerRadius: DesignTokens.Radius.cell
-                        ),
-                        with: shading
-                    )
-                }
-            }
 
             // Real views, not Canvas drawing: BrandTile owns the face,
             // bevel, ring and lift, and this must not re-implement any of

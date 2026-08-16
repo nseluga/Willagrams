@@ -32,14 +32,21 @@ public enum BoardRender {
     public struct Cell: Equatable, Sendable {
         public let coord: Coord
         /// Top-left corner of the CELL in view space, from
-        /// `camera.point(for:)`. A dragged tile leaves its cell behind, so this
-        /// is deliberately never offset — the grid hole stays where the tile
-        /// came from.
+        /// `camera.point(for:)`. The bare lattice position, never offset and
+        /// never drawn: the surface is an empty table now, so nothing paints a
+        /// cell. It stays because it is the exact answer the frozen engine
+        /// reasons in, and telling it apart from `tilePoint` is what the whole
+        /// free-placement model rests on.
         public let point: CGPoint
         public let tile: Tile?
-        /// Top-left corner of the TILE, which is `point` for everything except
-        /// a tile in flight, where it is `point` plus the live drag
-        /// translation. Nil exactly when `tile` is nil.
+        /// Top-left corner of the TILE, which is the cell corner plus the
+        /// tile's sub-cell offset, plus the live drag translation while it is in
+        /// flight. Nil exactly when `tile` is nil.
+        ///
+        /// This is the ONLY place the two diverge, and they always do now: a
+        /// tile sits on its cell's lattice position offset by however far its
+        /// cluster is scattered. `BoardHit.origin` owns that sum so the tile is
+        /// grabbable across exactly the region this draws it over.
         public let tilePoint: CGPoint?
         public let state: TileState?
         /// The tile here is part of a run the checker refused. Read from the
@@ -69,18 +76,24 @@ public enum BoardRender {
     /// is how far the finger has moved since it took hold; both default to
     /// nothing in flight. Those tiles read `.selected` and draw offset, and
     /// revert to `.idle`/`.placed` the moment the set is empty again.
+    ///
+    /// `offsets` is the sub-cell scatter the session published, keyed by tile
+    /// id — the table is READ here and never derived, so nothing on the draw
+    /// path decides where a cluster sits. Defaulted to empty, which draws every
+    /// tile flat on its cell, so a caller with no table yet still gets a board.
     public static func cells(
         board: Board,
         camera: BoardCamera,
         in rect: CGRect,
         dragging: Set<Coord> = [],
         by translation: CGSize = .zero,
-        invalid: Set<Coord> = []
+        invalid: Set<Coord> = [],
+        offsets: [UUID: CGSize] = [:]
     ) -> [Cell] {
         // A live `DragGesture` translation is an external float. A non-finite
         // one draws the tile where it was rather than at a position no renderer
         // can use — the drop that follows refuses on the same grounds.
-        let offset = translation.width.isFinite && translation.height.isFinite ? translation : .zero
+        let travel = translation.width.isFinite && translation.height.isFinite ? translation : .zero
         return camera.visibleCoords(in: rect).map { coord in
             let tile = board.tile(at: coord)
             let point = camera.point(for: coord)
@@ -89,11 +102,18 @@ public enum BoardRender {
                 coord: coord,
                 point: point,
                 tile: tile,
-                tilePoint: tile == nil ? nil : (
-                    carried
-                        ? CGPoint(x: point.x + offset.width, y: point.y + offset.height)
-                        : point
-                ),
+                tilePoint: tile.map { tile in
+                    // `BoardHit.origin`, never `point`: where the tile is drawn
+                    // and where it can be grabbed are the same sum, computed in
+                    // one place. A dict lookup per drawn tile, so this stays a
+                    // function of the viewport and never of the board.
+                    let origin = BoardHit.origin(
+                        of: coord, tile: tile, offsets: offsets, camera: camera
+                    )
+                    return carried
+                        ? CGPoint(x: origin.x + travel.width, y: origin.y + travel.height)
+                        : origin
+                },
                 state: tile == nil ? nil : (carried ? .selected : state(of: coord, in: board)),
                 // An empty cell is in no word, and a tile in flight has left the
                 // alignment it was part of — it reads as carried, not as wrong.

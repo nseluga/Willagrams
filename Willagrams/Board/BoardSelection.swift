@@ -82,7 +82,8 @@ public struct BoardSelection: Equatable, Sendable {
         from start: CGPoint,
         to end: CGPoint,
         on board: Board,
-        camera: BoardCamera
+        camera: BoardCamera,
+        offsets: [UUID: CGSize] = [:]
     ) -> Int {
         // Refused outright when the mode is off. Painting is the only way into
         // the set, so this is what makes an ordinary drag unable to select
@@ -117,31 +118,20 @@ public struct BoardSelection: Equatable, Sendable {
                 x: start.x + (end.x - start.x) * ratio,
                 y: start.y + (end.y - start.y) * ratio
             )
-            guard let coord = cell(under: point, camera: camera) else { continue }
-            guard visited.insert(coord).inserted else { continue }
-            guard board.tile(at: coord) != nil else { continue }
+            // The tile DRAWN under the sample, not the cell the sample is
+            // indexed to. A scattered tile overhangs a neighbouring cell, and
+            // sweeping by cell would miss the part of it the finger actually
+            // crossed while sweeping up an empty cell it never touched.
+            // `BoardHit` also refuses a sample too far out to index, which is
+            // what stops a stray point sweeping up whatever sits at the origin.
+            guard let hit = BoardHit.tile(
+                under: point, on: board, offsets: offsets, camera: camera
+            ) else { continue }
+            guard visited.insert(hit.coord).inserted else { continue }
             crossed += 1
-            coords.insert(coord)
+            coords.insert(hit.coord)
         }
         return crossed
-    }
-
-    /// The cell under `point`, or nil when there is not really one there.
-    ///
-    /// `camera.coord(at:)` answers `Coord(0, 0)` for anything it cannot index,
-    /// so a sample far enough out would otherwise sweep up whatever tile sits
-    /// at the origin. Putting the answer back through `point(for:)` separates a
-    /// real cell from that fallback without a second boundary convention living
-    /// here — the same guard `BoardGesture.Drag` and `TileDrag` take, for the
-    /// same reason.
-    private func cell(under point: CGPoint, camera: BoardCamera) -> Coord? {
-        let coord = camera.coord(at: point)
-        let corner = camera.point(for: coord)
-        let size = camera.cellSize
-        guard (point.x - corner.x).magnitude <= size,
-              (point.y - corner.y).magnitude <= size
-        else { return nil }
-        return coord
     }
 
     /// Bound on samples per reported gesture step. Named rather than inline so

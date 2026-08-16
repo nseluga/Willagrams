@@ -86,11 +86,58 @@ public struct BoardModel: Sendable {
     /// `BoardValidation` and this must never restate any part of it.
     public var canDraw: Bool { validation.isComplete }
 
-    /// Every coord covered by a word in `validation.invalidWords`, expanded once
-    /// per commit so the draw path is a set lookup rather than a walk of the
-    /// word list per drawn cell. A tile in two words, one of them bad, is in
-    /// here — a run is wrong as a whole and every letter in it is part of it.
-    public private(set) var invalidCoords: Set<Coord> = []
+    /// One coord set per word in `validation.invalidWords`, expanded once per
+    /// commit so the draw path is a set lookup rather than a walk of the word
+    /// list per drawn cell. Kept per WORD rather than flattened because the
+    /// tint has to be dropped a whole run at a time — see `invalidCoords`.
+    private var invalidRuns: [Set<Coord>] = []
+
+    /// The runs as the board reads them WITH the held tiles gone, computed once
+    /// at pickup by `began(_:on:against:haptics:)`. `nil` whenever nothing is
+    /// held — and also for the whole of a hold begun through the plain `began`,
+    /// which has no board to take the letters out of.
+    private var liftedRuns: [Set<Coord>]?
+
+    /// Every coord that reads as part of a bad word right now.
+    ///
+    /// While a letter is held this is the tint of the board the lift LEAVES
+    /// BEHIND, not the tint of the last commit. Both directions matter and only
+    /// a real check gets both: lifting the letter that spoiled a word clears the
+    /// rest of that word, and lifting the `e` out of `cue` turns the `cu` red —
+    /// the second is a word the board has never seen before and no amount of
+    /// arithmetic over the previous answer can discover it.
+    ///
+    /// Computed rather than stored so it follows the hold with no write site of
+    /// its own; `revalidate` stays the ONE place *published* validation and
+    /// `canDraw` are written, and a hold never touches either. A board with a
+    /// hole in it is not a board anyone may draw from.
+    public var invalidCoords: Set<Coord> {
+        (liftedRuns ?? invalidRuns).reduce(into: Set()) { $0.formUnion($1) }
+    }
+
+    /// Where each tile sits INSIDE its cell, in cell units, keyed by tile id.
+    ///
+    /// This is what makes the surface a table rather than a spreadsheet. The
+    /// lattice stays exact — the frozen checker still reads whole `Coord`s, so
+    /// which letters form a word has the same answer it always had — and this
+    /// is the only thing between that lattice and the screen.
+    ///
+    /// One rule holds the whole model up: **every tile in a connected cluster
+    /// carries the same offset.** So a loose tile is a cluster of one and
+    /// scatters on its own, while letters that touch share one offset and read
+    /// as a single aligned block. Connecting two letters IS the snap — no
+    /// animation decides it and no code special-cases it.
+    ///
+    /// Rebuilt whole on each commit rather than edited, so it can never
+    /// disagree with the board it was derived from, and a tile that left the
+    /// board leaves no entry behind.
+    public private(set) var tileOffsets: [UUID: CGSize] = [:]
+
+    /// How far a cluster may sit from its lattice position, in cells, on each
+    /// axis. Bounded well inside the `BoardLayout.step` gap between arrivals, so
+    /// scattered tiles never touch and the eye is never shown two letters
+    /// adjacent that the checker reads as separate.
+    public static let scatter: CGFloat = 0.4
 
     public init(inputLocked: Bool = false) {
         self.inputLocked = inputLocked
@@ -177,6 +224,27 @@ public struct BoardModel: Sendable {
         dragTranslation = .zero
         paintCursor = nil
         paintedAny = false
+        liftedRuns = nil
+    }
+
+    /// Takes hold exactly as above, and re-reads the board the hold leaves
+    /// behind so the tint is honest for the whole gesture.
+    ///
+    /// This is the one dictionary pass a gesture makes, and it is made ONCE, at
+    /// touch-down, over a board of at most 144 tiles — not per frame. Nothing
+    /// here writes `validation` or `canDraw`: the answer is a drawing decision
+    /// about a board that is missing letters, and it lives only as long as the
+    /// fingers do.
+    public mutating func began(
+        _ grab: BoardGesture.Grab,
+        on board: Board,
+        against dictionary: some WordList,
+        haptics: some BoardHaptics
+    ) {
+        began(grab, haptics: haptics)
+        guard let held = tileDrag?.origins else { return }
+        let lifted = TileDrag.lifting(held, from: board)
+        liftedRuns = Self.runs(of: lifted.validate(against: dictionary))
     }
 
     /// Enters selection mode, keeping whatever is already swept up. Refused
@@ -202,7 +270,10 @@ public struct BoardModel: Sendable {
     ) {
         guard !inputLocked, selection.isActive else { return }
         let crossed = selection.paint(
-            from: paintCursor ?? start, to: point, on: board, camera: camera
+            from: paintCursor ?? start, to: point, on: board, camera: camera,
+            // The published table, not one derived here. The sweep has to hit
+            // the tiles the player can SEE, which is where the offsets put them.
+            offsets: tileOffsets
         )
         if crossed > 0 { paintedAny = true }
         paintCursor = point
@@ -246,8 +317,14 @@ public struct BoardModel: Sendable {
         against dictionary: some WordList
     ) -> Board {
         guard let tileDrag else { return board }
+        // The offsets as they stand BEFORE this commit, which is what the tiles
+        // were drawn at while the finger was down — read once here because
+        // `revalidate` below overwrites the table with the offsets of the board
+        // that results from this very move.
+        let drawn = tileOffsets
         let next = tileDrag.drop(
-            translation: translation, on: board, camera: camera, threshold: threshold
+            translation: translation, on: board, camera: camera,
+            threshold: threshold, offsets: drawn
         )
         // The selection follows the tiles it was holding. Asked of the drag
         // rather than derived from the board that came back: the drag is the
@@ -256,7 +333,8 @@ public struct BoardModel: Sendable {
         // the selection on the cells the tiles are still standing on.
         if selection.isActive, tileDrag.origins == selection.coords,
            let landed = tileDrag.landed(
-               translation: translation, on: board, camera: camera, threshold: threshold
+               translation: translation, on: board, camera: camera,
+               threshold: threshold, offsets: drawn
            ) {
             selection.replace(with: landed)
         }
@@ -273,8 +351,16 @@ public struct BoardModel: Sendable {
     /// `BoardValidation` — no cluster, run or completeness rule is restated.
     private mutating func revalidate(_ board: Board, against dictionary: some WordList) {
         validation = board.validate(against: dictionary)
-        invalidCoords = Set(
-            validation.invalidWords.flatMap { word in
+        invalidRuns = Self.runs(of: validation)
+        tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
+    }
+
+    /// One coord set per bad word. Shared by the committed tint and the tint of
+    /// a board with letters lifted out of it, so the two can never expand the
+    /// same answer two different ways.
+    private static func runs(of validation: BoardValidation) -> [Set<Coord>] {
+        validation.invalidWords.map { word in
+            Set(
                 // `text.count` letters from `origin` along `direction`. Every
                 // one of those coords holds a tile by construction — the word
                 // was read off the board — so no overflow guard is needed that
@@ -284,7 +370,69 @@ public struct BoardModel: Sendable {
                         ? Coord(row: word.origin.row, col: word.origin.col + step)
                         : Coord(row: word.origin.row + step, col: word.origin.col)
                 }
+            )
+        }
+    }
+
+    /// One offset per cluster, handed to every tile in it.
+    ///
+    /// The offset a cluster ALREADY had wins, so a blob does not move because
+    /// something joined it. Offsets are history, not a function of the board:
+    /// where a word sits on the table is where the player last put it, and a
+    /// rule derived from the board alone would slide the whole blob sideways
+    /// every time a letter landed on its edge.
+    ///
+    /// The offset most of the cluster is already carrying wins the merge — so
+    /// the big blob holds its place and the joining letter is the one that
+    /// snaps flush into it, which is the "connect letters and they grid"
+    /// behaviour seen from the other side. Ties, and clusters made only of
+    /// tiles no table has ever held, fall back to the deterministic scatter
+    /// below, seeded from the cluster's lowest coord in reading order.
+    private static func offsets(
+        for board: Board, carrying previous: [UUID: CGSize]
+    ) -> [UUID: CGSize] {
+        var table: [UUID: CGSize] = [:]
+        for cluster in board.clusters {
+            guard let anchor = cluster.min(by: { ($0.row, $0.col) < ($1.row, $1.col) }),
+                  let seed = board.tile(at: anchor)
+            else { continue }
+
+            let tiles = cluster.compactMap { board.tile(at: $0) }
+            // A linear tally rather than a dictionary: `CGSize` only conforms
+            // to `Hashable` on macOS 15, which the test package predates, and a
+            // cluster holds a handful of tiles.
+            var tally: [(offset: CGSize, count: Int)] = []
+            for tile in tiles {
+                guard let held = previous[tile.id] else { continue }
+                if let seen = tally.firstIndex(where: { $0.offset == held }) {
+                    tally[seen].count += 1
+                } else {
+                    tally.append((offset: held, count: 1))
+                }
             }
+            // A tie falls to the scatter rather than to whichever tile the set
+            // happened to iterate first, so two loose letters meeting land the
+            // same way every time — and so this answer does not depend on
+            // `Set` ordering, which the offsets must never do.
+            let leaders = tally.filter { $0.count == (tally.map(\.count).max() ?? 0) }
+            let offset = leaders.count == 1 ? leaders[0].offset : Self.scattered(seed.id)
+
+            for tile in tiles { table[tile.id] = offset }
+        }
+        return table
+    }
+
+    /// A stable ±`scatter` cells, read straight out of the id's own bytes.
+    ///
+    /// Not `hashValue`: Swift seeds that per process, so the same board would
+    /// scatter differently on every launch and no test could pin it. The bytes
+    /// of a `UUID` are fixed for the life of the tile, so a board laid out twice
+    /// looks identical both times and a tile keeps its place across a relaunch.
+    private static func scattered(_ id: UUID) -> CGSize {
+        let bytes = id.uuid
+        return CGSize(
+            width: (CGFloat(bytes.0) / 255 - 0.5) * 2 * scatter,
+            height: (CGFloat(bytes.1) / 255 - 0.5) * 2 * scatter
         )
     }
 
@@ -300,5 +448,6 @@ public struct BoardModel: Sendable {
     public mutating func cancel() {
         tileDrag = nil
         dragTranslation = .zero
+        liftedRuns = nil
     }
 }
