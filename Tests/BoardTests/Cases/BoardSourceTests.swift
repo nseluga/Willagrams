@@ -770,9 +770,19 @@ final class BoardSourceTests: XCTestCase {
         // Entering the mode, sweeping, and releasing a sweep: three wires into
         // the session, each named on its own so a missing one cannot hide
         // behind the other two.
+        // SIMULTANEOUS, not `.onTapGesture`. A competing tap loses every
+        // sequence to `DragGesture(minimumDistance: 0)`, which is `.possible`
+        // from touch-down — on device the double tap did nothing at all, and
+        // with `enterSelection` unreachable the selection set could never become
+        // non-empty, so multi-select was dead too.
         XCTAssertTrue(
-            text.contains(".onTapGesture(count: 2) { model.enterSelection() }"),
+            text.contains(".simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })"),
             "BoardView has no double tap into selection mode"
+        )
+        // The regression itself: the competing form must not come back.
+        XCTAssertFalse(
+            text.contains(".onTapGesture(count: 2)"),
+            "BoardView enters selection through a competing tap, which the drag always wins"
         )
         XCTAssertTrue(
             text.contains("selection: model.selection"),
@@ -851,9 +861,11 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertTrue("model.painting(from: value.startLocation".contains("model.painting("))
         XCTAssertFalse("model.moved(to: value.translation)".contains("model.painting("))
 
-        // A single tap versus the double tap the criterion names.
+        // A simultaneous double tap versus the competing one that never fired.
+        let wired = ".simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })"
+        XCTAssertTrue(wired.contains(".simultaneousGesture(TapGesture(count: 2)"))
+        XCTAssertFalse(wired.contains(".onTapGesture(count: 2)"))
         XCTAssertTrue(".onTapGesture(count: 2) { model.enterSelection() }".contains(".onTapGesture(count: 2)"))
-        XCTAssertFalse(".onTapGesture { model.enterSelection() }".contains(".onTapGesture(count: 2)"))
 
         // A paint that could write to the caller's board versus one that cannot.
         XCTAssertTrue("func paint(from: CGPoint, to: CGPoint, on board: inout Board)".contains("inout Board"))

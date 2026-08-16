@@ -503,4 +503,39 @@ final class BoardPlacementDropTests: XCTestCase {
             "the joining letter did not adopt the word's offset"
         )
     }
+
+    /// The reported "when a letter gets lifted from an invalid word only the
+    /// letter gets immediately updated, the rest of the word doesn't update
+    /// till the tile is placed".
+    ///
+    /// The tint came from `validate` at the last commit and stayed frozen for
+    /// the whole gesture; the lifted tile lost its own colour only through a
+    /// render exclusion, so the rest of the run sat red under a word that no
+    /// longer existed. Lifting any letter out of a run drops the whole run.
+    func testLiftingALetterOutOfABadWordClearsThatWholeWordsTint() throws {
+        // No word here is in the list, so the run is refused as a whole.
+        let dictionary = EnableWordList(words: ["WILL"])
+        var board = Board()
+        for (index, letter) in "ZQX".enumerated() {
+            try board.place(Self.tile(letter, UInt8(30 + index * 40)), at: Coord(row: 0, col: index))
+        }
+        let run = (0...2).map { Coord(row: 0, col: $0) }
+
+        var model = BoardModel(board: board, against: dictionary)
+        XCTAssertEqual(Set(run), model.invalidCoords, "the refused run is not tinted to begin with")
+
+        // Lift the MIDDLE letter: the two it leaves behind are the ones that
+        // used to stay red.
+        let lifted = try XCTUnwrap(board.tile(at: Coord(row: 0, col: 1)))
+        model.began(.tile(lifted, at: Coord(row: 0, col: 1)), haptics: SilentHaptics())
+        XCTAssertTrue(
+            model.invalidCoords.isEmpty,
+            "the rest of the word stayed tinted while a letter was lifted out of it"
+        )
+
+        // And the tint comes back untouched when the hold is dropped without a
+        // commit — nothing here rewrote what the checker published.
+        model.cancel()
+        XCTAssertEqual(Set(run), model.invalidCoords, "cancelling a lift lost the published tint")
+    }
 }

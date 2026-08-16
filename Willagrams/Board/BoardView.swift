@@ -132,11 +132,24 @@ public struct BoardView: View {
                 // everything one finger does, and a double tap must not have to
                 // fail before a drag can start.
                 //
-                // ponytail: which recognizer SwiftUI hands a two-tap sequence to
-                // is not observable in a headless test, so this wiring is pinned
-                // by source text only. Move it into the exclusive chain if a
-                // device session shows the drag swallowing the second tap.
-                .onTapGesture(count: 2) { model.enterSelection() }
+                // A device session DID show the drag swallowing the second tap:
+                // double tap did nothing, and with it multi-select was
+                // unreachable, since every path into the selection set is gated
+                // on `isActive` and nothing else calls `enterSelection`.
+                //
+                // `.onTapGesture` attaches a COMPETING gesture, and
+                // `DragGesture(minimumDistance: 0)` leaves `.possible` the
+                // instant a finger lands, so the drag won every sequence and the
+                // tap never completed. `.simultaneousGesture` lets both see the
+                // touches, which is what this needs: the taps enter selection
+                // while the drag keeps doing exactly what it already does.
+                //
+                // Deliberately NOT `.highPriorityGesture` or
+                // `TapGesture.exclusively(before:)` — both make the drag wait out
+                // the double-tap timeout, which is ~0.3s of dead time on every
+                // single pickup. Removing that dead time is the whole reason
+                // `minimumDistance: 0` is there.
+                .simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
                 // The lock is a plain assignment: `BoardModel` cancels an
                 // in-flight hold on its own when it lands, so there is no

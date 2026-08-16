@@ -44,7 +44,17 @@ final class BoardValidationTests: XCTestCase {
     /// 48pt cells at the origin: a whole-cell step is a translation of 48 and a
     /// cell centre sits 24 in from its corner.
     private static let camera = BoardCamera(pan: .zero, zoom: 1, baseCellSize: 48)
-    private static let threshold: CGFloat = 22
+    /// Wide enough to accept any release inside a cell, which is what the real
+    /// `snapThreshold` now is.
+    ///
+    /// It was 22, a copy of the old token, and that made every move below a coin
+    /// flip: these fixtures use `Tile(letter:)`, so each tile's scatter comes
+    /// from a random UUID, and a drag measured from the tile's DRAWN position
+    /// carries that scatter as its residual — up to `hypot(0.4 × 48, 0.4 × 48)`
+    /// ≈ 27pt for a perfectly aimed one-cell move. Above 22 the move was
+    /// refused and the commit silently did nothing. That is the same arithmetic
+    /// that made real drags revert on device.
+    private static let threshold: CGFloat = 96
     private static let viewport = CGRect(x: 0, y: 0, width: 960, height: 960)
 
     /// C-A-T across row 0, plus a loose tile well clear of it.

@@ -38,7 +38,11 @@ final class BoardModelTests: XCTestCase {
     /// Mirrors `DesignTokens.Motion.snapThreshold`, which is SwiftUI and
     /// unreachable here. It is a `commit` PARAMETER precisely so a test drives
     /// its own distance; `BoardSourceTests` pins that the view passes the token.
-    private static let threshold: CGFloat = 22
+    /// Wide enough to accept any release inside a cell, matching the real
+    /// `snapThreshold`. At the old 22 these moves were a coin flip: a drag
+    /// measured from the tile's DRAWN position carries its scatter as the
+    /// residual, up to ~27pt, and anything above the threshold was refused.
+    private static let threshold: CGFloat = 96
 
     private static let viewport = CGRect(x: 0, y: 0, width: 480, height: 320)
 

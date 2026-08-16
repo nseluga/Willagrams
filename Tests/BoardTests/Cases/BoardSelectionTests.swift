@@ -35,7 +35,11 @@ final class BoardSelectionTests: XCTestCase {
 
     /// Mirrors `DesignTokens.Motion.snapThreshold`, which is unreachable from
     /// this host-side package and is a `commit` parameter for that reason.
-    private static let threshold: CGFloat = 22
+    /// Wide enough to accept any release inside a cell, matching the real
+    /// `snapThreshold`. At the old 22 these moves were a coin flip: a drag
+    /// measured from the tile's DRAWN position carries its scatter as the
+    /// residual, up to ~27pt, and anything above the threshold was refused.
+    private static let threshold: CGFloat = 96
 
     private static let viewport = CGRect(x: 0, y: 0, width: 480, height: 320)
 

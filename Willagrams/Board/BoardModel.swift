@@ -86,11 +86,40 @@ public struct BoardModel: Sendable {
     /// `BoardValidation` and this must never restate any part of it.
     public var canDraw: Bool { validation.isComplete }
 
-    /// Every coord covered by a word in `validation.invalidWords`, expanded once
-    /// per commit so the draw path is a set lookup rather than a walk of the
-    /// word list per drawn cell. A tile in two words, one of them bad, is in
-    /// here — a run is wrong as a whole and every letter in it is part of it.
-    public private(set) var invalidCoords: Set<Coord> = []
+    /// One coord set per word in `validation.invalidWords`, expanded once per
+    /// commit so the draw path is a set lookup rather than a walk of the word
+    /// list per drawn cell. Kept per WORD rather than flattened because the
+    /// tint has to be dropped a whole run at a time — see `invalidCoords`.
+    private var invalidRuns: [Set<Coord>] = []
+
+    /// Every coord that reads as part of a bad word right now.
+    ///
+    /// A run the finger has picked a letter out of is NOT in here. Lifting a
+    /// letter from a bad word used to clear only that letter and leave the rest
+    /// of the run red until the drop committed, because the tint came from
+    /// `validate` at the last commit and the lifted tile only lost its own
+    /// colour through a render exclusion. The word the player just broke is not
+    /// a word any more, and the board should say so the moment it breaks.
+    ///
+    /// Pure set math over the already-published `invalidWords` — no dictionary
+    /// is consulted, which is what keeps the "no lookups on pickup or mid-drag"
+    /// guarantee intact. Computed rather than stored so it follows the hold with
+    /// no second write site: `revalidate` stays the ONE place validation is
+    /// published.
+    ///
+    /// ponytail: clears tint the lift BROKE, cannot add tint the lift newly
+    /// CAUSES — lifting the middle of a good word leaves the two halves
+    /// untinted until the drop. That is the reported symptom; the general case
+    /// needs `began` to revalidate, which costs the no-lookup guarantee.
+    public var invalidCoords: Set<Coord> {
+        guard let lifted = tileDrag?.origins else {
+            return invalidRuns.reduce(into: Set()) { $0.formUnion($1) }
+        }
+        return invalidRuns.reduce(into: Set()) { total, run in
+            guard run.isDisjoint(with: lifted) else { return }
+            total.formUnion(run)
+        }
+    }
 
     /// Where each tile sits INSIDE its cell, in cell units, keyed by tile id.
     ///
@@ -307,8 +336,8 @@ public struct BoardModel: Sendable {
     /// `BoardValidation` — no cluster, run or completeness rule is restated.
     private mutating func revalidate(_ board: Board, against dictionary: some WordList) {
         validation = board.validate(against: dictionary)
-        invalidCoords = Set(
-            validation.invalidWords.flatMap { word in
+        invalidRuns = validation.invalidWords.map { word in
+            Set(
                 // `text.count` letters from `origin` along `direction`. Every
                 // one of those coords holds a tile by construction — the word
                 // was read off the board — so no overflow guard is needed that
@@ -318,8 +347,8 @@ public struct BoardModel: Sendable {
                         ? Coord(row: word.origin.row, col: word.origin.col + step)
                         : Coord(row: word.origin.row + step, col: word.origin.col)
                 }
-            }
-        )
+            )
+        }
         tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
     }
 
