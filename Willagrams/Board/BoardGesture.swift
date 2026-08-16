@@ -55,11 +55,10 @@ public enum BoardGesture {
         /// every event.
         private let startPan: CGSize
 
-        /// Hit-tests `startLocation` once. The cell comes from
-        /// `camera.coord(at:)` — the same helper the renderer's visible range
-        /// routes through — so a tile is grabbable across exactly the region
-        /// it is drawn over, with no second boundary convention to disagree at
-        /// a cell edge.
+        /// Hit-tests `startLocation` once, through `BoardHit` — the same
+        /// function `BoardRender` positions tiles with — so a tile is grabbable
+        /// across exactly the region it is drawn over, with no second boundary
+        /// convention to disagree at an edge.
         ///
         /// `inputLocked` is the surface's external lock, and this is the one
         /// point where a lock has to be read: the grab is decided exactly once,
@@ -77,7 +76,8 @@ public enum BoardGesture {
             in board: Board,
             selection: BoardSelection = BoardSelection(),
             camera: BoardCamera,
-            inputLocked: Bool = false
+            inputLocked: Bool = false,
+            offsets: [UUID: CGSize] = [:]
         ) {
             self.startLocation = startLocation
             self.startPan = camera.pan
@@ -110,7 +110,16 @@ public enum BoardGesture {
                 return
             }
 
-            let hit = board.tile(at: coord)
+            // The tile DRAWN under the finger, which is no longer the tile in
+            // the cell the finger indexes to: a scattered cluster sits up to
+            // `BoardModel.scatter` of a cell off its lattice position, and the
+            // cell it overhangs is empty. Indexing by cell here would decide
+            // `.pan` for a touch squarely on a tile's face — the tile would
+            // simply refuse to lift along whichever edge it hangs over, and the
+            // board would feel dead exactly where it looks solid.
+            let hit = BoardHit.tile(
+                under: startLocation, on: board, offsets: offsets, camera: camera
+            )
 
             // In selection mode the camera does not take one-finger drags at
             // all: the finger either moves the selection it took hold of or
@@ -119,15 +128,19 @@ public enum BoardGesture {
             // downstream deciding it again. Two fingers are untouched, so the
             // pinch stays live and the player can see what they are sweeping.
             guard !selection.isActive else {
-                if let hit, selection.contains(coord) {
-                    self.grab = .tile(hit, at: coord)
+                if let hit, selection.contains(hit.coord) {
+                    self.grab = .tile(hit.tile, at: hit.coord)
                 } else {
+                    // The bare cell, since there is no tile to name one. A
+                    // sweep only ever adds coords that carried a tile when the
+                    // finger crossed them, so this rides along as the sweep's
+                    // starting point and never becomes a selected coord itself.
                     self.grab = .paint(at: coord)
                 }
                 return
             }
 
-            self.grab = hit.map { .tile($0, at: coord) } ?? .pan
+            self.grab = hit.map { .tile($0.tile, at: $0.coord) } ?? .pan
         }
 
         /// `camera` after a cumulative `translation`: the LIVE camera with its

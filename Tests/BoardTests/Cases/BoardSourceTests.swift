@@ -148,10 +148,19 @@ final class BoardSourceTests: XCTestCase {
 
     // MARK: - The tokens the task names, and no re-implemented tile art
 
-    func testViewReadsTheSurfaceTokens() throws {
+    /// The surface is a bare table: one token for the ground, and nothing that
+    /// paints a cell. `Palette.cellEmpty` and `Radius.cell` were the empty-cell
+    /// grid, and drawing that grid is what made the board read as a spreadsheet
+    /// the tiles were trapped in. Their ABSENCE is now the guardrail — a
+    /// re-added Canvas of cells fails this rather than passing it.
+    func testViewDrawsTheBareSurfaceAndNoGrid() throws {
         let text = try view()
-        for token in ["Palette.boardSurface", "Palette.cellEmpty", "Radius.cell"] {
-            XCTAssertTrue(text.contains(token), "BoardView does not use DesignTokens.\(token)")
+        XCTAssertTrue(
+            text.contains("Palette.boardSurface"),
+            "BoardView does not use DesignTokens.Palette.boardSurface"
+        )
+        for grid in ["Palette.cellEmpty", "Radius.cell"] {
+            XCTAssertFalse(text.contains(grid), "BoardView paints an empty-cell grid via \(grid)")
         }
     }
 

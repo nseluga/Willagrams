@@ -102,7 +102,8 @@ public struct BoardView: View {
                 rect: rect,
                 selected: model.selected,
                 dragTranslation: model.dragTranslation,
-                invalid: model.invalidCoords
+                invalid: model.invalidCoords,
+                offsets: model.tileOffsets
             )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
@@ -194,7 +195,12 @@ public struct BoardView: View {
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
                 let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, selection: model.selection,
-                    camera: camera, inputLocked: model.inputLocked
+                    camera: camera, inputLocked: model.inputLocked,
+                    // The grab is decided against where the tiles are DRAWN.
+                    // Without this a scattered tile refuses to lift along the
+                    // edge it overhangs, which is the dead-input bug back in
+                    // geometric form.
+                    offsets: model.tileOffsets
                 )
                 if carried == nil {
                     model.began(inFlight.grab, haptics: haptics)
@@ -320,6 +326,10 @@ private struct BoardSurface: View, Animatable {
     /// The coords the session published after the last committed move. This
     /// view checks nothing itself — it has no word list to check against.
     let invalid: Set<Coord>
+    /// Where each tile sits inside its cell, in cell units. Published by the
+    /// session and read straight through to `BoardRender` — this view decides
+    /// no position of its own.
+    let offsets: [UUID: CGSize]
 
     /// Pan width, pan height, zoom — the whole of what an animation between
     /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
@@ -338,37 +348,18 @@ private struct BoardSurface: View, Animatable {
     var body: some View {
         let cells = BoardRender.cells(
             board: board, camera: camera, in: rect,
-            dragging: selected, by: dragTranslation, invalid: invalid
+            dragging: selected, by: dragTranslation, invalid: invalid, offsets: offsets
         )
         let cellSize = camera.cellSize
 
         ZStack(alignment: .topLeading) {
+            // The whole surface. No cell is drawn: the lattice is how the
+            // checker decides which letters form a word, and the player is
+            // never shown it — they are looking at a bare table with letters
+            // lying on it. Deleting the empty-cell Canvas that used to paint
+            // one rounded rect per visible coord IS that change, and it takes
+            // the ~2,400-fill-per-frame draw cost with it.
             DesignTokens.Palette.boardSurface
-
-            // One Canvas, not one view per cell: at the 24pt cell floor a
-            // landscape iPad viewport holds ~2,400 cells, and 2,400 shape
-            // views would make panning and zooming unusable. Canvas resolves
-            // the asset-catalog Color in the current environment, so light
-            // and dark still come from the catalog.
-            Canvas { context, _ in
-                let shading = GraphicsContext.Shading.color(DesignTokens.Palette.cellEmpty)
-                for cell in cells {
-                    context.fill(
-                        Path(
-                            roundedRect: CGRect(
-                                origin: cell.point,
-                                size: CGSize(width: cellSize, height: cellSize)
-                            )
-                            .insetBy(
-                                dx: DesignTokens.Stroke.hairline,
-                                dy: DesignTokens.Stroke.hairline
-                            ),
-                            cornerRadius: DesignTokens.Radius.cell
-                        ),
-                        with: shading
-                    )
-                }
-            }
 
             // Real views, not Canvas drawing: BrandTile owns the face,
             // bevel, ring and lift, and this must not re-implement any of

@@ -92,6 +92,30 @@ public struct BoardModel: Sendable {
     /// here — a run is wrong as a whole and every letter in it is part of it.
     public private(set) var invalidCoords: Set<Coord> = []
 
+    /// Where each tile sits INSIDE its cell, in cell units, keyed by tile id.
+    ///
+    /// This is what makes the surface a table rather than a spreadsheet. The
+    /// lattice stays exact — the frozen checker still reads whole `Coord`s, so
+    /// which letters form a word has the same answer it always had — and this
+    /// is the only thing between that lattice and the screen.
+    ///
+    /// One rule holds the whole model up: **every tile in a connected cluster
+    /// carries the same offset.** So a loose tile is a cluster of one and
+    /// scatters on its own, while letters that touch share one offset and read
+    /// as a single aligned block. Connecting two letters IS the snap — no
+    /// animation decides it and no code special-cases it.
+    ///
+    /// Rebuilt whole on each commit rather than edited, so it can never
+    /// disagree with the board it was derived from, and a tile that left the
+    /// board leaves no entry behind.
+    public private(set) var tileOffsets: [UUID: CGSize] = [:]
+
+    /// How far a cluster may sit from its lattice position, in cells, on each
+    /// axis. Bounded well inside the `BoardLayout.step` gap between arrivals, so
+    /// scattered tiles never touch and the eye is never shown two letters
+    /// adjacent that the checker reads as separate.
+    public static let scatter: CGFloat = 0.4
+
     public init(inputLocked: Bool = false) {
         self.inputLocked = inputLocked
         self.validation = BoardValidation(clusterCount: 0, invalidWords: [], tileCount: 0)
@@ -202,7 +226,10 @@ public struct BoardModel: Sendable {
     ) {
         guard !inputLocked, selection.isActive else { return }
         let crossed = selection.paint(
-            from: paintCursor ?? start, to: point, on: board, camera: camera
+            from: paintCursor ?? start, to: point, on: board, camera: camera,
+            // The published table, not one derived here. The sweep has to hit
+            // the tiles the player can SEE, which is where the offsets put them.
+            offsets: tileOffsets
         )
         if crossed > 0 { paintedAny = true }
         paintCursor = point
@@ -285,6 +312,43 @@ public struct BoardModel: Sendable {
                         : Coord(row: word.origin.row + step, col: word.origin.col)
                 }
             }
+        )
+        tileOffsets = Self.offsets(for: board)
+    }
+
+    /// One offset per cluster, handed to every tile in it.
+    ///
+    /// The cluster's lowest coord in reading order names it, and that tile's id
+    /// is what the offset is drawn from — so the answer depends on the board
+    /// alone and not on the order a `Set` happened to iterate. A cluster that
+    /// gains or loses a letter is renamed by that rule and shifts as one piece,
+    /// which is the visible "the word settles when you complete it".
+    private static func offsets(for board: Board) -> [UUID: CGSize] {
+        var table: [UUID: CGSize] = [:]
+        for cluster in board.clusters {
+            guard let anchor = cluster.min(by: { ($0.row, $0.col) < ($1.row, $1.col) }),
+                  let seed = board.tile(at: anchor)
+            else { continue }
+            let offset = Self.scattered(seed.id)
+            for coord in cluster {
+                guard let tile = board.tile(at: coord) else { continue }
+                table[tile.id] = offset
+            }
+        }
+        return table
+    }
+
+    /// A stable ±`scatter` cells, read straight out of the id's own bytes.
+    ///
+    /// Not `hashValue`: Swift seeds that per process, so the same board would
+    /// scatter differently on every launch and no test could pin it. The bytes
+    /// of a `UUID` are fixed for the life of the tile, so a board laid out twice
+    /// looks identical both times and a tile keeps its place across a relaunch.
+    private static func scattered(_ id: UUID) -> CGSize {
+        let bytes = id.uuid
+        return CGSize(
+            width: (CGFloat(bytes.0) / 255 - 0.5) * 2 * scatter,
+            height: (CGFloat(bytes.1) / 255 - 0.5) * 2 * scatter
         )
     }
 
