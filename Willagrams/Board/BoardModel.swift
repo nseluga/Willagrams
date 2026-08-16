@@ -48,8 +48,32 @@ public struct BoardModel: Sendable {
     /// so an empty set here means no hold, with no second flag to disagree.
     public var dragging: Set<Coord> { tileDrag?.origins ?? [] }
 
+    /// What the frozen checker said about the board after the last committed
+    /// move. Published state, never recomputed by a reader: `BoardRender` and
+    /// the view read `invalidCoords` and `canDraw` off this, so nothing on the
+    /// draw path calls `validate` — and nothing calls it per gesture frame.
+    public private(set) var validation: BoardValidation
+    /// Straight off the frozen `isComplete`. The completeness rule lives in
+    /// `BoardValidation` and this must never restate any part of it.
+    public var canDraw: Bool { validation.isComplete }
+
+    /// Every coord covered by a word in `validation.invalidWords`, expanded once
+    /// per commit so the draw path is a set lookup rather than a walk of the
+    /// word list per drawn cell. A tile in two words, one of them bad, is in
+    /// here — a run is wrong as a whole and every letter in it is part of it.
+    public private(set) var invalidCoords: Set<Coord> = []
+
     public init(inputLocked: Bool = false) {
         self.inputLocked = inputLocked
+        self.validation = BoardValidation(clusterCount: 0, invalidWords: [], tileCount: 0)
+    }
+
+    /// Seeds the published state from the board the surface starts on, so a
+    /// caller gating on `canDraw` is not reading a bare-empty answer about a
+    /// board that already has tiles on it before the first move lands.
+    public init(board: Board, against dictionary: some WordList, inputLocked: Bool = false) {
+        self.init(inputLocked: inputLocked)
+        revalidate(board, against: dictionary)
     }
 
     /// Takes hold of whatever `grab` decided at touch-down, firing pickup once.
@@ -83,18 +107,46 @@ public struct BoardModel: Sendable {
     /// released pan and a release after a lock landed mid-hold. `Board` is a
     /// value and `TileDrag.drop` builds on a copy, so a refused or absent
     /// commit cannot leave a half-move behind.
+    /// `dictionary` is a parameter rather than a stored property: the checker is
+    /// only ever needed at the instant a move lands, and holding one here would
+    /// be a second place for it to go stale.
     public mutating func commit(
         translation: CGSize,
         on board: Board,
         camera: BoardCamera,
-        threshold: CGFloat
+        threshold: CGFloat,
+        against dictionary: some WordList
     ) -> Board {
         guard let tileDrag else { return board }
         let next = tileDrag.drop(
             translation: translation, on: board, camera: camera, threshold: threshold
         )
+        // On the committed board, not on the one handed in — and on the refused
+        // path too, where `drop` hands the original straight back and this is
+        // therefore the same answer recomputed rather than a different one.
+        revalidate(next, against: dictionary)
         cancel()
         return next
+    }
+
+    /// The ONE place published validation is written, and the only call to the
+    /// frozen checker in this lane. Everything here is read back out of
+    /// `BoardValidation` — no cluster, run or completeness rule is restated.
+    private mutating func revalidate(_ board: Board, against dictionary: some WordList) {
+        validation = board.validate(against: dictionary)
+        invalidCoords = Set(
+            validation.invalidWords.flatMap { word in
+                // `text.count` letters from `origin` along `direction`. Every
+                // one of those coords holds a tile by construction — the word
+                // was read off the board — so no overflow guard is needed that
+                // `Board` itself did not already need to place them.
+                (0..<word.text.count).map { step in
+                    word.direction == .across
+                        ? Coord(row: word.origin.row, col: word.origin.col + step)
+                        : Coord(row: word.origin.row + step, col: word.origin.col)
+                }
+            }
+        )
     }
 
     /// Drops the hold with no feel and no commit — the ONE cancel path, taken

@@ -42,6 +42,11 @@ final class BoardModelTests: XCTestCase {
 
     private static let viewport = CGRect(x: 0, y: 0, width: 480, height: 320)
 
+    /// The word list every commit here is checked against. Empty on purpose:
+    /// these cases are about the drag session, and an empty list keeps the
+    /// checker's answer constant so nothing below depends on it.
+    private static let dictionary = EnableWordList(words: [])
+
     private static let home = Coord(row: 0, col: 0)
     private static let target = Coord(row: 0, col: 1)
     /// A second tile far from `home`, so `placementList` is never a one-entry
@@ -110,7 +115,7 @@ final class BoardModelTests: XCTestCase {
 
         let after = model.commit(
             translation: Self.oneCell, on: fixture.board,
-            camera: Self.camera, threshold: Self.threshold
+            camera: Self.camera, threshold: Self.threshold, against: Self.dictionary
         )
         XCTAssertEqual(after.placementList, fixture.board.placementList, "a locked drag changed the board")
         XCTAssertEqual(feel.events, [], "a locked touch fired \(feel.events)")
@@ -222,7 +227,7 @@ final class BoardModelTests: XCTestCase {
         // And the release that follows commits nothing.
         let released = model.commit(
             translation: Self.oneCell, on: fixture.board,
-            camera: Self.camera, threshold: Self.threshold
+            camera: Self.camera, threshold: Self.threshold, against: Self.dictionary
         )
         XCTAssertEqual(released.placementList, fixture.board.placementList)
         XCTAssertEqual(feel.events, [.pickup])
@@ -253,7 +258,7 @@ final class BoardModelTests: XCTestCase {
 
         let released = model.commit(
             translation: Self.oneCell, on: fixture.board,
-            camera: Self.camera, threshold: Self.threshold
+            camera: Self.camera, threshold: Self.threshold, against: Self.dictionary
         )
         XCTAssertEqual(released.placementList, fixture.board.placementList)
     }
@@ -287,7 +292,7 @@ final class BoardModelTests: XCTestCase {
 
         let released = model.commit(
             translation: CGSize(width: 144, height: 60), on: fixture.board,
-            camera: Self.camera, threshold: Self.threshold
+            camera: Self.camera, threshold: Self.threshold, against: Self.dictionary
         )
         XCTAssertEqual(released.placementList, fixture.board.placementList, "the release committed under the lock")
         XCTAssertEqual(feel.events, [.pickup], "the release fired a feel under the lock")
@@ -392,7 +397,7 @@ final class BoardModelTests: XCTestCase {
 
         let landed = model.commit(
             translation: Self.oneCell, on: fixture.board,
-            camera: Self.camera, threshold: Self.threshold
+            camera: Self.camera, threshold: Self.threshold, against: Self.dictionary
         )
         XCTAssertNotEqual(landed.placementList, fixture.board.placementList, "the restored drag changed nothing")
         XCTAssertEqual(landed.tile(at: Self.target)?.id, fixture.tile.id)

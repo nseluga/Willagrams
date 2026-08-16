@@ -67,10 +67,21 @@ public struct BoardView: View {
     /// boolean and asks no questions.
     private let inputLocked: Bool
 
-    public init(board: Board, camera: BoardCamera, inputLocked: Bool = false) {
+    /// The word list every committed move is checked against. Held as an
+    /// existential rather than making this view generic: the view never calls
+    /// it, it only hands it to `BoardModel.commit`, which opens it.
+    private let dictionary: any WordList
+
+    public init(
+        board: Board,
+        camera: BoardCamera,
+        dictionary: any WordList,
+        inputLocked: Bool = false
+    ) {
         _board = State(initialValue: board)
         _camera = State(initialValue: camera)
-        _model = State(initialValue: BoardModel(inputLocked: inputLocked))
+        _model = State(initialValue: BoardModel(board: board, against: dictionary, inputLocked: inputLocked))
+        self.dictionary = dictionary
         self.inputLocked = inputLocked
     }
 
@@ -83,7 +94,8 @@ public struct BoardView: View {
                 camera: camera,
                 rect: rect,
                 dragging: model.dragging,
-                dragTranslation: model.dragTranslation
+                dragTranslation: model.dragTranslation,
+                invalid: model.invalidCoords
             )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
@@ -166,7 +178,8 @@ public struct BoardView: View {
                             translation: value.translation,
                             on: board,
                             camera: camera,
-                            threshold: DesignTokens.Motion.snapThreshold
+                            threshold: DesignTokens.Motion.snapThreshold,
+                            against: dictionary
                         )
                     }
                 }
@@ -248,6 +261,9 @@ private struct BoardSurface: View, Animatable {
     /// Empty between drags. `BoardRender` turns these into `.selected` cells.
     let dragging: Set<Coord>
     let dragTranslation: CGSize
+    /// The coords the session published after the last committed move. This
+    /// view checks nothing itself — it has no word list to check against.
+    let invalid: Set<Coord>
 
     /// Pan width, pan height, zoom — the whole of what an animation between
     /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
@@ -266,7 +282,7 @@ private struct BoardSurface: View, Animatable {
     var body: some View {
         let cells = BoardRender.cells(
             board: board, camera: camera, in: rect,
-            dragging: dragging, by: dragTranslation
+            dragging: dragging, by: dragTranslation, invalid: invalid
         )
         let cellSize = camera.cellSize
 
@@ -318,6 +334,18 @@ private struct BoardSurface: View, Animatable {
                         size: cellSize,
                         state: (cell.state ?? .idle).brandState
                     )
+                    // The tint for a tile in a refused run. An overlay rather
+                    // than a branch between two different tiles: a branch would
+                    // give SwiftUI a new subtree the moment a run turns good or
+                    // bad, and the released tile's slide into its cell would cut.
+                    // `Color.clear` composites to nothing under `.multiply`, so
+                    // the valid case leaves the tile exactly as BrandTile drew
+                    // it. The colour is the only decision here, and it is read
+                    // from published state, never computed.
+                    .overlay {
+                        (cell.isInvalid ? DesignTokens.Palette.danger : Color.clear)
+                            .blendMode(.multiply)
+                    }
                     .offset(x: tilePoint.x, y: tilePoint.y)
                     // `cells` arrives in `visibleCoords` row-major order, so a
                     // tile dragged down or right would otherwise draw BEHIND
@@ -362,5 +390,19 @@ private func previewBoard() -> Board {
 
 private let previewCamera = BoardCamera(pan: CGSize(width: DesignTokens.Space.xl, height: DesignTokens.Space.xl))
 
-#Preview("Light") { BoardView(board: previewBoard(), camera: previewCamera) }
-#Preview("Dark") { BoardView(board: previewBoard(), camera: previewCamera).preferredColorScheme(.dark) }
+/// In-memory rather than the bundled list: a preview must not depend on a
+/// resource load that can throw.
+private let previewDictionary = EnableWordList(words: ["WILL"])
+
+#Preview("Light") {
+    BoardView(board: previewBoard(), camera: previewCamera, dictionary: previewDictionary)
+}
+#Preview("Dark") {
+    BoardView(board: previewBoard(), camera: previewCamera, dictionary: previewDictionary)
+        .preferredColorScheme(.dark)
+}
+/// The same board against a list that does not hold WILL, so the danger tint is
+/// on screen next to an untinted loose tile.
+#Preview("Refused") {
+    BoardView(board: previewBoard(), camera: previewCamera, dictionary: EnableWordList(words: []))
+}

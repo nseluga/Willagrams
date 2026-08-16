@@ -42,6 +42,11 @@ public enum BoardRender {
         /// translation. Nil exactly when `tile` is nil.
         public let tilePoint: CGPoint?
         public let state: TileState?
+        /// The tile here is part of a run the checker refused. Read from the
+        /// coord set the session published after the last committed move — this
+        /// file never checks a word against anything, and never can: it has no
+        /// word list to check one against.
+        public let isInvalid: Bool
 
         // No hand-written init: `cells(_:_:in:)` is the only producer, and the
         // synthesized memberwise one already covers the tests. A public init
@@ -69,7 +74,8 @@ public enum BoardRender {
         camera: BoardCamera,
         in rect: CGRect,
         dragging: Set<Coord> = [],
-        by translation: CGSize = .zero
+        by translation: CGSize = .zero,
+        invalid: Set<Coord> = []
     ) -> [Cell] {
         // A live `DragGesture` translation is an external float. A non-finite
         // one draws the tile where it was rather than at a position no renderer
@@ -88,7 +94,10 @@ public enum BoardRender {
                         ? CGPoint(x: point.x + offset.width, y: point.y + offset.height)
                         : point
                 ),
-                state: tile == nil ? nil : (carried ? .selected : state(of: coord, in: board))
+                state: tile == nil ? nil : (carried ? .selected : state(of: coord, in: board)),
+                // An empty cell is in no word, and a tile in flight has left the
+                // alignment it was part of — it reads as carried, not as wrong.
+                isInvalid: tile != nil && !carried && invalid.contains(coord)
             )
         }
     }

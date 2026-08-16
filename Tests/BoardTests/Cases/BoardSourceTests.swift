@@ -610,6 +610,104 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertFalse(text.contains("placements"), "the drag reaches into Board.placements")
     }
 
+    // MARK: - Live validation: the view reads published state, and checks nothing
+
+    func testNoFileOutsideTheSessionCallsTheCheckerAndTheSessionCallsItOnce() throws {
+        // The whole file, every type in it — the view's body, its computed
+        // properties, `BoardSurface`, the previews. A `validate` anywhere in a
+        // draw path is the guardrail this item must not break, and a slice of
+        // the body would not see one planted in the surface below it.
+        for file in try BoardSource.all() where file.name != "BoardModel.swift" {
+            let text = BoardSource.strippingComments(file.text)
+            for reimplementation in [".validate(", "validate(against:", ".clusters", ".words()", "isComplete"] {
+                XCTAssertFalse(
+                    text.contains(reimplementation),
+                    "\(file.name) checks the board itself via \(reimplementation)"
+                )
+            }
+        }
+
+        // And the session holds exactly one call to it, in one place. Two would
+        // be two answers that can disagree.
+        let model = try self.model()
+        XCTAssertEqual(
+            BoardSource.matches(#"(board\.validate\(against:)"#, in: model).count, 1,
+            "BoardModel calls the checker somewhere other than its one revalidate"
+        )
+        XCTAssertEqual(
+            BoardSource.matches(#"(private mutating func revalidate)"#, in: model).count, 1,
+            "BoardModel holds more than one revalidate path"
+        )
+        XCTAssertTrue(
+            model.contains("validation.isComplete"),
+            "canDraw does not come from the frozen isComplete"
+        )
+        // Every part of the completeness rule restated here would be a second
+        // copy of a rule BoardAnalysis owns.
+        for rule in ["clusterCount == 1", "invalidWords.isEmpty", "tileCount >= 2"] {
+            XCTAssertFalse(model.contains(rule), "BoardModel re-derives the Draw gate: \(rule)")
+        }
+    }
+
+    func testTheViewTintsFromPublishedStateAndNamesTheDangerToken() throws {
+        let text = try view()
+        XCTAssertTrue(text.contains("Palette.danger"), "BoardView does not tint a refused run at all")
+        XCTAssertTrue(
+            text.contains("invalid: model.invalidCoords"),
+            "BoardView does not hand the published invalid set to the draw list"
+        )
+        XCTAssertTrue(
+            text.contains("cell.isInvalid"),
+            "BoardView tints from something other than the draw list's own marker"
+        )
+        // The one call site that could reintroduce a per-frame check.
+        XCTAssertTrue(
+            text.contains("against: dictionary"),
+            "BoardView does not hand the word list to the commit"
+        )
+        XCTAssertFalse(
+            text.contains("EnableWordList()"),
+            "BoardView loads a word list of its own rather than taking the one it was given"
+        )
+    }
+
+    func testTheValidationChecksHaveTeeth() {
+        // A view that checked the board in its own body, versus one that reads
+        // the published set.
+        let checking = "let bad = board.validate(against: dictionary).invalidWords"
+        XCTAssertTrue(checking.contains(".validate("))
+        XCTAssertFalse("BoardRender.cells(board: board, invalid: invalid)".contains(".validate("))
+
+        // A view that re-derived the gate instead of reading isComplete.
+        let derived = "var canDraw: Bool { board.clusters.count == 1 }"
+        XCTAssertTrue(derived.contains(".clusters"))
+        XCTAssertFalse(derived.contains("validation.isComplete"))
+        XCTAssertTrue("var canDraw: Bool { validation.isComplete }".contains("validation.isComplete"))
+
+        // A restated completeness rule.
+        XCTAssertTrue("clusterCount == 1 && invalidWords.isEmpty".contains("clusterCount == 1"))
+        XCTAssertFalse("validation.isComplete".contains("clusterCount == 1"))
+
+        // Two calls to the checker versus one.
+        let twice = """
+            validation = board.validate(against: dictionary)
+            let gate = board.validate(against: dictionary).isComplete
+            """
+        XCTAssertEqual(BoardSource.matches(#"(board\.validate\(against:)"#, in: twice).count, 2)
+        XCTAssertEqual(
+            BoardSource.matches(#"(board\.validate\(against:)"#, in: "validation = board.validate(against: d)").count, 1
+        )
+
+        // A tint hardcoded to a colour of its own versus the token.
+        XCTAssertFalse("Color.red.blendMode(.multiply)".contains("Palette.danger"))
+        XCTAssertTrue("DesignTokens.Palette.danger".contains("Palette.danger"))
+
+        // And a view that tinted from a set it built itself rather than the
+        // marker the pure draw list carries.
+        XCTAssertFalse("if badWords.contains(cell.coord)".contains("cell.isInvalid"))
+        XCTAssertTrue("cell.isInvalid ? DesignTokens.Palette.danger : Color.clear".contains("cell.isInvalid"))
+    }
+
     // MARK: - Lane vocabulary guardrails
 
     func testNoBoardSourceUsesBannedVocabulary() throws {
