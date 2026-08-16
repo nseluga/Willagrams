@@ -91,6 +91,38 @@ public struct BoardModel: Sendable {
         revalidate(board, against: dictionary)
     }
 
+    /// The board a game opens on, with the published state already answering
+    /// for it. `tiles` is the whole input: hand it 21 and 21 land, hand it 30
+    /// and 30 do — nothing here knows a starting count.
+    ///
+    /// The tiles go onto the BOARD. There is no rack in this game, so nothing
+    /// on this path routes a tile through one and the rules type's own tile
+    /// store is left empty.
+    public mutating func opening(_ tiles: [Tile], against dictionary: some WordList) -> Board {
+        let board = BoardLayout.opening(tiles)
+        seed(board, against: dictionary)
+        return board
+    }
+
+    /// The board after a Draw delivers `tiles`, landed in free cells below what
+    /// the player can currently see and published in one pass — the same one
+    /// check a commit pays, not a second one.
+    ///
+    /// `camera` and `rect` are read, never stored: this decides where the
+    /// arrival lands and hands the board back, and the surface's own camera is
+    /// untouched.
+    public mutating func delivered(
+        _ tiles: [Tile],
+        onto board: Board,
+        camera: BoardCamera,
+        in rect: CGRect,
+        against dictionary: some WordList
+    ) -> Board {
+        let next = BoardLayout.delivered(tiles, onto: board, camera: camera, in: rect)
+        seed(next, against: dictionary)
+        return next
+    }
+
     /// Takes hold of whatever `grab` decided at touch-down, firing pickup once.
     ///
     /// Refused outright while locked, before `TileDrag` is ever built — so

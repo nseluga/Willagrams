@@ -188,7 +188,7 @@ final class BoardSourceTests: XCTestCase {
         // them stops the whole package compiling, so this is the early, legible
         // failure rather than a wall of build errors.
         for name in ["BoardCamera.swift", "BoardRender.swift", "BoardGesture.swift",
-                     "BoardDrag.swift", "BoardModel.swift"] {
+                     "BoardDrag.swift", "BoardModel.swift", "BoardLayout.swift"] {
             let text = BoardSource.strippingComments(try BoardSource.text(name))
             let uiImports = BoardSource.matches(#"import\s+(SwiftUI|UIKit|AppKit)"#, in: text)
             XCTAssertTrue(uiImports.isEmpty, "\(name) imports \(uiImports) and is no longer host-compilable")
