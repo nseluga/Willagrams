@@ -60,6 +60,9 @@ struct MatchSessionTerminalTests {
 
         private var parked: [CheckedContinuation<Void, Never>] = []
         private var gateClosed = false
+        /// Messages this endpoint refuses to carry, throwing as a real transport
+        /// does when the peer is not reachable at the moment of the send.
+        private var failFilter: (@Sendable (MatchMessage) -> Bool)?
 
         init(localPlayerID: PlayerID, peer: PlayerID) {
             let messages = AsyncStream.makeStream(of: MatchMessage.self, bufferingPolicy: .unbounded)
@@ -78,8 +81,13 @@ struct MatchSessionTerminalTests {
                     parked.append(continuation)
                 }
             }
+            if failFilter?(message) == true { throw MatchTransportError.peerDisconnected }
             wire.append(message)
         }
+
+        /// Throws from `send` for every message `shouldFail` matches. `nil`
+        /// carries everything again.
+        func failSends(_ shouldFail: (@Sendable (MatchMessage) -> Bool)?) { failFilter = shouldFail }
 
         nonisolated func leave() {
             inbound.finish()

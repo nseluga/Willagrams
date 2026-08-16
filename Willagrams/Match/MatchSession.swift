@@ -442,6 +442,10 @@ public final class MatchSession {
         // `transport.send`. The lock is what actually stops those, and it is read
         // when each piece of work runs rather than when it was enqueued.
         peerPresence = .gone
+        // A `.connected` already buffered when the pump is cancelled can still
+        // be delivered, and the flush would put a message on the wire from a
+        // device that has left.
+        owesTerminalMessage = false
         pump?.cancel()
         presencePump?.cancel()
         countdownTask?.cancel()
@@ -920,6 +924,10 @@ public final class MatchSession {
                 // it opened must not outlive it and take the opponent's next
                 // grant for this device's own.
                 if case .drawRequest = message { self.clearOneOutstandingDraw() }
+                // The flush cleared `owesTerminalMessage` before this ran, so a
+                // throw here loses the rebuilt terminal with nothing left to
+                // re-arm it. Re-armed, the next return flushes it again.
+                if Self.endsTheMatch(message) { self.owesTerminalMessage = true }
             }
         }
     }
