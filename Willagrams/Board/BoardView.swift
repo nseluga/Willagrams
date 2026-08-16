@@ -80,7 +80,14 @@ public struct BoardView: View {
     ) {
         _board = State(initialValue: board)
         _camera = State(initialValue: camera)
-        _model = State(initialValue: BoardModel(board: board, against: dictionary, inputLocked: inputLocked))
+        // Deliberately the CHEAP init, not the seeding one. `State(initialValue:)`
+        // takes a plain argument rather than an autoclosure, so whatever is
+        // written here runs on every re-init of this view — as often as the
+        // owner updates, per the note on `inputLocked` — and everything after
+        // the first is thrown away. A check belongs on a commit or on an
+        // appearance, not on a parent's body evaluation. `.onAppear` below
+        // publishes the first answer, once.
+        _model = State(initialValue: BoardModel(inputLocked: inputLocked))
         self.dictionary = dictionary
         self.inputLocked = inputLocked
     }
@@ -117,6 +124,15 @@ public struct BoardView: View {
                 // second call here to forget. `initial: true` because a view
                 // reconstructed around a live lock must not come back unlocked.
                 .onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }
+                // The first and only unforced check: the starting board has
+                // never been committed here, so without this a board that
+                // arrives already refused would draw untinted until the player
+                // moved something. `.onAppear` rather than `.task` — it is
+                // synchronous work that runs before the surface is on screen,
+                // so the first frame the player sees is already tinted, and
+                // there is no async hop to schedule. Once per appearance, never
+                // per body evaluation and never per gesture frame.
+                .onAppear { model.seed(board, against: dictionary) }
         }
     }
 
@@ -334,18 +350,21 @@ private struct BoardSurface: View, Animatable {
                         size: cellSize,
                         state: (cell.state ?? .idle).brandState
                     )
-                    // The tint for a tile in a refused run. An overlay rather
-                    // than a branch between two different tiles: a branch would
-                    // give SwiftUI a new subtree the moment a run turns good or
-                    // bad, and the released tile's slide into its cell would cut.
-                    // `Color.clear` composites to nothing under `.multiply`, so
-                    // the valid case leaves the tile exactly as BrandTile drew
-                    // it. The colour is the only decision here, and it is read
-                    // from published state, never computed.
-                    .overlay {
-                        (cell.isInvalid ? DesignTokens.Palette.danger : Color.clear)
-                            .blendMode(.multiply)
-                    }
+                    // The tint for a tile in a refused run: the same multiply,
+                    // applied to the tile's own drawing rather than through an
+                    // overlay layer blended against whatever sits behind it.
+                    // That difference is the point — a square overlay blends
+                    // over the four rounded corners too and tints the surface
+                    // through them, while this multiplies BrandTile's own
+                    // content and stops exactly where the tile does. `.white`
+                    // is the identity of a multiply, so a valid tile is left
+                    // as BrandTile drew it.
+                    // Still an unconditional modifier, not an `if`: a branch
+                    // would hand SwiftUI a new subtree the moment a run turns
+                    // good or bad, and the released tile's slide into its cell
+                    // would cut. The colour is the only decision here, and it
+                    // is read from published state, never computed.
+                    .colorMultiply(cell.isInvalid ? DesignTokens.Palette.danger : .white)
                     .offset(x: tilePoint.x, y: tilePoint.y)
                     // `cells` arrives in `visibleCoords` row-major order, so a
                     // tile dragged down or right would otherwise draw BEHIND

@@ -71,8 +71,23 @@ public struct BoardModel: Sendable {
     /// Seeds the published state from the board the surface starts on, so a
     /// caller gating on `canDraw` is not reading a bare-empty answer about a
     /// board that already has tiles on it before the first move lands.
+    ///
+    /// Kept for the test package and any caller that builds a model around a
+    /// board it already has. `BoardView` must NOT use it: `State(initialValue:)`
+    /// takes a plain argument, so this would run a full check on every re-init
+    /// of the view and throw all but the first away. That view calls `seed`
+    /// once, on appear, instead.
     public init(board: Board, against dictionary: some WordList, inputLocked: Bool = false) {
         self.init(inputLocked: inputLocked)
+        seed(board, against: dictionary)
+    }
+
+    /// Publishes the first answer about a board that was never committed to
+    /// here. Idempotent and the same cost as one commit's recompute, so a
+    /// surface that appears twice pays it twice and lands on the same state
+    /// both times — but it belongs on an appearance, never on a body
+    /// evaluation and never on a gesture frame.
+    public mutating func seed(_ board: Board, against dictionary: some WordList) {
         revalidate(board, against: dictionary)
     }
 

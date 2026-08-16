@@ -647,6 +647,36 @@ final class BoardSourceTests: XCTestCase {
         for rule in ["clusterCount == 1", "invalidWords.isEmpty", "tileCount >= 2"] {
             XCTAssertFalse(model.contains(rule), "BoardModel re-derives the Draw gate: \(rule)")
         }
+
+        // And the two paths that reach `revalidate` are named one by one, so a
+        // third one planted anywhere in the file fails this rather than
+        // slipping under a count. A commit, and the one-off seed.
+        for caller in ["revalidate(next, against: dictionary)", "revalidate(board, against: dictionary)"] {
+            XCTAssertEqual(
+                model.components(separatedBy: caller).count - 1, 1,
+                "BoardModel does not reach revalidate through exactly the one expected call site: \(caller)"
+            )
+        }
+        // Those two plus the declaration, and nothing else.
+        XCTAssertEqual(
+            BoardSource.matches(#"(revalidate\()"#, in: model).count, 3,
+            "BoardModel calls revalidate from somewhere other than commit and seed"
+        )
+
+        // The seed runs once on an appearance, never inside `State(initialValue:)`.
+        // That argument is plain, not an autoclosure, so a seeding model built
+        // there re-runs the whole check on every re-init of the view and throws
+        // all but the first away — a check off the commit path, per frame of the
+        // owner's updates.
+        let view = try self.view()
+        XCTAssertFalse(
+            view.contains("State(initialValue: BoardModel(board:"),
+            "BoardView seeds the model inside State(initialValue:), re-checking the board on every re-init"
+        )
+        XCTAssertTrue(
+            view.contains("model.seed("),
+            "BoardView never seeds the published validation, so a starting board draws unchecked"
+        )
     }
 
     func testTheViewTintsFromPublishedStateAndNamesTheDangerToken() throws {
