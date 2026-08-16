@@ -757,7 +757,7 @@ public final class MatchSession {
     /// will fail on.
     private func submitToHost(_ message: MatchMessage) {
         enqueue { [weak self] in
-            guard let self, !self.blockedByFreeze(message) else { return }
+            guard let self, !self.blockedByLock(message) else { return }
             guard let hostPool = self.hostPool else { return }
             let produced = await hostPool.handle(message)
             self.applyProduced(produced, answering: message)
@@ -798,16 +798,26 @@ public final class MatchSession {
         }
     }
 
-    /// Whether the freeze stops this piece of outbound work, checked at the
+    /// Whether the lock stops this piece of outbound work, checked at the
     /// moment it would run rather than at the moment it was enqueued.
     ///
-    /// The chain is the reason: work enqueued while the peer was still here sits
-    /// behind its predecessors and would otherwise reach the wire — or the pool
-    /// — after the peer had gone. This is the check that makes "a frozen
-    /// session sends nothing" true of messages already in flight, not only of
-    /// presses made after the drop.
-    private func blockedByFreeze(_ message: MatchMessage) -> Bool {
-        guard isFrozen else { return false }
+    /// The chain is the reason: work enqueued while the match was still live
+    /// sits behind its predecessors and would otherwise reach the wire — or the
+    /// pool — after the peer had gone or the match had ended. This is the check
+    /// that makes "a frozen session sends nothing" and "`.finished` is terminal"
+    /// true of messages already in flight, not only of presses made after.
+    ///
+    /// The one exception is the terminal message this device's own end came
+    /// from: `claimWin()`/`resign()` enqueue the send and then settle the match
+    /// synchronously, so blocking on `isFinished` alone would swallow the very
+    /// message that has to reach the peer. Both run on the main actor with no
+    /// suspension between them, so nothing else can have settled the match in
+    /// between: a `.win` or `.resign` still on the chain of a finished, unfrozen
+    /// session is always this device's own. A frozen session still sends
+    /// nothing, terminal message or not.
+    private func blockedByLock(_ message: MatchMessage) -> Bool {
+        if !isFrozen, Self.endsTheMatch(message) { return false }
+        guard isLocked else { return false }
         // A request that never left is owed no answer, so the credit it opened
         // must not outlive it: left standing, it would take the opponent's next
         // grant for this device's own and the board would never freeze again.
@@ -819,7 +829,7 @@ public final class MatchSession {
 
     private func send(_ message: MatchMessage) {
         enqueue { [weak self] in
-            guard let self, !self.blockedByFreeze(message) else { return }
+            guard let self, !self.blockedByLock(message) else { return }
             do {
                 try await self.transport.send(message, delivery: .reliable)
             } catch {
