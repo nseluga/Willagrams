@@ -117,3 +117,44 @@ lanes add files without touching `project.pbxproj`.
   difficulty: low — synthesized Codable over enums with associated values
   status: done
   parallel-group: b
+
+## Amendment — wire v2 (landed)
+
+Spec: `docs/amendment-wire-v2.md`. Supersedes the `WireFormat.current = 1`
+shape in the item above; that item stays as written because it is history.
+
+- task: Add MatchOptions and the canonical word-list hash
+  done when:
+    - `Sources/WillagramsRules/MatchOptions.swift` declares `struct MatchOptions: Codable, Sendable, Equatable` with `minimumWordLength`, `swapEnabled`, `dictionaryID`, `dictionaryHash`, plus `static let standard` equal to today's shipped behavior
+    - `validated` clamps `minimumWordLength` into `lengthRange` (`2...15`) and filters `dictionaryID` to letters/digits/-/_ and `dictionaryHash` to hex digits, both capped at 64 characters — every field arrives from a peer
+    - `canonicalWordListHash(_:)` lowercases, dedupes, sorts, newline-joins, and SHA256s, so it is order- and duplicate-independent but content-sensitive
+    - `MatchOptions.standardDictionaryHash` is pinned as a literal and a test asserts it equals `EnableWordList().canonicalHash`, so changing the bundled list fails at test time rather than desyncing a shipped match
+    - `MinimumLengthWordList` decorates any `WordList`, rejecting anything shorter than its minimum and deferring the rest
+  risk: an unvalidated option off the wire reaches the pool or the validator; a
+        silently changed dictionary desyncs two devices mid-match
+  difficulty: low — a struct, a decorator, and a hash
+  status: done
+
+- task: Bump the wire to v2 and carry the options in start
+  done when:
+    - `WireFormat.current == 2`; `MatchMessage.start` carries `options: MatchOptions`; `RejectionReason` gains `swapDisabled`
+    - `Tests/WillagramsRulesTests/Fixtures/wire-v2.json` replaces the v1 fixture and decodes into all 13 messages, asserted against hand-built literals rather than re-encoded through this build
+    - `MatchCodec.decode` still refuses any start whose version is not current, driven through the real entry point
+  risk: a case added or reordered after a lane ships breaks decode between two
+        app versions — silent, surfacing as a match that just stops
+  difficulty: low — synthesized Codable plus a fixture regeneration
+  status: done
+
+- task: Enforce the options in the session and the host pool
+  done when:
+    - `MatchSession.applyStart` validates the arriving options, and refuses the start outright when `dictionaryHash` differs from this device's — `optionsRefusal` says why and the match never opens
+    - A minimum above the floor wraps `dictionary` in `MinimumLengthWordList` once, so it reaches every existing reader including `canDraw`
+    - `HostPool` rejects a swap request with `.swapDisabled` when swap is off, and `MatchSession.swap` short-circuits before the round trip
+    - Both swap refusals return the player's Draw credit — neither is counted as answering a draw
+    - The 36 pre-amendment engine tests and the 100 MatchTests still pass
+  risk: a device that adopts the host's dictionary id while holding different
+        content disagrees about legal words for the whole match, and the symptom
+        lands mid-play as a rejected word rather than as a setup error
+  difficulty: medium — the refusal path and the credit accounting are both easy
+        to get subtly wrong
+  status: done

@@ -1,5 +1,7 @@
 [
-  { "start": { "version": 1, "seed": 3735928559, "startingHandSize": 21, "countdownSeconds": 3 } },
+  { "start": { "version": 2, "seed": 3735928559, "startingHandSize": 21, "countdownSeconds": 3,
+      "options": { "minimumWordLength": 2, "swapEnabled": true, "dictionaryID": "standard",
+        "dictionaryHash": "212ad761133bbe21fa93aefb59e03a5d012bc2f858816fd178b57fcd047832e1" } } },
   { "drawRequest": { "player": { "rawValue": "G:1234567890" } } },
   { "grant": { "player": { "rawValue": "G:1234567890" }, "tiles": [
       { "id": "11111111-1111-4111-8111-111111111111", "letter": "A" },
@@ -21,5 +23,6 @@
   { "rejected": { "reason": { "poolEmpty": {} } } },
   { "rejected": { "reason": { "notEnoughTilesToSwap": {} } } },
   { "rejected": { "reason": { "notYourTurn": {} } } },
-  { "rejected": { "reason": { "unknownPlayer": {} } } }
+  { "rejected": { "reason": { "unknownPlayer": {} } } },
+  { "rejected": { "reason": { "swapDisabled": {} } } }
 ]

@@ -235,7 +235,8 @@ struct MatchSessionTerminalTests {
                 version: WireFormat.current,
                 seed: 1,
                 startingHandSize: 21,
-                countdownSeconds: countdownSeconds
+                countdownSeconds: countdownSeconds,
+                options: .standard
             )
         )
         let expected: MatchStatus = countdownSeconds > 0
@@ -384,7 +385,7 @@ struct MatchSessionTerminalTests {
         // And what the peer said before it left cannot move the game either.
         wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "X")]))
         wire.deliver(.poolExhausted)
-        wire.deliver(.start(version: WireFormat.current, seed: 9, startingHandSize: 3, countdownSeconds: 5))
+        wire.deliver(.start(version: WireFormat.current, seed: 9, startingHandSize: 3, countdownSeconds: 5, options: .standard))
         try await Self.settle()
 
         // The whole observable state, not a count of any part of it.

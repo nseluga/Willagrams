@@ -3,7 +3,7 @@ import Foundation
 /// The wire format this build speaks. Bump only when `MatchMessage` changes
 /// shape, and add a golden fixture for the new version in the same commit.
 public enum WireFormat {
-    public static let current = 1
+    public static let current = 2
 }
 
 /// Why the host turned down a request.
@@ -12,6 +12,12 @@ public enum RejectionReason: Codable, Sendable, Equatable {
     case notEnoughTilesToSwap
     case notYourTurn
     case unknownPlayer
+
+    /// The host opened the match with `swapEnabled: false`.
+    ///
+    /// Distinct from `notEnoughTilesToSwap`: that one is about the pool and may
+    /// succeed later, this one holds for the whole match.
+    case swapDisabled
 }
 
 /// Everything two devices say to each other during a match.
@@ -29,7 +35,16 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     /// `version` is the wire format, not the app version — bump it only when
     /// this enum changes shape, and refuse a match whose host sends a version
     /// this build does not know.
-    case start(version: Int, seed: UInt64, startingHandSize: Int, countdownSeconds: Int)
+    /// `options` carries the host's rule variants. Both devices validate their
+    /// own boards, so the rules have to travel with the start or the two
+    /// disagree about what a legal board is.
+    case start(
+        version: Int,
+        seed: UInt64,
+        startingHandSize: Int,
+        countdownSeconds: Int,
+        options: MatchOptions
+    )
 
     /// "I have placed everything" — a request for everyone to take one.
     case drawRequest(player: PlayerID)

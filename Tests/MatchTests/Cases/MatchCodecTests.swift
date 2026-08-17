@@ -11,7 +11,7 @@ struct MatchCodecTests {
     static var everyCase: [MatchMessage] {
         let tiles = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
         return [
-            .start(version: WireFormat.current, seed: 0xDEAD_BEEF, startingHandSize: 21, countdownSeconds: 3),
+            .start(version: WireFormat.current, seed: 0xDEAD_BEEF, startingHandSize: 21, countdownSeconds: 3, options: .standard),
             .drawRequest(player: player),
             .grant(player: player, tiles: tiles),
             .swapRequest(player: player, returning: tiles[0]),
@@ -36,7 +36,7 @@ struct MatchCodecTests {
     }
 
     static var goldenFixtureURL: URL {
-        repoRoot.appendingPathComponent("Tests/WillagramsRulesTests/Fixtures/wire-v1.json")
+        repoRoot.appendingPathComponent("Tests/WillagramsRulesTests/Fixtures/wire-v2.json")
     }
 
     @Test("Every case round-trips through the codec unchanged")
@@ -52,7 +52,7 @@ struct MatchCodecTests {
     func goldenFixtureDecodes() throws {
         let json = try Data(contentsOf: Self.goldenFixtureURL)
         let elements = try #require(try JSONSerialization.jsonObject(with: json) as? [Any])
-        #expect(elements.count == 12)
+        #expect(elements.count == 13)
 
         for element in elements {
             let elementData = try JSONSerialization.data(withJSONObject: element)
@@ -64,7 +64,7 @@ struct MatchCodecTests {
 
     @Test("A start with a foreign version is refused, not decoded")
     func foreignVersionIsRefused() throws {
-        let foreign = MatchMessage.start(version: WireFormat.current + 1, seed: 1, startingHandSize: 21, countdownSeconds: 3)
+        let foreign = MatchMessage.start(version: WireFormat.current + 1, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard)
         let data = try MatchCodec.encode(foreign)
 
         #expect {
@@ -77,7 +77,7 @@ struct MatchCodecTests {
     @Test("A start at the current version is accepted")
     func currentVersionIsAccepted() throws {
         let data = try MatchCodec.encode(
-            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 3)
+            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard)
         )
         let decoded = try MatchCodec.decode(data)
         guard case .start = decoded else {

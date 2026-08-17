@@ -96,7 +96,7 @@ struct MatchSessionCriteriaTests {
         let one = MatchSession(transport: first, peerPlayerID: bob, dictionary: EveryWordIsReal())
         let two = MatchSession(transport: second, peerPlayerID: alice, dictionary: EveryWordIsReal())
 
-        one.startMatch(seed: seed, startingHandSize: 21, countdownSeconds: 0)
+        one.startMatch(seed: seed, startingHandSize: 21, countdownSeconds: 0, options: .standard)
         try await waitUntil("both devices to be playing") {
             one.state.status == .playing && two.state.status == .playing
         }
@@ -163,7 +163,7 @@ struct MatchSessionCriteriaTests {
 
         let began = ContinuousClock.now
         try await opener.send(
-            .start(version: WireFormat.current, seed: 4, startingHandSize: 21, countdownSeconds: 3),
+            .start(version: WireFormat.current, seed: 4, startingHandSize: 21, countdownSeconds: 3, options: .standard),
             delivery: .reliable
         )
 

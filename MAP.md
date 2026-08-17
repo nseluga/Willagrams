@@ -6,6 +6,7 @@ protected:
   - Sources/WillagramsRules/Pool.swift
   - Sources/WillagramsRules/GameState.swift
   - Sources/WillagramsRules/MatchMessage.swift
+  - Sources/WillagramsRules/MatchOptions.swift
   - Sources/WillagramsRules/WordList.swift
   - Sources/WillagramsRules/Resources/dictionary.txt
   - Tests/WillagramsRulesTests/**
@@ -23,41 +24,53 @@ themselves are the contract.
 
 There is no `rules` lane. The engine it would have built — pool, board model,
 connectivity and word extraction, dictionary, the Draw gate — landed whole
-during `/foundation` and is green at 36 tests across 6 suites. Everything it
+during `/foundation` and is green at 42 tests across 7 suites. Everything it
 would have owned is on the `protected:` list above, so 100% of the lane's scope
 is frozen and no item could legally run in it. Downstream lanes depend on those
 contracts directly, not on a lane.
 
-## Pending amendment — wire v2, for the `settings` lane
+## Landed amendment — wire v2, for the `settings` lane
 
-Rule variants ship in v1, which the wire cannot currently express. Before
-`settings` can run, `/foundation` must amend: add `options:` to
-`MatchMessage.start`, bump `WireFormat.current` to 2, regenerate the golden
-fixture as `wire-v2.json`, add `MatchOptions` and its enforcement to the engine,
-and extend `protected:` with both new paths.
+Landed on `main`. `MatchOptions` exists in the engine, `WireFormat.current == 2`,
+and `Tests/WillagramsRulesTests/Fixtures/wire-v2.json` is the golden fixture.
+Engine 42 tests / 7 suites, MatchTests 100 tests / 18 suites, both green. The
+spec is `docs/amendment-wire-v2.md`. A lane branch cut before this commit must
+rebase onto it.
 
-Decided, to be pinned at amendment time:
+What shipped, and how it differs from what was decided in advance:
 
-  - The variants are **minimum word length**, **pool size**, and **selectable
-    letter distribution**. No match timer — it reintroduces the unsynced-clock
-    problem the countdown design deliberately avoids. No handicap.
-  - Minimum word length needs no change to `BoardAnalysis`. `words()` already
-    returns every run of two or more and defers validity to the injected
-    `WordList`, so a decorator rejecting anything shorter turns a short run into
-    an *invalid word* rather than an ignored one — which is the correct behavior,
-    and leaves the `tileCount >= 2` floor intact.
-  - The distribution travels as **literal letter counts, not a preset name**, so
-    presets can be added, tuned, or dropped forever without a wire bump and
-    therefore without a forced app update. Counts arrive from a peer and are a
-    trust boundary: validate single A–Z keys, non-negative counts, and a total
-    within sane bounds before building a pool from them.
-  - The host chooses the options and sends them in `start`. The guest accepts or
-    leaves; there is no negotiation handshake.
+  - The variants are **disable swap**, **minimum word length**, and a
+    **selectable dictionary**. Pool size and letter distribution were cut — the
+    pool stays at 144 with a fixed composition this round. No match timer, no
+    handicap, as decided.
+  - `MatchOptions` carries `minimumWordLength`, `swapEnabled`, `dictionaryID`,
+    and `dictionaryHash`. It arrives from a peer, so `validated` clamps the
+    length to `2...15` and filters both identifiers to a charset and a 64-char
+    ceiling before anything reads them.
+  - The dictionary travels as an **id plus a content hash**, not as a list. A
+    start whose hash does not match this device's list is **refused** rather
+    than played: the two devices validate their own boards, so mismatched lists
+    would disagree about legal words for the whole match. `MatchSession` exposes
+    `optionsRefusal` for it.
+  - Minimum word length needed no change to `BoardAnalysis`, as predicted.
+    `MinimumLengthWordList` decorates the injected `WordList`, so a short run
+    becomes an *invalid word* rather than an ignored one.
+  - Swap is enforced host-side in `HostPool` with a new
+    `RejectionReason.swapDisabled`, and short-circuited client-side in
+    `MatchSession.swap`. Both swap refusals return the player's Draw credit.
+  - The host chooses and sends the options in `start`. The guest accepts or
+    leaves; there is no negotiation handshake, as decided.
 
-**Timing.** The amendment must not land while the match lane is mid-run against
-`wire-v1.json`. Sequence: the current match run finishes on v1 → amend → match
-rebases and builds its remaining items against v2 → `settings` runs. `board` is
-unaffected by all of it and can run at any point.
+**⚠️ `MatchSession` is at a Swift 6.3.3 toolchain limit.** Adding one more
+*observed* stored property to that class makes MatchTests abort in the reconnect
+path with `swift_task_dealloc` — "freed pointer was not the last allocation".
+A bare `var probe: Int = 0` is enough; marking any one existing observed
+property `@ObservationIgnored` to keep the net count unchanged makes it pass.
+This amendment's two new values are therefore stored `@ObservationIgnored` and
+read through computed properties that touch an observed one, so observation
+still works — see the note in `Willagrams/Match/MatchSession.swift`. Any lane
+adding state to `MatchSession` must run `swift test --package-path
+Tests/MatchTests`; the engine suite does not cover it.
 
 ## Granted amendment — the opening deal, built in the `shell` lane
 
@@ -105,13 +118,13 @@ construction. No other file under `Willagrams/Board/**` is opened by this.
   area: GameKit multiplayer — Game Center auth, friend invite, GKMatch lifecycle, message codec, host-authoritative pool, draw/grow broadcast, win claim, disconnect + reconnect.
   owns: [ Willagrams/Match/**, Tests/MatchTests/** ]
   assignee: nate
-  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, with golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v1.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, those shipped with the foundation and are fenced under protected:
+  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, with golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v2.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, those shipped with the foundation and are fenced under protected:
 
 - lane: settings
-  area: Match configuration and rule variants — the host's pre-match options screen, local persistence of chosen defaults, and showing both players which rules are in force. Ships the minimum-word-length, pool-size, and letter-distribution controls.
+  area: Match configuration and rule variants — the host's pre-match options screen, local persistence of chosen defaults, and showing both players which rules are in force. Ships the disable-swap, minimum-word-length, and selectable-dictionary controls.
   owns: [ Willagrams/Settings/**, Tests/SettingsTests/** ]
   assignee: nate
-  depends on: match (sequenced — starts after the wire v2 amendment lands and match merges), style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift)
+  depends on: match (sequenced — the wire v2 amendment has landed; starts after match merges), style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift)
 
 - lane: shell
   area: App shell — launch, main menu, solo practice mode, host/join flow, in-match HUD, results screen, navigation. Settings screens themselves belong to the settings lane; shell navigates into them.
@@ -123,7 +136,7 @@ construction. No other file under `Willagrams/Board/**` is opened by this.
   area: The CPU opponent for solo practice — a heuristic grid solver that holds tiles, builds a valid connected board from them, draws when its board is complete, and races the player. Owns its difficulty model and the UI for choosing a difficulty. Sits behind the transport seam exactly as a remote peer does.
   owns: [ Willagrams/Bot/**, Tests/BotTests/** ]
   assignee: nate
-  depends on: match (MatchTransport seam and the MatchMessage wire — contract Willagrams/Match/MatchTransport.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v1.json), style (tokens for the difficulty control — contract Willagrams/Style/DesignTokens.swift). Also builds on the frozen engine (BoardAnalysis word extraction and connectivity in Sources/WillagramsRules/BoardAnalysis.swift) — no lane edge, fenced under protected:
+  depends on: match (MatchTransport seam and the MatchMessage wire — contract Willagrams/Match/MatchTransport.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v2.json), style (tokens for the difficulty control — contract Willagrams/Style/DesignTokens.swift). Also builds on the frozen engine (BoardAnalysis word extraction and connectivity in Sources/WillagramsRules/BoardAnalysis.swift) — no lane edge, fenced under protected:
 
 **Rules, not reinforcement learning.** Building a grid from a tile set is a
 combinatorial construction problem with obvious greedy structure, so heuristic

@@ -58,12 +58,18 @@ public actor HostPool {
     ///     tile away from exhaustion.
     ///   - seed: seeds the generator `Pool.swap` draws from, so a match replays
     ///     the same way.
+    /// Whether this match allows swapping. Fixed for the life of the match: it
+    /// comes from the host's `MatchOptions` on `.start`.
+    private let swapEnabled: Bool
+
     public init(
         players: (PlayerID, PlayerID),
         pool: Pool,
         seed: UInt64,
-        transport: any MatchTransport
+        transport: any MatchTransport,
+        swapEnabled: Bool = true
     ) {
+        self.swapEnabled = swapEnabled
         // Our own bug, not a peer payload: two equal ids would pass the
         // membership guard and fan a round out to the same player twice.
         precondition(players.0 != players.1, "a match needs two different players")
@@ -118,6 +124,13 @@ public actor HostPool {
         case let .swapRequest(player, returning):
             guard players.contains(player) else {
                 return await answer([.rejected(reason: .unknownPlayer)], to: player)
+            }
+            // The host is the only authority on this. A guest that hides its
+            // swap control still has a reachable `MatchSession.swap`, and a
+            // modified build has one regardless — so the rule is enforced here,
+            // with the pool untouched, rather than in anyone's UI.
+            guard swapEnabled else {
+                return await answer([.rejected(reason: .swapDisabled)], to: player)
             }
             // `returning` came off the wire and goes into the pool unchecked: a
             // modified peer can mint a tile it never held or return the same one

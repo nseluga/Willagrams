@@ -256,7 +256,7 @@ struct HostPoolAdversarialTests {
         let authority = HostPool(players: (hostID, guestID), pool: start, seed: 6, transport: host)
 
         let notRequests: [MatchMessage] = [
-            .start(version: 1, seed: 9, startingHandSize: 21, countdownSeconds: 3),
+            .start(version: 1, seed: 9, startingHandSize: 21, countdownSeconds: 3, options: .standard),
             .grant(player: guestID, tiles: tiles(1)),
             .swapGrant(player: guestID, tiles: tiles(3), returned: Tile(letter: "Q")),
             .poolExhausted,

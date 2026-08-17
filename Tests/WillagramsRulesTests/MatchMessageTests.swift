@@ -10,7 +10,7 @@ struct MatchMessageTests {
     static var everyCase: [MatchMessage] {
         let tiles = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
         return [
-            .start(version: WireFormat.current, seed: 0xDEAD_BEEF, startingHandSize: 21, countdownSeconds: 3),
+            .start(version: WireFormat.current, seed: 0xDEAD_BEEF, startingHandSize: 21, countdownSeconds: 3, options: .standard),
             .drawRequest(player: player),
             .grant(player: player, tiles: tiles),
             .swapRequest(player: player, returning: tiles[0]),
@@ -43,20 +43,23 @@ struct MatchMessageTests {
     /// The round trip above only proves this build agrees with itself. This one
     /// decodes bytes written by hand and checked in, so renaming a case or an
     /// associated value fails here instead of in a shipped match.
-    @Test("Every v1 case still decodes from the checked-in golden payload")
+    @Test("Every v2 case still decodes from the checked-in golden payload")
     func goldenPayloadStillDecodes() throws {
-        let url = try #require(Bundle.module.url(forResource: "wire-v1", withExtension: "json"))
+        let url = try #require(Bundle.module.url(forResource: "wire-v2", withExtension: "json"))
         let decoded = try JSONDecoder().decode([MatchMessage].self, from: Data(contentsOf: url))
 
-        #expect(decoded.count == 12, "the golden file must cover every case")
+        #expect(decoded.count == 13, "the golden file must cover every case")
 
-        guard case let .start(version, _, handSize, countdown) = decoded[0] else {
+        guard case let .start(version, _, handSize, countdown, options) = decoded[0] else {
             Issue.record("first golden message should be .start, got \(decoded[0])")
             return
         }
         #expect(version == WireFormat.current, "bump WireFormat.current and add wire-v\(version + 1).json")
         #expect(handSize == 21)
         #expect(countdown == 3)
+        // The options ride the start, so a rename inside `MatchOptions` breaks
+        // here rather than in a shipped match.
+        #expect(options == .standard)
 
         guard case let .win(_, placements) = decoded[6] else {
             Issue.record("seventh golden message should be .win, got \(decoded[6])")

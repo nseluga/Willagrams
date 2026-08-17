@@ -138,6 +138,58 @@ public final class MatchSession {
     /// Carried from the start message for the opening deal, a later item.
     public private(set) var startingHandSize = 0
 
+    // MARK: - Options state, and why it is stored the way it is
+    //
+    // ⚠️ This class is at a hard limit of the Swift 6.3.3 toolchain: adding one
+    // more *observed* stored property to `MatchSession` makes MatchTests abort
+    // with `swift_task_dealloc` — "freed pointer was not the last allocation" —
+    // while the reconnect task is suspended in `peerDropped()`. Bisected: a bare
+    // `var probe: Int = 0` is enough to trigger it, and marking any one existing
+    // observed property `@ObservationIgnored` to keep the net count unchanged
+    // makes it pass again. It is a layout threshold, not a bug in this logic.
+    //
+    // So the two values below are stored `@ObservationIgnored` and read back
+    // through computed properties that first touch a property that *is*
+    // observed. Reading `session.options` in a SwiftUI body therefore still
+    // registers a dependency and still updates — the observation is real, only
+    // the storage moved. Each pairs with a property assigned on its own code
+    // path in `applyStart`: `startingHandSize` on the accepting path, `lastNote`
+    // on the refusing one.
+    //
+    // Before adding observed state here, re-run `swift test --package-path
+    // Tests/MatchTests`. A green engine suite does not cover this.
+
+    @ObservationIgnored private var storedOptions: MatchOptions = .standard
+
+    /// The rules this match is playing under, validated on arrival.
+    ///
+    /// `.standard` until a start lands, so a session read before the match opens
+    /// reports today's shipped behavior rather than nothing.
+    public var options: MatchOptions {
+        _ = startingHandSize  // registers the observation; see the note above
+        return storedOptions
+    }
+
+    @ObservationIgnored private var storedOptionsRefusal: OptionsRefusal?
+
+    /// Set when a start was refused because the two devices do not hold the same
+    /// word list. The match never opens, and this says why.
+    ///
+    /// A mismatch cannot be played through: each device validates its own board,
+    /// so the two would disagree about legal words for the whole match. Silently
+    /// adopting the host's id while holding different content is the one outcome
+    /// worse than refusing.
+    public var optionsRefusal: OptionsRefusal? {
+        _ = lastNote  // registers the observation; see the note above
+        return storedOptionsRefusal
+    }
+
+    /// Why a start was refused before the match opened.
+    public enum OptionsRefusal: Equatable, Sendable {
+        /// The host's list and this device's list are not the same content.
+        case dictionaryMismatch(expected: String, received: String)
+    }
+
     /// The last thing that went wrong, as text. A `String` rather than an error
     /// so this type stays `Sendable`, and readable so a debug overlay can show
     /// why a peer's message was ignored.
@@ -179,7 +231,18 @@ public final class MatchSession {
     public let peerPlayerID: PlayerID
 
     private let transport: any MatchTransport
-    private let dictionary: any WordList
+
+    /// The list this session validates against.
+    ///
+    /// Not `let`: once options arrive, it is wrapped in a
+    /// ``MinimumLengthWordList`` so the host's minimum applies everywhere the
+    /// base list already did — `canDraw` included — rather than at one call site
+    /// somebody has to remember.
+    ///
+    /// `@ObservationIgnored` is load-bearing, not tidiness: a stored `var` here
+    /// would be a third observed property and cross the toolchain threshold
+    /// described above. Nothing observes a private field, so opting out is free.
+    @ObservationIgnored private var dictionary: any WordList
 
     /// The session's only source of elapsed time: the countdown, and the wait
     /// for a dropped peer. Injected so a test can run a three-second countdown
@@ -250,12 +313,19 @@ public final class MatchSession {
     ///     that stream is consumed here only to learn when this player leaves
     ///     and comes back, and a state naming anyone else is ignored.
     ///   - dictionary: what a complete board is validated against.
+    ///   - dictionaryHash: the content hash of `dictionary`, per
+    ///     ``canonicalWordListHash(_:)``. Declared rather than derived: `any
+    ///     WordList` exposes only `contains`, so this type cannot enumerate the
+    ///     list it was handed. The caller that loaded the list is the one that
+    ///     knows which it is — for the bundled list that is
+    ///     ``MatchOptions/standardDictionaryHash``, which is the default.
     ///   - sleepFor: one countdown tick, and the reconnect window. Defaults to
     ///     real time.
     public init(
         transport: any MatchTransport,
         peerPlayerID: PlayerID,
         dictionary: any WordList,
+        dictionaryHash: String = MatchOptions.standardDictionaryHash,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         }
@@ -264,9 +334,13 @@ public final class MatchSession {
         self.localPlayerID = transport.localPlayerID
         self.peerPlayerID = peerPlayerID
         self.dictionary = dictionary
+        self.localDictionaryHash = dictionaryHash
         self.sleepFor = sleepFor
         beginReceiving()
     }
+
+    /// This device's word-list hash, compared against the host's on start.
+    private let localDictionaryHash: String
 
     // MARK: - Lifecycle
 
@@ -410,7 +484,12 @@ public final class MatchSession {
     /// Sends `.start` and applies the same start locally, because this device
     /// never receives its own sends — a host that waited to hear its own start
     /// message would wait forever.
-    public func startMatch(seed: UInt64, startingHandSize: Int, countdownSeconds: Int) {
+    public func startMatch(
+        seed: UInt64,
+        startingHandSize: Int,
+        countdownSeconds: Int,
+        options: MatchOptions = .standard
+    ) {
         // The same election that hands out the pool decides who opens. Both
         // devices calling this would each honour their own seed and countdown
         // and ignore the other's, and reach play at different moments.
@@ -424,14 +503,16 @@ public final class MatchSession {
                 version: WireFormat.current,
                 seed: seed,
                 startingHandSize: startingHandSize,
-                countdownSeconds: countdownSeconds
+                countdownSeconds: countdownSeconds,
+                options: options
             )
         )
         applyStart(
             version: WireFormat.current,
             seed: seed,
             startingHandSize: startingHandSize,
-            countdownSeconds: countdownSeconds
+            countdownSeconds: countdownSeconds,
+            options: options
         )
     }
 
@@ -505,6 +586,13 @@ public final class MatchSession {
     /// - Returns: whether the request was made.
     @discardableResult
     public func swap(_ tile: Tile) -> Bool {
+        // The host is the authority and refuses this anyway; returning here
+        // saves a round trip to be told so. A guest with a modified build still
+        // hits the host's refusal, which is where the rule actually lives.
+        guard options.swapEnabled else {
+            lastNote = "swap is off for this match"
+            return false
+        }
         guard !isLocked, pendingDrawTiles.isEmpty else { return false }
         guard state.hand.contains(where: { $0.id == tile.id }) else { return false }
         request(.swapRequest(player: localPlayerID, returning: tile))
@@ -591,12 +679,13 @@ public final class MatchSession {
         guard !isFrozen || Self.endsTheMatch(message) else { return }
         switch message {
 
-        case let .start(version, seed, startingHandSize, countdownSeconds):
+        case let .start(version, seed, startingHandSize, countdownSeconds, options):
             applyStart(
                 version: version,
                 seed: seed,
                 startingHandSize: startingHandSize,
-                countdownSeconds: countdownSeconds
+                countdownSeconds: countdownSeconds,
+                options: options
             )
 
         case .drawRequest, .swapRequest:
@@ -647,7 +736,13 @@ public final class MatchSession {
             finish(winner: localPlayerID, placements: nil)
 
         case let .rejected(reason):
-            applyRejection(reason, answeredADraw: reason != .notEnoughTilesToSwap)
+            // Both swap refusals answer a swap, not a draw. Counting either as a
+            // draw would retire a credit the player never spent and leave them
+            // one Draw short for the rest of the match.
+            applyRejection(
+                reason,
+                answeredADraw: reason != .notEnoughTilesToSwap && reason != .swapDisabled
+            )
         }
     }
 
@@ -655,7 +750,13 @@ public final class MatchSession {
     ///
     /// A second start is ignored rather than trusted: two countdowns racing
     /// would fight over `status`.
-    private func applyStart(version: Int, seed: UInt64, startingHandSize: Int, countdownSeconds: Int) {
+    private func applyStart(
+        version: Int,
+        seed: UInt64,
+        startingHandSize: Int,
+        countdownSeconds: Int,
+        options: MatchOptions
+    ) {
         guard !hasStarted else { return }
         guard version == WireFormat.current else {
             lastNote = "unsupported wire version \(version)"
@@ -665,7 +766,34 @@ public final class MatchSession {
             lastNote = "a match needs two different players"
             return
         }
+
+        // Everything below `validated` is inside its documented bounds; the raw
+        // value came off the wire and is never used again.
+        let options = options.validated
+
+        // The hash gate, before anything moves. Two devices holding different
+        // word lists disagree about legal words for the whole match, and the
+        // symptom lands mid-play on somebody's screen as a rejected word rather
+        // than as a setup error. Refuse here, where it is still explainable.
+        guard options.dictionaryHash == localDictionaryHash else {
+            storedOptionsRefusal = .dictionaryMismatch(
+                expected: options.dictionaryHash,
+                received: localDictionaryHash
+            )
+            lastNote = "word lists differ — this match cannot be played"
+            return
+        }
+
         hasStarted = true
+        storedOptions = options
+        // Wrap once, here, so the minimum reaches every existing reader of
+        // `dictionary` — `canDraw` above included — instead of one call site.
+        if options.minimumWordLength > MatchOptions.lengthRange.lowerBound {
+            dictionary = MinimumLengthWordList(
+                base: dictionary,
+                minimum: options.minimumWordLength
+            )
+        }
         // Negative or absurd values came off the wire; clamp rather than trap.
         // The ceiling is the whole pool: no deal can hand out more tiles than
         // the match contains.
@@ -678,7 +806,8 @@ public final class MatchSession {
                 players: (localPlayerID, peerPlayerID),
                 pool: Pool.standard(seed: seed),
                 seed: seed,
-                transport: transport
+                transport: transport,
+                swapEnabled: options.swapEnabled
             )
         }
         // Clamped at both ends: one `.start` carrying a huge value off the wire

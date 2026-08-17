@@ -47,6 +47,16 @@ public struct EnableWordList: WordList {
     public func contains(_ word: String) -> Bool {
         words.contains(word.lowercased())
     }
+
+    /// This list's content hash, per ``canonicalWordListHash(_:)``.
+    ///
+    /// Computed on demand, not stored: it costs a sort over every word, and the
+    /// only callers are the settings catalogue building a `MatchOptions` and the
+    /// test that pins ``MatchOptions/standardDictionaryHash``. Neither is on a
+    /// hot path. For the bundled list, prefer the pinned constant.
+    public var canonicalHash: String {
+        canonicalWordListHash(words)
+    }
 }
 
 public enum WordListError: Error, Equatable, Sendable {
