@@ -241,7 +241,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - Accepting a mid-match draw lands the new tiles in free space within the current viewport, not off screen
     - The HUD's draw-eligibility reflects `BoardModel.canDraw` and changes as the player makes and breaks words
     - Existing passing board and match tests remain passing
-  status: not started
+  status: done — known gap: no bridge reconciles a board drag commit back into MatchSession.state.board
 
 - task: Build the in-match HUD at `Willagrams/Shell/MatchHUD.swift` — tiles
     remaining in the pool, a Draw action enabled only when draw-eligibility is
