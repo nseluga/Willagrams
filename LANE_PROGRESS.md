@@ -6,7 +6,11 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 ## Current position
 
 - **Status:** running — autonomous round, 11 items, no stop marker
-- **Next:** item 10 (results screen)
+- **Next:** item 11 (rematch)
+- **Second open gap:** the countdown, match and results screens are all built and
+  tested, but the app root still shows placeholders for those three routes —
+  only the menu is reachable. No item in this plan wires them up, so the app
+  cannot yet be played end to end even though every piece of it exists.
 - **Amendment needed:** `Willagrams/Match/MatchSession.swift` publishes no
   count of tiles left in the pool — the real pool is private inside the host's
   actor and the session's own copy is a deliberate placeholder. The HUD shows a
@@ -32,5 +36,5 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 | Countdown screen | done — Before a match starts, a card counts down over the board, showing the seconds the match itself reports rather than a timer of its own, and it disappears cleanly at zero — including when a match ends mid-countdown. Still needs one check by hand: that the board really is visible behind the card on a device. |
 | Wire the match session to the board | done — Tiles dealt at the start now appear spread across the board rather than butted together, drawn tiles land where the player is looking, and whether the player may draw follows the board's own verdict on their words. No tile is ever in two places, including when a delivery is interrupted. See the open gap above: a player's own move is not yet carried back to the match record. |
 | In-match HUD | done, except one part — Draw is genuinely unavailable until the player's words are valid, Swap exchanges a tile and is refused cleanly when too few remain, and Resign takes two deliberate steps so a stray tap cannot end a match. Nothing about the opponent is shown. The tiles-remaining count shows a dash: the match layer publishes no such number yet (see the amendment above). Still needs one check by hand: that the HUD does not cover the board's recenter button. |
-| Results screen | not started |
+| Results screen | done — The end of a match shows who won, or says plainly that there was no winner when a player vanishes — which is a real outcome, not a loss. Main Menu genuinely shuts the match down rather than leaving it running behind the menu, proved by the match object actually being freed. The final board is frozen and cannot be played on. Still needs one check by hand: that the board is visible behind the result card. |
 | Rematch | not started |

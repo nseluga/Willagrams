@@ -276,7 +276,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - A local win shows the `winCall` string; a peer win shows the peer as winner; a nil winner shows neither player as winner
     - Main Menu returns ShellModel's route to `.menu` and the previous session is released
     - The final board is visible behind the result and cannot be played on
-  status: not started
+  status: done — one criterion outstanding: final board visible behind the result, needs a device pass
 
 - task: Implement Rematch — same players, fresh match. Build a new
     `FakeTransport.pair`, `MatchSession` and `HostPool` with the same
