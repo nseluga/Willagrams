@@ -144,7 +144,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - An owner outside `BoardView` can read draw-eligibility without recomputing it
     - `Tests/BoardTests` passes unedited, and the input lock and live invalid-word tinting behave as before
     - Pan, pinch-zoom, tile drag, snap and double-tap selection are confirmed by hand on a device and reported in the item's summary. No test in this repository reaches a gesture, so a green suite is not evidence here — say so plainly rather than inferring it
-  status: not started
+  status: done — one criterion outstanding: by-hand gesture pass on a device
   parallel-group: a
 
 - task: Author the real app root. Rewrite
