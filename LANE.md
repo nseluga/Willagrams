@@ -204,7 +204,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - `startMatch` on a solo session reaches `.playing` and leaves `lastNote` nil, never the host rejection note
     - A solo match can be played from the opening deal to a win claim without the pool exhausting early, asserted by counting tiles consumed against pool size
     - Repeated draws each yield the local player exactly one tile, and no tile is ever held by both ends
-  status: not started
+  status: done
 
 - task: Build the countdown screen at
     `Willagrams/Shell/CountdownView.swift`, rendering
