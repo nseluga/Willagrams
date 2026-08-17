@@ -1,12 +1,5 @@
 # Willagrams — Lane: settings
 
-> **⛔ BLOCKED — do not run this lane yet.**
-> Every item below assumes the wire v2 amendment has landed on `main`:
-> `MatchOptions` exists in the engine, `WireFormat.current == 2`, and
-> `Tests/WillagramsRulesTests/Fixtures/wire-v2.json` is the golden fixture.
-> Run `/foundation` against `docs/amendment-wire-v2.md` first, then re-cut this
-> branch off the resulting foundation commit.
-
 Lane: settings — Match configuration and rule variants — the host's pre-match
 options screen, local persistence of chosen defaults, and showing both players
 which rules are in force. Ships the disable-swap, minimum-word-length, and
@@ -122,8 +115,6 @@ Global rules:
       without trapping
   status: not started
   parallel-group: a
-
-> **⚠️ AUTONOMOUS RUN — STOP HERE**
 
 - task: Add the host's options form. `Willagrams/Settings/Model/MatchOptionsForm.swift`
     holds the editable state and the clamping rules — `minimumWordLength` clamps
