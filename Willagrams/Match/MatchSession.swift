@@ -790,9 +790,12 @@ public final class MatchSession {
     ///   is always the first grant. Reorder or drop that one grant — a lossy
     ///   link, a transport that does not keep order — and a one-tile round is
     ///   read as a whole opening hand instead.
-    /// - **the count trigger** covers a zero-second countdown, which leaves no
+    /// - **the count trigger** covers the two cases that leave no `.countdown`
     ///   phase to read, by taking a first grant of exactly `startingHandSize`
-    ///   tiles. At `startingHandSize == 1` that is any round at all.
+    ///   tiles: a zero-second countdown, and — the larger producer — a deal
+    ///   recovered from a freeze, which ``peerReturned()`` sends after the thaw
+    ///   at *any* countdown length, by which time the guest is already
+    ///   `.playing`. At `startingHandSize == 1` that is any round at all.
     ///
     /// `awaitingOpeningDeal` bounds either misfire to one grant, and the tiles
     /// are real tiles from the real pool — the cost is one round taken into hand

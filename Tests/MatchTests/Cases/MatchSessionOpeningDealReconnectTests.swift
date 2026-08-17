@@ -77,10 +77,12 @@ struct MatchSessionOpeningDealReconnectTests {
         hostWire.drop(Self.bob)
         try await Self.waitUntil("the host to freeze") { host.peerPresence != .present }
 
-        // The chain drains into a frozen session: the deal bails out. This empty
-        // hand is the bug's precondition — before the fix it was also the end.
+        // The chain drains into a frozen session: the deal bails out. Gate on the
+        // parked `.start` actually reaching the wire, not on a fixed sleep — an
+        // empty hand alone cannot tell "bailed and re-armed" from "not run yet",
+        // and the deal is chained strictly behind that send.
         await hostWire.releaseAll()
-        try await Self.settle()
+        try await Self.waitUntil("the parked start to reach the wire") { await hostWire.count == 1 }
         #expect(host.state.hand.isEmpty)
         #expect(guest.state.hand.isEmpty)
 
@@ -88,6 +90,14 @@ struct MatchSessionOpeningDealReconnectTests {
         hostWire.restore(Self.bob)
         try await Self.waitUntil("the host to be present again") { host.peerPresence == .present }
         try await Self.waitUntil("the host's own hand") { host.state.hand.count == handSize }
+
+        // Exactly one grant for the peer went out: the re-arm must not put a
+        // second opening hand on the wire.
+        let grants = await hostWire.wire.filter {
+            if case let .grant(player, tiles) = $0 { return player == Self.bob && tiles.count == handSize }
+            return false
+        }
+        #expect(grants.count == 1)
 
         // Everything the host really put on the wire, in landing order, into the
         // guest's real inbound stream: the `.start` it missed, then the deal.
