@@ -83,7 +83,7 @@ Global rules:
     - `Tests/SettingsTests/SettingsSrc` resolves to `Willagrams/Settings/Model`
       as a symlink, verified by reading the link target, not by file contents
     - Existing passing tests remain passing
-  status: not started
+  status: done
 
 - task: Add `Willagrams/Settings/Model/DictionaryCatalogue.swift` — the mapping
     from a `dictionaryID` string to a display name, a constructed `WordList`, and
