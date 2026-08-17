@@ -49,6 +49,10 @@ Global rules:
   - Decoding anything that arrived from a peer is a trust boundary. No force
     unwraps, no `try!`, no fatalError on a decode path.
   - Two players per match this round. Do not build for N.
+  - The checkout directory must be named `Willagrams`. SwiftPM derives a path
+    dependency's package identity from the directory name, so a worktree named
+    anything else fails item 1 with `unknown package 'Willagrams'` — the nested
+    test package cannot resolve `../..`. Worktrees nest as `<name>/Willagrams`.
   - This lane is purely additive inside `Willagrams/Settings/`. Enforcement of
     every option already landed with the wire v2 amendment; nothing here changes
     engine or match behavior.
