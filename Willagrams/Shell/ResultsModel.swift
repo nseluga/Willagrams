@@ -65,7 +65,10 @@ public final class ResultsModel {
     ///
     /// Returns whether it actually tore anything down. A stale screen's closure
     /// declines — the match it was built for has already been replaced — and
-    /// ``mainMenu()`` must not move the route on a press that did nothing.
+    /// neither exit may act on a press that did nothing. A decline spends
+    /// nothing, so a stale screen keeps its closure and keeps declining; the
+    /// match it names is already gone, and the closure holds only a weak
+    /// reference to the owner, so keeping it retains nothing.
     private var teardown: (() -> Bool)?
 
     /// Starts the next match. Spent on the way out, exactly like ``teardown``,
@@ -174,8 +177,13 @@ public final class ResultsModel {
     @discardableResult
     public func rematch() -> Bool {
         guard let start = startRematch else { return false }
+        // A stale screen declines both exits, and declining spends neither — the
+        // same rule ``mainMenu()`` follows, for the same reason: a spent
+        // teardown reads as "nothing to tear down", which is the state that
+        // navigates unconditionally. Running it first also keeps the guardrail
+        // order, the old match down before the new one is built.
+        guard teardown?() ?? true else { return false }
         startRematch = nil
-        _ = teardown?()
         teardown = nil
         start()
         return true

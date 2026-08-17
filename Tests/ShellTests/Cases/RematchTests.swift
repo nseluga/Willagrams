@@ -421,6 +421,15 @@ struct RematchTests {
             #expect(new.session.isMatchOver == false, "press \(press) ended the live match")
         }
 
+        // The other door into the same hole: a stale Rematch rebuilds nothing,
+        // so it must not spend the teardown either — otherwise the Main Menu
+        // after it reads as "nothing to tear down" and navigates.
+        #expect(stale.rematch() == false, "a stale screen claimed it started a rematch")
+        stale.mainMenu()
+        #expect(shell.route == liveRoute, "Main Menu after a stale Rematch reached the menu")
+        #expect(practice.match === new, "a stale Rematch dropped the live match")
+        #expect(new.session.isMatchOver == false)
+
         // The live screen still works after all that.
         let live = try #require(practice.results())
         live.mainMenu()
@@ -443,9 +452,10 @@ struct RematchTests {
         let new = try #require(practice.match)
         let seedAfterRematch = practice.seed
 
-        // The press is still reported as taken — the screen has a closure — but
-        // the closure must decline, so nothing is built and nothing is spent.
-        #expect(stale.rematch())
+        // The press is refused outright: a stale screen builds nothing, so
+        // reporting it as taken would be a lie, and spending its teardown would
+        // leave it able to navigate on the way out. Nothing built, nothing spent.
+        #expect(stale.rematch() == false, "a stale screen claimed it started a rematch")
 
         #expect(practice.match === new, "a stale screen rebuilt over the live match")
         #expect(practice.seed == seedAfterRematch, "a stale screen redealt the live match")
