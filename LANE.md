@@ -223,7 +223,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - The countdown displays each second reported by MatchSession and clears when status becomes `.playing`, asserted against an injected clock rather than by waiting
     - The board is visible behind the countdown for its whole duration
     - A countdown that reaches zero leaves no overlay behind, at any starting value including one second
-  status: not started
+  status: done — one criterion outstanding: board visible behind the overlay, needs a device pass
 
 - task: Wire the match session to the board. `ShellModel` observes
     `MatchSession` and drives the `BoardView` seam opened in item 3: dealt tiles

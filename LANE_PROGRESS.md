@@ -6,7 +6,7 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 ## Current position
 
 - **Status:** running — autonomous round, 11 items, no stop marker
-- **Next:** item 7 (countdown screen)
+- **Next:** item 8 (wire the match session to the board)
 - **Blockers:** none
 - **Last updated:** 2026-08-17
 
@@ -20,7 +20,7 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 | Author the real app root | done — The app now launches into its own root screen, which shows whichever screen the app says it is on. The throwaway board test harness is gone. The four screens behind it are placeholders until the later items build them. |
 | Main menu screen | done — The app opens on a title screen with one button, Solo Practice, which starts a match. Host and Join are deliberately absent until there is something behind them. Still needs one check by hand: that the screen lays out cleanly in both landscape directions on a phone and on an iPad. |
 | Construct a solo practice session | done — A single player can now be set up in a full-length practice match against a silent stand-in opponent, with enough tiles to play to the end rather than running dry half way. Note: this is built on the debug-only fake connection, so practice mode cannot ship to the App Store until a real single-device connection exists. |
-| Countdown screen | not started |
+| Countdown screen | done — Before a match starts, a card counts down over the board, showing the seconds the match itself reports rather than a timer of its own, and it disappears cleanly at zero — including when a match ends mid-countdown. Still needs one check by hand: that the board really is visible behind the card on a device. |
 | Wire the match session to the board | not started |
 | In-match HUD | not started |
 | Results screen | not started |
