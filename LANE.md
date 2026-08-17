@@ -183,7 +183,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - Activating Solo Practice moves ShellModel's route off `.menu`, asserted without instantiating a view
     - The menu renders in both landscape orientations at iPhone and iPad widths with nothing clipped or overlapping
     - `TerminologyFenceTests` passes with the new copy in the tree
-  status: not started
+  status: done — one criterion outstanding: landscape layout check on a device
 
 - task: Construct a solo practice session.
     Add `Willagrams/Shell/SoloMatch.swift`, a factory that builds a playable

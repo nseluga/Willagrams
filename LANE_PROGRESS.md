@@ -6,7 +6,7 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 ## Current position
 
 - **Status:** running — autonomous round, 11 items, no stop marker
-- **Next:** item 5 (main menu screen)
+- **Next:** item 6 (construct a solo practice session)
 - **Blockers:** none
 - **Last updated:** 2026-08-17
 
@@ -18,7 +18,7 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 | Deal the opening hand | done — Both players now start a match holding their opening tiles instead of an empty rack, and the hand still arrives correctly if someone's connection drops at the exact moment the tiles are dealt. |
 | Give BoardView a way to report its state to its owner | done — The board can now be handed tiles after it is on screen and can tell the rest of the app whether the player may draw. Still needs one check by hand on a real device: panning, zooming, dragging, snapping and double-tap selection. No automated test in this project can touch a gesture, so that one is genuinely unverified. |
 | Author the real app root | done — The app now launches into its own root screen, which shows whichever screen the app says it is on. The throwaway board test harness is gone. The four screens behind it are placeholders until the later items build them. |
-| Main menu screen | not started |
+| Main menu screen | done — The app opens on a title screen with one button, Solo Practice, which starts a match. Host and Join are deliberately absent until there is something behind them. Still needs one check by hand: that the screen lays out cleanly in both landscape directions on a phone and on an iPad. |
 | Construct a solo practice session | not started |
 | Countdown screen | not started |
 | Wire the match session to the board | not started |
