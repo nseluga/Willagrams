@@ -684,15 +684,11 @@ public final class MatchSession {
         }
         hasStarted = true
         // Negative or absurd values came off the wire; clamp rather than trap.
-        // The ceiling is the whole pool: no deal can hand out more tiles than
-        // the match contains.
-        //
-        // BLOCKED, review finding 3: this wants to be `totalTiles / 2`, because
-        // the deal is one draw of `handSize * 2` and anything above half the
-        // pool deals nothing at all. `MatchSessionHardeningTests.swift:424` pins
-        // this ceiling at `totalTiles`, and that assertion is not this item's to
-        // edit — the two need deciding together.
-        self.startingHandSize = min(max(0, startingHandSize), LetterDistribution.totalTiles)
+        // The ceiling is *half* the pool, not all of it: the deal is one draw of
+        // `handSize * 2`, so anything above half leaves that draw short and
+        // ``HostPool/deal(handSize:)`` hands out nothing at all — a silently
+        // dealless match instead of a clamped one.
+        self.startingHandSize = min(max(0, startingHandSize), LetterDistribution.totalTiles / 2)
         self.awaitingOpeningDeal = self.startingHandSize > 0
 
         if HostPool.host(of: localPlayerID, peerPlayerID) == localPlayerID {

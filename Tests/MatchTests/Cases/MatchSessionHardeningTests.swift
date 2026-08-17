@@ -420,8 +420,9 @@ struct MatchSessionHardeningTests {
         try await Self.waitUntil("the countdown to open at the ceiling") {
             guest.state.status == .countdown(secondsRemaining: 10)
         }
-        // The other value off the same message, clamped to the whole pool.
-        #expect(guest.startingHandSize == LetterDistribution.totalTiles)
+        // The other value off the same message, clamped to half the pool — the
+        // largest hand a single `handSize * 2` deal can actually serve.
+        #expect(guest.startingHandSize == LetterDistribution.totalTiles / 2)
 
         // Ten ticks and no more: the session reaches play on its own.
         for remaining in stride(from: 9, through: 1, by: -1) {
