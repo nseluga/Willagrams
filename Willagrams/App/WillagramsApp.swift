@@ -26,7 +26,10 @@ struct WillagramsApp: App {
 /// board can be driven by hand. Delete with the `shell` lane, not with a branch.
 private struct BoardHarness: View {
 
-    private let board: Board
+    /// The harness is the owner now: `BoardView` takes the board and the
+    /// session as bindings, so someone above has to hold them.
+    @State private var board: Board
+    @State private var model = BoardModel()
     private let camera: BoardCamera
     private let dictionary: any WordList
 
@@ -34,7 +37,7 @@ private struct BoardHarness: View {
         var pool = Pool.standard(seed: 20260815)
         let tiles = pool.draw(21) ?? []
         let opening = BoardLayout.opening(tiles)
-        self.board = opening
+        self._board = State(initialValue: opening)
         self.camera = BoardLayout.framing(
             opening,
             in: CGRect(x: 0, y: 0, width: 1366, height: 1024),
@@ -44,6 +47,6 @@ private struct BoardHarness: View {
     }
 
     var body: some View {
-        BoardView(board: board, camera: camera, dictionary: dictionary)
+        BoardView(board: $board, model: $model, camera: camera, dictionary: dictionary)
     }
 }

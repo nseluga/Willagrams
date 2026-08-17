@@ -10,10 +10,12 @@ import WillagramsRules
 /// gestures to them and holds the resulting camera.
 public struct BoardView: View {
 
-    /// The live board. Owned here for the same reason as the camera: a
-    /// committed drag has to land somewhere, and nothing above this view exists
-    /// yet to own it. The initializer's board is the starting value.
-    @State private var board: Board
+    /// The live board, OWNED BY THE CALLER. A committed drag lands here and the
+    /// owner sees it; tiles the owner deals or draws arrive here and this view
+    /// draws them. It was `@State` while nothing above existed to own it, and a
+    /// `@State` initial value is read once per view identity — so nothing could
+    /// be delivered in after construction and nothing read back out.
+    @Binding private var board: Board
 
     /// The live camera. Owned here because nothing above this view exists yet
     /// to own it; the initializer's camera is the starting value.
@@ -51,7 +53,11 @@ public struct BoardView: View {
     /// BOARD is untouched either way — only the drawing is stale. Give it its
     /// own reset when SwiftUI exposes a cancellation callback for `.gesture`,
     /// or when a real session shows it happening often enough to notice.
-    @State private var model: BoardModel
+    ///
+    /// Owned by the caller too, and for the other direction: `canDraw` is the
+    /// draw gate the HUD needs, and this is the one thing that answers it. The
+    /// owner reads it off the model rather than checking the board itself.
+    @Binding private var model: BoardModel
 
     /// Real hardware. `TileDrag` only ever sees the protocol, so the decisions
     /// about which feel fires when are executed by the test package with a
@@ -73,21 +79,21 @@ public struct BoardView: View {
     private let dictionary: any WordList
 
     public init(
-        board: Board,
+        board: Binding<Board>,
+        model: Binding<BoardModel>,
         camera: BoardCamera,
         dictionary: any WordList,
         inputLocked: Bool = false
     ) {
-        _board = State(initialValue: board)
+        _board = board
+        // The owner builds the model with the CHEAP init, not the seeding one:
+        // nothing here re-checks the board on a re-init, and `.onAppear` below
+        // still publishes the first answer once. A check belongs on a commit or
+        // on an appearance, not on a parent's body evaluation.
+        _model = model
+        // Still `@State`: the camera is this surface's own viewport, and no
+        // owner has ever needed to set or read it.
         _camera = State(initialValue: camera)
-        // Deliberately the CHEAP init, not the seeding one. `State(initialValue:)`
-        // takes a plain argument rather than an autoclosure, so whatever is
-        // written here runs on every re-init of this view — as often as the
-        // owner updates, per the note on `inputLocked` — and everything after
-        // the first is thrown away. A check belongs on a commit or on an
-        // appearance, not on a parent's body evaluation. `.onAppear` below
-        // publishes the first answer, once.
-        _model = State(initialValue: BoardModel(inputLocked: inputLocked))
         self.dictionary = dictionary
         self.inputLocked = inputLocked
     }
@@ -469,15 +475,28 @@ private let previewCamera = BoardCamera(pan: CGSize(width: DesignTokens.Space.xl
 /// resource load that can throw.
 private let previewDictionary = EnableWordList(words: ["WILL"])
 
+/// Stands in for the owner, so the previews stay draggable. `.constant`
+/// bindings would compile and draw, but every gesture would be inert and the
+/// previews are how the surface is checked by hand.
+private struct BoardPreviewHost: View {
+    @State private var fixture = previewBoard()
+    @State private var model = BoardModel()
+    let dictionary: any WordList
+
+    var body: some View {
+        BoardView(board: $fixture, model: $model, camera: previewCamera, dictionary: dictionary)
+    }
+}
+
 #Preview("Light") {
-    BoardView(board: previewBoard(), camera: previewCamera, dictionary: previewDictionary)
+    BoardPreviewHost(dictionary: previewDictionary)
 }
 #Preview("Dark") {
-    BoardView(board: previewBoard(), camera: previewCamera, dictionary: previewDictionary)
+    BoardPreviewHost(dictionary: previewDictionary)
         .preferredColorScheme(.dark)
 }
 /// The same board against a list that does not hold WILL, so the danger tint is
 /// on screen next to an untinted loose tile.
 #Preview("Refused") {
-    BoardView(board: previewBoard(), camera: previewCamera, dictionary: EnableWordList(words: []))
+    BoardPreviewHost(dictionary: EnableWordList(words: []))
 }
