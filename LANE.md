@@ -117,7 +117,7 @@ Global rules:
     - Reading from an empty suite returns `MatchOptions.standard`
     - Reading a suite seeded with malformed bytes returns `MatchOptions.standard`
       without trapping
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Add the host's options form. `Willagrams/Settings/Model/MatchOptionsForm.swift`
