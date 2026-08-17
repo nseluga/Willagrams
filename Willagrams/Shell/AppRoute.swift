@@ -1,9 +1,11 @@
 import WillagramsRules
 
-// NO SwiftUI in this directory. `Tests/ShellTests/ShellSrc` is a directory
-// symlink to it, and that test target builds for macOS with no simulator — the
-// moment a View lands here the suite stops building. Views live elsewhere and
-// call `ShellModel`; they never touch a route themselves.
+// NO SwiftUI in this directory except in a file named in the `Shell` target's
+// `exclude:` list in `Tests/ShellTests/Package.swift`. `Tests/ShellTests/ShellSrc`
+// is a directory symlink to it and that test target builds for macOS with no
+// simulator, so an unexcluded View landing here stops the suite building —
+// `SourceGuardrailTests` fails first and says so. A view that does land here
+// reads `ShellModel`; it never decides or assigns a route itself.
 
 /// Everything a match needs to be stood up, carried by the routes that lead to
 /// it so the countdown and the match it becomes cannot disagree about the seed.

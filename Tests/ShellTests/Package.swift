@@ -12,7 +12,11 @@ let package = Package(
         .target(
             name: "Shell",
             dependencies: [.product(name: "WillagramsRules", package: "Willagrams")],
-            path: "ShellSrc"
+            path: "ShellSrc",
+            // The macOS test build has no SwiftUI. Every view file in
+            // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
+            // fails if this list and the files that import SwiftUI disagree.
+            exclude: ["ShellRootView.swift"]
         ),
         .testTarget(name: "ShellTests", dependencies: ["Shell"], path: "Cases"),
     ]

@@ -42,20 +42,60 @@ struct SourceGuardrailTests {
         }
     }
 
-    @Test("No shell source or test pulls in SwiftUI")
+    /// This package's manifest, the single list of shell files this target does
+    /// not compile.
+    private static var manifest: String {
+        get throws {
+            try String(
+                contentsOf: casesDirectory
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("Package.swift"),
+                encoding: .utf8
+            )
+        }
+    }
+
+    @Test("No compiled shell source and no test pulls in SwiftUI")
     func noSwiftUIAnywhere() throws {
         let sources = try Self.swiftFiles(in: Self.shellSourceDirectory)
         let tests = try Self.swiftFiles(in: Self.casesDirectory)
+        let manifest = try Self.manifest
 
         // A scan that finds nothing because it looked nowhere proves nothing.
         #expect(sources.count >= 2, "expected the shell sources at \(Self.shellSourceDirectory.path)")
         #expect(tests.count >= 2, "expected the test sources at \(Self.casesDirectory.path)")
 
-        for file in sources + tests {
+        for file in sources {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            guard Self.imports(Self.bannedFramework, in: text) else { continue }
+            // A view may live here, but only if the manifest excludes it — an
+            // unexcluded one breaks the macOS build instead of failing a test.
+            #expect(
+                manifest.contains("\"\(file.lastPathComponent)\""),
+                "\(file.lastPathComponent) imports \(Self.bannedFramework) but Package.swift does not exclude it"
+            )
+        }
+
+        for file in tests {
             let text = try String(contentsOf: file, encoding: .utf8)
             #expect(
                 !Self.imports(Self.bannedFramework, in: text),
                 "\(file.lastPathComponent) imports \(Self.bannedFramework)"
+            )
+        }
+    }
+
+    /// Nothing may be excluded that does not need to be: an excluded pure source
+    /// would silently drop out of the suite.
+    @Test("Every excluded shell file exists and really is a view")
+    func exclusionsAreViewsThatExist() throws {
+        let manifest = try Self.manifest
+        for file in try Self.swiftFiles(in: Self.shellSourceDirectory) {
+            guard manifest.contains("\"\(file.lastPathComponent)\"") else { continue }
+            let text = try String(contentsOf: file, encoding: .utf8)
+            #expect(
+                Self.imports(Self.bannedFramework, in: text),
+                "\(file.lastPathComponent) is excluded but does not import \(Self.bannedFramework)"
             )
         }
     }
