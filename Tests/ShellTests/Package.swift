@@ -18,15 +18,20 @@ let package = Package(
             dependencies: [.product(name: "WillagramsRules", package: "Willagrams")],
             path: "MatchSrc"
         ),
+        // One file, symlinked in: `Terminology` is the frozen IP fence and the
+        // countdown's title comes from it. The rest of `Willagrams/Style` is
+        // SwiftUI and cannot build for this target, which is why this is a
+        // directory of file symlinks rather than a symlink to the directory.
+        .target(name: "Style", path: "StyleSrc"),
         .target(
             name: "Shell",
-            dependencies: ["Match", .product(name: "WillagramsRules", package: "Willagrams")],
+            dependencies: ["Match", "Style", .product(name: "WillagramsRules", package: "Willagrams")],
             path: "ShellSrc",
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
             // fails if this list and the files that import SwiftUI disagree.
-            exclude: ["ShellRootView.swift", "MenuView.swift"]
+            exclude: ["ShellRootView.swift", "MenuView.swift", "CountdownView.swift"]
         ),
-        .testTarget(name: "ShellTests", dependencies: ["Shell", "Match"], path: "Cases"),
+        .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style"], path: "Cases"),
     ]
 )
