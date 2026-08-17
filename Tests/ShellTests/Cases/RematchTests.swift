@@ -349,6 +349,47 @@ struct RematchTests {
         practice.end()
     }
 
+    /// The route change and the teardown are one decision. A stale press that
+    /// declines to end the live match must not park the route on the menu
+    /// either, or the app shows the menu over a match that is still pumping.
+    @Test("A stale end screen's Main Menu leaves the live match's route alone")
+    func aStaleScreenCannotSendTheNewMatchToTheMenu() async throws {
+        let counter = Counter(99)
+        let shell = ShellModel()
+        let practice = SoloPractice(
+            shell: shell,
+            dictionary: EveryWordIsReal(),
+            sleepFor: { _ in },
+            seedSource: { counter.next() }
+        )
+        #expect(practice.start())
+        try await Self.waitForPlay(practice)
+
+        let stale = try #require(practice.results())
+        let current = try #require(practice.results())
+        #expect(current.rematch())
+        try await Self.waitForPlay(practice)
+        let new = try #require(practice.match)
+        let liveRoute = shell.route
+
+        stale.mainMenu()
+
+        #expect(shell.route == liveRoute, "a stale screen sent the live match to the menu")
+        #expect(shell.route != .menu)
+        #expect(practice.match === new, "a stale screen dropped the live match")
+        #expect(new.session.isMatchOver == false)
+        #expect(new.session.state.status == .playing)
+
+        // A live screen over the current generation still works: it both tears
+        // down and navigates. (`current` spent its closures on the rematch.)
+        let live = try #require(practice.results())
+        live.mainMenu()
+        #expect(shell.route == .menu)
+        #expect(practice.match == nil)
+
+        practice.end()
+    }
+
     @Test("A stale end screen's Rematch cannot rebuild over the match that replaced it")
     func aStaleScreenCannotRebuildOverTheNewMatch() async throws {
         let practice = Self.practice()
@@ -389,7 +430,7 @@ struct RematchTests {
         let results = ResultsModel(
             shell: ShellModel(),
             session: old.session,
-            teardown: { log.append("down"); practice.end() },
+            teardown: { log.append("down"); practice.end(); return true },
             rematch: {
                 log.append(old.session.isMatchOver ? "up-after-down" : "up-too-early")
                 practice.start()

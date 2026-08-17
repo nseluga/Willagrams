@@ -168,7 +168,8 @@ struct ResultsModelTests {
 
         var leaveCalls = 0
         let results = ResultsModel(
-            shell: shell, session: solo.session, teardown: { leaveCalls += 1; solo.leave() }
+            shell: shell, session: solo.session,
+            teardown: { leaveCalls += 1; solo.leave(); return true }
         )
         results.mainMenu()
 
@@ -205,7 +206,7 @@ struct ResultsModelTests {
             weakSolo = solo
             weakSession = solo.session
             // The closure is the only strong reference the screen holds.
-            return ResultsModel(shell: shell, session: solo.session, teardown: { solo.leave() })
+            return ResultsModel(shell: shell, session: solo.session, teardown: { solo.leave(); return true })
         }
 
         let results = makeResults()

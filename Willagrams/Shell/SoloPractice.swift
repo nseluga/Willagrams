@@ -144,8 +144,9 @@ public final class SoloPractice {
             session: match.session,
             board: board,
             teardown: { [weak self] in
-                guard let self, self.generation == generation else { return }
+                guard let self, self.generation == generation else { return false }
                 self.end()
+                return true
             },
             rematch: { [weak self] in
                 guard let self, self.generation == generation else { return }

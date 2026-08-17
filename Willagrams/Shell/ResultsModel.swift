@@ -62,7 +62,11 @@ public final class ResultsModel {
     ///
     /// A closure rather than the match itself: `SoloMatch` is `#if DEBUG` and
     /// the end screen ships.
-    private var teardown: (() -> Void)?
+    ///
+    /// Returns whether it actually tore anything down. A stale screen's closure
+    /// declines — the match it was built for has already been replaced — and
+    /// ``mainMenu()`` must not move the route on a press that did nothing.
+    private var teardown: (() -> Bool)?
 
     /// Starts the next match. Spent on the way out, exactly like ``teardown``,
     /// so a double tap cannot build two.
@@ -77,7 +81,7 @@ public final class ResultsModel {
         localPlayerID: PlayerID,
         winningPlacements: [Placement]? = nil,
         board: Board = Board(),
-        teardown: (() -> Void)? = nil,
+        teardown: (() -> Bool)? = nil,
         rematch: (() -> Void)? = nil
     ) {
         self.startRematch = rematch
@@ -96,7 +100,7 @@ public final class ResultsModel {
         shell: ShellModel,
         session: MatchSession,
         board: Board = Board(),
-        teardown: (() -> Void)? = nil,
+        teardown: (() -> Bool)? = nil,
         rematch: (() -> Void)? = nil
     ) {
         self.init(
@@ -171,7 +175,7 @@ public final class ResultsModel {
     public func rematch() -> Bool {
         guard let start = startRematch else { return false }
         startRematch = nil
-        teardown?()
+        _ = teardown?()
         teardown = nil
         start()
         return true
@@ -185,10 +189,17 @@ public final class ResultsModel {
     /// Dropping ``teardown`` is what releases the match: it is the only strong
     /// reference this screen holds to one. Calling it twice is a no-op, so a
     /// double tap cannot leave a second match running.
+    ///
+    /// The route change and the teardown succeed or fail together. A stale
+    /// screen's ``teardown`` declines, and parking the route on the menu while
+    /// the match that replaced this screen is still live is the worse half of
+    /// that. A screen built with no teardown owns nothing to decline, so it
+    /// still navigates.
     public func mainMenu() {
-        teardown?()
+        let toreDown = teardown?() ?? true
         teardown = nil
         startRematch = nil
+        guard toreDown else { return }
         shell.returnToMenu()
     }
 }
