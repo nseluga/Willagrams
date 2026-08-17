@@ -165,7 +165,7 @@ struct MatchSessionHardeningTests {
     static func playingGuest() async throws -> (guest: MatchSession, wire: ScriptedTransport) {
         let wire = ScriptedTransport(localPlayerID: bob)
         let guest = MatchSession(transport: wire, peerPlayerID: alice, dictionary: EveryWordIsReal())
-        wire.deliver(.start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 0))
+        wire.deliver(.start(version: WireFormat.current, seed: 1, startingHandSize: 0, countdownSeconds: 0))
         try await waitUntil("the guest to be playing") { guest.state.status == .playing }
         return (guest, wire)
     }
@@ -174,7 +174,7 @@ struct MatchSessionHardeningTests {
     static func playingHost() -> (host: MatchSession, wire: ScriptedTransport) {
         let wire = ScriptedTransport(localPlayerID: alice)
         let host = MatchSession(transport: wire, peerPlayerID: bob, dictionary: EveryWordIsReal())
-        host.startMatch(seed: 1, startingHandSize: 21, countdownSeconds: 0)
+        host.startMatch(seed: 1, startingHandSize: 0, countdownSeconds: 0)
         return (host, wire)
     }
 
@@ -451,7 +451,7 @@ struct MatchSessionHardeningTests {
             dictionary: EveryWordIsReal(),
             sleepFor: { await clock.tick($0) }
         )
-        host.startMatch(seed: 3, startingHandSize: 21, countdownSeconds: 2)
+        host.startMatch(seed: 3, startingHandSize: 0, countdownSeconds: 2)
         #expect(host.state.status == .countdown(secondsRemaining: 2))
 
         wire.deliver(.drawRequest(player: Self.bob))
@@ -629,7 +629,7 @@ struct MatchSessionHardeningTests {
         // --- The election. `bob` is not the host, so this is not bob's to send.
         let wire = ScriptedTransport(localPlayerID: Self.bob)
         let guest = MatchSession(transport: wire, peerPlayerID: Self.alice, dictionary: EveryWordIsReal())
-        guest.startMatch(seed: 4, startingHandSize: 21, countdownSeconds: 0)
+        guest.startMatch(seed: 4, startingHandSize: 0, countdownSeconds: 0)
 
         #expect(guest.state.status == .countdown(secondsRemaining: 0))
         #expect(guest.lastNote == "only the host opens the match")

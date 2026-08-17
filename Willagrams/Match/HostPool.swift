@@ -139,6 +139,31 @@ public actor HostPool {
         }
     }
 
+    /// Deals the opening hand: `handSize` tiles to every player, once.
+    ///
+    /// One draw for the whole deal, like a round, so a pool too small to go
+    /// round moves nothing rather than dealing one player short. A slice per
+    /// player means no tile can reach two racks.
+    ///
+    /// - Returns: the grants it produced, the peer's already on the wire and the
+    ///   host's for the caller to apply — the same contract as ``handle(_:)``.
+    ///   Empty when there is nothing to deal, or not enough pool to deal from:
+    ///   no `poolExhausted` goes out, because a match that cannot deal an
+    ///   opening hand is a lobby problem, not a mid-match one.
+    @discardableResult
+    public func deal(handSize: Int) async -> [MatchMessage] {
+        guard handSize > 0, let drawn = pool.draw(handSize * players.count) else { return [] }
+        let grants = players.enumerated().map { index, player in
+            MatchMessage.grant(
+                player: player,
+                tiles: Array(drawn[(index * handSize)..<((index + 1) * handSize)])
+            )
+        }
+        // No requester: the deal answers nobody's request. Only `rejected` and
+        // the default arm read it, and this produces neither.
+        return await answer(grants, to: transport.localPlayerID)
+    }
+
     /// Puts the part of `produced` the peer is entitled to see on the wire, in
     /// order, and hands all of `produced` back.
     ///

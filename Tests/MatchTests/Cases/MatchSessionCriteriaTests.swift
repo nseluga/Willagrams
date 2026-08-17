@@ -96,7 +96,7 @@ struct MatchSessionCriteriaTests {
         let one = MatchSession(transport: first, peerPlayerID: bob, dictionary: EveryWordIsReal())
         let two = MatchSession(transport: second, peerPlayerID: alice, dictionary: EveryWordIsReal())
 
-        one.startMatch(seed: seed, startingHandSize: 21, countdownSeconds: 0)
+        one.startMatch(seed: seed, startingHandSize: 0, countdownSeconds: 0)
         try await waitUntil("both devices to be playing") {
             one.state.status == .playing && two.state.status == .playing
         }
