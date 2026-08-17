@@ -137,7 +137,7 @@ Global rules:
     - The produced MatchOptions' dictionaryHash equals the catalogue's hash for
       the selected ID
     - A form left untouched produces options equal to `MatchOptions.standard`
-  status: not started
+  status: done
 
 - task: Add the rules-in-force summary. `Willagrams/Settings/Model/RulesSummary.swift`
     is a pure function from `MatchOptions` to an ordered list of short display
