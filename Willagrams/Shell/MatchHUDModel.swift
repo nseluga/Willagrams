@@ -1,0 +1,212 @@
+//
+//  MatchHUDModel.swift
+//  Willagrams
+//
+//  Everything the in-match HUD shows and everything its controls do, as state a
+//  test can execute. The view renders this and decides nothing.
+//
+//  NO SwiftUI here — see the note in AppRoute.swift. This file is pure state,
+//  so it compiles into the macOS `Shell` test target and must NOT be listed in
+//  that target's `exclude:`.
+//
+//  This file must never import GameKit.
+//
+
+// The app compiles `Willagrams/Match`, `Willagrams/Board` and
+// `Willagrams/Style` into the same module as the shell, where there is nothing
+// to import. `Tests/ShellTests` compiles them as separate ones, so these
+// imports are real there and only there — the same shim `SoloMatch.swift` uses.
+#if canImport(Match)
+import Match
+#endif
+#if canImport(BoardKit)
+import BoardKit
+#endif
+#if canImport(Style)
+import Style
+#endif
+
+import Foundation
+import Observation
+import WillagramsRules
+
+/// The in-match HUD: what is left to take, the two things a player can do with
+/// it, and the one way out.
+///
+/// ## Nothing about the opponent
+///
+/// There is no opponent-facing value on this type and there is nothing for a
+/// view to render one from. Not their board, not their tile count, not whether
+/// they are there — `peerPresence` is read only to decide whether a control of
+/// *this* player's can do anything, and is never published.
+///
+/// ## Every value is computed
+///
+/// Nothing here is mirrored into storage, so there is nothing to go stale and
+/// no observation to re-arm: reading `session` and `board` inside a computed
+/// property is what registers the dependency, and Observation re-evaluates the
+/// view when either changes. ``resignArmed`` is the one stored value, because
+/// it is the only thing the HUD itself knows.
+@MainActor
+@Observable
+public final class MatchHUDModel {
+
+    /// Armed by a first press, spent by the second. A destructive action on a
+    /// live match takes two deliberate presses, and the arming one never
+    /// resigns.
+    public private(set) var resignArmed = false
+
+    @ObservationIgnored private let shell: ShellModel
+    @ObservationIgnored private let session: MatchSession
+    @ObservationIgnored private let board: MatchBoard
+
+    public init(shell: ShellModel, session: MatchSession, board: MatchBoard) {
+        self.shell = shell
+        self.session = session
+        self.board = board
+    }
+
+    // MARK: - Pool
+
+    /// How many tiles are left to take, or `nil` when the session cannot say.
+    ///
+    /// Today it is always `nil`. `MatchSession.state.pool` is a documented
+    /// placeholder — permanently empty on host and guest alike — and the real
+    /// supply lives behind `MatchSession.hostPool`, which is private, inside an
+    /// actor, and in a lane this one may not edit. **Amendment needed:
+    /// `Willagrams/Match/MatchSession.swift` must publish a remaining count;
+    /// this property then returns it and nothing else here changes.**
+    ///
+    /// It is `nil` rather than a number counted here on purpose: a shell-side
+    /// ledger of grants is a second source of truth that can silently disagree
+    /// with the pool it claims to describe.
+    public var poolRemaining: Int? { nil }
+
+    /// The frozen name for the supply.
+    public var poolLabel: String { Terminology.pool }
+
+    /// The count beside that name, or a placeholder while there is no count to
+    /// show. Never a guess.
+    public var poolValue: String {
+        guard let poolRemaining else { return Self.unknownValue }
+        return String(poolRemaining)
+    }
+
+    /// Local chrome, not `Terminology`: an em dash standing in for a number is
+    /// not a game concept.
+    public static let unknownValue = "—"
+
+    // MARK: - Draw
+
+    public var drawLabel: String { Terminology.draw }
+
+    /// Whether Draw does anything, which is the same question as whether it is
+    /// tappable — see ``draw()``.
+    ///
+    /// The board's own published answer, AND-ed with the three states in which
+    /// drawing is meaningless. The shell never checks a board or a word itself.
+    /// A tile already waiting behind Draw does *not* disable it: taking that
+    /// tile is what reopens the board.
+    public var isDrawEnabled: Bool {
+        board.canDraw
+            && !session.isMatchOver
+            && session.peerPresence == .present
+            && !session.poolIsExhausted
+    }
+
+    /// Takes a round. Refuses outright when ``isDrawEnabled`` is false, so the
+    /// disabled control and the ignored one cannot disagree.
+    ///
+    /// - Returns: whether the press did anything.
+    @discardableResult
+    public func draw() -> Bool {
+        resignArmed = false
+        guard isDrawEnabled else { return false }
+        return session.draw()
+    }
+
+    // MARK: - Swap
+
+    public var swapLabel: String { Terminology.swap }
+
+    /// The tile Swap would return: the one the player has selected on the
+    /// board. Nothing is chosen on the player's behalf — with no selection, or
+    /// more than one, there is nothing to swap.
+    public var swappableTile: Tile? {
+        guard board.model.selected.count == 1,
+              let coord = board.model.selected.first
+        else { return nil }
+        return board.board.tile(at: coord)
+    }
+
+    public var isSwapEnabled: Bool {
+        swappableTile != nil
+            && !session.isMatchOver
+            && session.peerPresence == .present
+            && !session.hasPendingDraw
+            && !session.poolIsExhausted
+    }
+
+    /// Returns one tile and takes three.
+    ///
+    /// The session only swaps a tile that is in the rack, and every tile this
+    /// shell holds is on the board, so a board tile comes back first. A refusal
+    /// puts it back where it was, on both boards, before returning.
+    ///
+    /// ponytail: a swap the *host* refuses — fewer than three tiles left, which
+    /// is not the same latch as an exhausted pool — answers over the wire long
+    /// after this returns, leaving the tile in a rack the shell does not draw.
+    /// Upgrade with the same `MatchSession` amendment ``poolRemaining`` names.
+    ///
+    /// - Returns: whether the swap was requested.
+    @discardableResult
+    public func swap(_ tile: Tile) -> Bool {
+        resignArmed = false
+        guard isSwapEnabled else { return false }
+
+        let coord = session.state.board.placementList.first { $0.tile.id == tile.id }?.coord
+        if let coord {
+            do { try session.recall(from: coord) } catch { return false }
+            _ = board.board.remove(at: coord)
+        }
+        guard session.swap(tile) else {
+            if let coord {
+                try? session.place(tileID: tile.id, at: coord)
+                try? board.board.place(tile, at: coord)
+            }
+            return false
+        }
+        return true
+    }
+
+    // MARK: - Resign
+
+    /// Local chrome, not `Terminology`: that file is the fence around the
+    /// game's vocabulary and giving up is a control, not a game concept. Named
+    /// here so there is exactly one copy of each.
+    public var resignLabel: String { "Resign" }
+    public var resignConfirmLabel: String { "Give up the match" }
+    public var resignCancelLabel: String { "Keep playing" }
+
+    /// Offers the confirmation. Never resigns — that is the whole point.
+    public func armResign() {
+        resignArmed = true
+    }
+
+    public func cancelResign() {
+        resignArmed = false
+    }
+
+    /// Gives the match up, only from an armed HUD, and moves the shell to the
+    /// results it just produced.
+    ///
+    /// - Returns: whether the match was resigned.
+    @discardableResult
+    public func confirmResign() -> Bool {
+        guard resignArmed else { return false }
+        resignArmed = false
+        guard session.resign() else { return false }
+        shell.matchEnded(winner: session.winner)
+        return true
+    }
+}

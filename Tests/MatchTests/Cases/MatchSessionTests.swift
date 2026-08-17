@@ -93,7 +93,7 @@ struct MatchSessionTests {
         let one = MatchSession(transport: first, peerPlayerID: bob, dictionary: AnyWordList())
         let two = MatchSession(transport: second, peerPlayerID: alice, dictionary: AnyWordList())
 
-        one.startMatch(seed: seed, startingHandSize: 21, countdownSeconds: 0, options: .standard)
+        one.startMatch(seed: seed, startingHandSize: 0, countdownSeconds: 0, options: .standard)
         try await waitUntil("both sessions playing") {
             one.state.status == .playing && two.state.status == .playing
         }
@@ -130,7 +130,7 @@ struct MatchSessionTests {
         )
         probe.session = session
 
-        session.startMatch(seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard)
+        session.startMatch(seed: 1, startingHandSize: 0, countdownSeconds: 3, options: .standard)
         #expect(session.state.status == .countdown(secondsRemaining: 3))
 
         try await Self.waitUntil("the countdown to finish") { session.state.status == .playing }
@@ -213,7 +213,7 @@ struct MatchSessionTests {
         let probe = OverlapProbeTransport(localPlayerID: alice)
         let host = MatchSession(transport: probe, peerPlayerID: bob, dictionary: AnyWordList())
 
-        host.startMatch(seed: 3, startingHandSize: 21, countdownSeconds: 0, options: .standard)
+        host.startMatch(seed: 3, startingHandSize: 0, countdownSeconds: 0, options: .standard)
         #expect(host.state.status == .playing)
 
         let rounds = 8
