@@ -18,7 +18,7 @@ struct ShellRootView: View {
     var body: some View {
         Group {
             switch shell.route {
-            case .menu: placeholder(Self.menuLabel)
+            case .menu: MenuView(shell: shell)
             case .countdown: placeholder(Terminology.countdownTitle)
             case .match: placeholder(Self.matchLabel)
             case .results: placeholder(Self.resultsLabel)
@@ -38,7 +38,6 @@ struct ShellRootView: View {
     /// Not `Terminology` constants: that file is the frozen IP fence and names
     /// game concepts, not screens. Placeholder copy, replaced with the real
     /// screens; named here so there is exactly one copy of each.
-    private static let menuLabel = "Willagrams"
     private static let matchLabel = "Match"
     private static let resultsLabel = "Results"
 }

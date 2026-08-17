@@ -23,6 +23,24 @@ public final class ShellModel {
         route = .countdown(setup)
     }
 
+    /// What the menu's one action starts. Solo practice takes no options, so the
+    /// setup is fixed apart from the seed — there is no difficulty selector and
+    /// no opponent to configure.
+    public static let soloHandSize = 21
+    public static let soloCountdownSeconds = 3
+
+    /// Menu → countdown with the solo setup. The seed is injectable so a test
+    /// can assert the exact route rather than only that it left `.menu`.
+    public func startSoloPractice(seed: UInt64 = .random(in: UInt64.min ... UInt64.max)) {
+        startMatch(
+            MatchSetup(
+                seed: seed,
+                startingHandSize: Self.soloHandSize,
+                countdownSeconds: Self.soloCountdownSeconds
+            )
+        )
+    }
+
     /// Countdown → match, carrying the same setup forward untouched.
     public func countdownFinished() {
         guard case .countdown(let setup) = route else { return }

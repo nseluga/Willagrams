@@ -20,6 +20,32 @@ struct ShellModelTests {
         #expect(shell.route == .match(setup))
     }
 
+    /// The menu's one action, asserted on the model — no view is instantiated.
+    @Test("Solo Practice moves the route off .menu")
+    func soloPracticeLeavesMenu() {
+        let shell = ShellModel()
+        shell.startSoloPractice(seed: 7)
+
+        #expect(shell.route != .menu)
+        #expect(
+            shell.route == .countdown(
+                MatchSetup(
+                    seed: 7,
+                    startingHandSize: ShellModel.soloHandSize,
+                    countdownSeconds: ShellModel.soloCountdownSeconds
+                )
+            )
+        )
+    }
+
+    /// Solo practice is two players' rules with one seat filled; the setup it
+    /// starts must still be a legal one.
+    @Test("Solo Practice deals a real hand and a real countdown")
+    func soloPracticeSetupIsSane() {
+        #expect(ShellModel.soloHandSize > 0)
+        #expect(ShellModel.soloCountdownSeconds > 0)
+    }
+
     @Test("The setup survives the countdown unchanged")
     func setupCarriesForward() {
         let shell = ShellModel()
