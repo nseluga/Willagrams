@@ -93,7 +93,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - `swift test --package-path Tests/ShellTests` builds and passes on macOS with no simulator
     - A test drives ShellModel from `.menu` through `.countdown` to `.match` and asserts the route after each transition, instantiating no SwiftUI view
     - `swift test` at the repo root still discovers and passes the existing engine suite, unaffected by the new nested package
-  status: not started
+  status: done
 
 - task: Deal the opening hand. `MatchSession` receives `startingHandSize` off the
     wire at `applyStart` and clamps it, but never gives either player a tile —
