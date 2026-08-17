@@ -100,7 +100,7 @@ Global rules:
       of the bundled ENABLE list
     - Looking up an unknown ID returns nil
     - Existing passing tests remain passing
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Add `Willagrams/Settings/Model/SettingsStore.swift` — persistence of the
