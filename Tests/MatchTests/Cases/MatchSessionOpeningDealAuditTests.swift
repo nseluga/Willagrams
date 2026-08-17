@@ -297,7 +297,7 @@ struct MatchSessionOpeningDealAuditTests {
             transport: endpoint, peerPlayerID: Self.alice, dictionary: AnyWordList(), sleepFor: { _ in }
         )
         try await wire.send(
-            .start(version: WireFormat.current, seed: 2, startingHandSize: -4, countdownSeconds: 0),
+            .start(version: WireFormat.current, seed: 2, startingHandSize: -4, countdownSeconds: 0, options: .standard),
             delivery: .reliable
         )
         try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }

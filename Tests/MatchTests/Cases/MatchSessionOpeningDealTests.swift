@@ -110,7 +110,7 @@ struct MatchSessionOpeningDealTests {
         )
 
         try await wire.send(
-            .start(version: WireFormat.current, seed: 4, startingHandSize: 2, countdownSeconds: 3),
+            .start(version: WireFormat.current, seed: 4, startingHandSize: 2, countdownSeconds: 3, options: .standard),
             delivery: .reliable
         )
         try await Self.waitUntil("the guest to be counting down") {

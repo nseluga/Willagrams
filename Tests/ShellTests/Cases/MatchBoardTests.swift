@@ -84,7 +84,8 @@ struct MatchBoardTests {
                 version: WireFormat.current,
                 seed: 7,
                 startingHandSize: handSize,
-                countdownSeconds: 0
+                countdownSeconds: 0,
+                options: .standard
             ),
             delivery: .reliable
         )

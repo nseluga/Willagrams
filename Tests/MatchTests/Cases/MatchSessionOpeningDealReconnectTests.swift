@@ -139,7 +139,8 @@ struct MatchSessionOpeningDealReconnectTests {
                 version: WireFormat.current,
                 seed: 3,
                 startingHandSize: LetterDistribution.totalTiles,
-                countdownSeconds: 0
+                countdownSeconds: 0,
+                options: .standard
             ),
             delivery: .reliable
         )
