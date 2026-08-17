@@ -302,7 +302,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - A message from the previous match's transport can never reach the new session, asserted by sending one after the rebuild
     - No state from the finished match is visible in the new one — hand, board, pool count and status all start fresh
   caution: true
-  status: not started
+  status: done — 4 of 4 criteria; pool-count half of criterion 4 unobservable (see item 9 amendment)
 
 ## Not yet specified
 

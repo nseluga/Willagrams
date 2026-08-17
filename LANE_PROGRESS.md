@@ -5,8 +5,15 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 
 ## Current position
 
-- **Status:** running — autonomous round, 11 items, no stop marker
-- **Next:** item 11 (rematch)
+- **Status:** finished — autonomous round, all 11 items done, none blocked
+- **Next:** nothing in this plan. The lane's remaining work is the four gaps
+  below plus five checks that can only be made by hand on a device.
+- **Follow-up, rematch:** an end screen that is left up after its own match ends
+  cannot act on the match that replaced it — but the owner does not treat
+  "returned to the menu" as ending a generation, so a screen whose Main Menu was
+  pressed can still start a match from the menu. Harmless today because nothing
+  in the shipping app builds one, and closing it properly means simplifying how
+  Rematch and Main Menu share their teardown rather than adding another guard.
 - **Second open gap:** the countdown, match and results screens are all built and
   tested, but the app root still shows placeholders for those three routes —
   only the menu is reachable. No item in this plan wires them up, so the app
@@ -37,4 +44,4 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 | Wire the match session to the board | done — Tiles dealt at the start now appear spread across the board rather than butted together, drawn tiles land where the player is looking, and whether the player may draw follows the board's own verdict on their words. No tile is ever in two places, including when a delivery is interrupted. See the open gap above: a player's own move is not yet carried back to the match record. |
 | In-match HUD | done, except one part — Draw is genuinely unavailable until the player's words are valid, Swap exchanges a tile and is refused cleanly when too few remain, and Resign takes two deliberate steps so a stray tap cannot end a match. Nothing about the opponent is shown. The tiles-remaining count shows a dash: the match layer publishes no such number yet (see the amendment above). Still needs one check by hand: that the HUD does not cover the board's recenter button. |
 | Results screen | done — The end of a match shows who won, or says plainly that there was no winner when a player vanishes — which is a real outcome, not a loss. Main Menu genuinely shuts the match down rather than leaving it running behind the menu, proved by the match object actually being freed. The final board is frozen and cannot be played on. Still needs one check by hand: that the board is visible behind the result card. |
-| Rematch | not started |
+| Rematch | done — Playing again builds a genuinely new match rather than resetting the old one: the same two players, a deal that can never repeat the one just played, and the finished match shut down before the new one exists. Ten rematches in a row leave nothing running behind them, and a message from the old connection cannot reach the new match. An end screen left over from a previous match now refuses both its buttons instead of acting on whichever match happens to be live. One part is unverifiable rather than unbuilt: the match layer publishes no count of tiles left, so "the pool starts fresh" is proved by every tile in the new match being a different tile, not by a number. |
