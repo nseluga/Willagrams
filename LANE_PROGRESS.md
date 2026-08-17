@@ -6,7 +6,12 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 ## Current position
 
 - **Status:** running — autonomous round, 11 items, no stop marker
-- **Next:** item 9 (in-match HUD)
+- **Next:** item 10 (results screen)
+- **Amendment needed:** `Willagrams/Match/MatchSession.swift` publishes no
+  count of tiles left in the pool — the real pool is private inside the host's
+  actor and the session's own copy is a deliberate placeholder. The HUD shows a
+  dash instead of a number until the match lane exposes one. The same change
+  closes a narrow case where swapping with 1–2 tiles left can strand a tile.
 - **Open gap:** nothing carries a player's own board move back into the match's
   record of the board. After the first move the two disagree, and every later
   delivery of drawn tiles is refused whole — safe (no tile is lost) but wrong.
@@ -26,6 +31,6 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 | Construct a solo practice session | done — A single player can now be set up in a full-length practice match against a silent stand-in opponent, with enough tiles to play to the end rather than running dry half way. Note: this is built on the debug-only fake connection, so practice mode cannot ship to the App Store until a real single-device connection exists. |
 | Countdown screen | done — Before a match starts, a card counts down over the board, showing the seconds the match itself reports rather than a timer of its own, and it disappears cleanly at zero — including when a match ends mid-countdown. Still needs one check by hand: that the board really is visible behind the card on a device. |
 | Wire the match session to the board | done — Tiles dealt at the start now appear spread across the board rather than butted together, drawn tiles land where the player is looking, and whether the player may draw follows the board's own verdict on their words. No tile is ever in two places, including when a delivery is interrupted. See the open gap above: a player's own move is not yet carried back to the match record. |
-| In-match HUD | not started |
+| In-match HUD | done, except one part — Draw is genuinely unavailable until the player's words are valid, Swap exchanges a tile and is refused cleanly when too few remain, and Resign takes two deliberate steps so a stray tap cannot end a match. Nothing about the opponent is shown. The tiles-remaining count shows a dash: the match layer publishes no such number yet (see the amendment above). Still needs one check by hand: that the HUD does not cover the board's recenter button. |
 | Results screen | not started |
 | Rematch | not started |

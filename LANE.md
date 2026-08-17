@@ -259,7 +259,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - Draw is unavailable while the board holds an invalid word and becomes available the moment the board is valid
     - Swap returns a tile and yields a replacement, and is refused without disturbing the pool when too few tiles remain
     - Resign ends the match and moves ShellModel's route to `.results`
-  status: not started
+  status: done — 3 of 4 criteria; pool count blocked — needs amendment: Willagrams/Match/MatchSession.swift (no pool-remaining count is published)
 
 - task: Build the results screen at
     `Willagrams/Shell/ResultsView.swift`, reading `MatchSession.winner`,
