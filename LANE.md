@@ -164,7 +164,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - The app launches to the main menu, and `BoardHarness` appears nowhere in the repository
     - A grep for `NavigationStack` under `Willagrams/Shell/**` and `Willagrams/App/**` returns nothing
     - `BrandFonts.registerOnce()` runs exactly once per launch, however many views are constructed
-  status: not started
+  status: done
 
 - task: Build the main menu screen at
     `Willagrams/Shell/MenuView.swift` — the app title treatment and a single
