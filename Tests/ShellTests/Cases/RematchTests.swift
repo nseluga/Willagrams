@@ -148,8 +148,14 @@ struct RematchTests {
         // reference to it outlives the check and fakes the release below.
         try await {
             let live = try #require(practice.match)
+            // `.playing` says the match opened, not that the far end has taken
+            // its opening tiles — those land on a later turn. Reading the count
+            // straight after the status wait races that, and loses about one run
+            // in six. Waiting for the hand is the assertion.
+            try await SoloMatchTests.waitUntil("the live far end to take its opening") {
+                live.peerTileIDs.count == ShellModel.soloHandSize
+            }
             let dealt = live.peerTileIDs.count
-            #expect(dealt == ShellModel.soloHandSize, "the live far end never took its opening")
             #expect(live.session.draw())
             try await SoloMatchTests.waitUntil("the far end to take one more tile") {
                 live.peerTileIDs.count == dealt + 1
@@ -294,6 +300,13 @@ struct RematchTests {
         #expect(new.session.lastNote == nil)
         #expect(new.session.peerPresence == .present)
         try await Self.waitForPlay(practice)
+        // Wait for the far end's opening before reading it. `.playing` does not
+        // mean the peer hand has landed, and a short read would make the
+        // disjointness below true over fewer tiles than the match actually
+        // holds — passing for the wrong reason.
+        try await SoloMatchTests.waitUntil("the new far end to take its opening") {
+            new.peerTileIDs.count == ShellModel.soloHandSize
+        }
 
         // A fresh `HostPool`, as far as it is observable: every tile in the new
         // match is a tile the finished one never held, at both ends.
