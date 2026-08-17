@@ -23,15 +23,27 @@ let package = Package(
         // SwiftUI and cannot build for this target, which is why this is a
         // directory of file symlinks rather than a symlink to the directory.
         .target(name: "Style", path: "StyleSrc"),
+        // The pure, macOS-buildable half of `Willagrams/Board` — the same eight
+        // files, symlinked, that this package already compiled. `BoardFeedback`
+        // imports UIKit and `BoardPinch`/`BoardView` import SwiftUI, so none of
+        // those three can join a macOS target. Named `BoardKit`, not `Board`:
+        // `Board` is a type in `WillagramsRules` and a module of that name would
+        // shadow it at every use site. See `#if canImport(BoardKit)` in
+        // `MatchBoard.swift`.
+        .target(
+            name: "BoardKit",
+            dependencies: [.product(name: "WillagramsRules", package: "Willagrams")],
+            path: "BoardSrc"
+        ),
         .target(
             name: "Shell",
-            dependencies: ["Match", "Style", .product(name: "WillagramsRules", package: "Willagrams")],
+            dependencies: ["Match", "Style", "BoardKit", .product(name: "WillagramsRules", package: "Willagrams")],
             path: "ShellSrc",
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
             // fails if this list and the files that import SwiftUI disagree.
             exclude: ["ShellRootView.swift", "MenuView.swift", "CountdownView.swift"]
         ),
-        .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style"], path: "Cases"),
+        .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style", "BoardKit"], path: "Cases"),
     ]
 )

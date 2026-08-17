@@ -1,6 +1,7 @@
 import CoreGraphics
 import Testing
 import WillagramsRules
+import BoardKit
 
 /// The seam `BoardView` now exposes, checked on the STATE TYPES rather than on
 /// the view: `BoardView` takes `Binding<Board>` and `Binding<BoardModel>`, so
