@@ -187,28 +187,32 @@ struct RematchTests {
 
         #expect(old.session.isMatchOver, "the finished match was never torn down")
 
-        // Sent after the rebuild, on the wire the finished match owned. It is
-        // refused outright — and, refused or not, it changes nothing here.
+        // Sent after the rebuild, on the wire the finished match owned, and
+        // deliberately a *different* message from the control below: a `.win`
+        // would name the peer as winner and carry placements, where the
+        // control's `.resign` names the local player and carries none. Whichever
+        // landed is therefore readable off the result rather than guessed at.
         await #expect(throws: MatchTransportError.peerDisconnected) {
             try await old.peerTransport.send(
-                .resign(player: SoloMatch.peerPlayerID), delivery: .reliable
+                .win(player: SoloMatch.peerPlayerID, placements: []), delivery: .reliable
             )
         }
-        for _ in 0..<5 { await Task.yield() }
-        #expect(new.session.winner == nil, "the finished match's wire ended the new match")
-        #expect(new.session.isMatchOver == false)
-        #expect(new.session.state.status == .playing)
 
-        // The control: the *new* match's own far end can do exactly what the old
-        // one could not, so the assertions above are not passing because a
-        // resignation is inert.
+        // The control: the *new* match's own far end does what the old one could
+        // not. It is sent second and waited on, so the negative below is read on
+        // a turn that is provably later than the send above — no guessed count
+        // of yields, and no chance of reading "has not arrived yet" as "refused".
         try await new.peerTransport.send(
             .resign(player: SoloMatch.peerPlayerID), delivery: .reliable
         )
         try await SoloMatchTests.waitUntil("the new session to take its own peer's message") {
             new.session.winner != nil
         }
-        #expect(new.session.winner == SoloMatch.localPlayerID)
+        #expect(
+            new.session.winner == SoloMatch.localPlayerID,
+            "the finished match's wire reached the new session"
+        )
+        #expect(new.session.winningPlacements == nil)
 
         practice.end()
     }
@@ -300,6 +304,72 @@ struct RematchTests {
         // the far end took a tile on that draw too — so the disjointness above
         // is over a real difference and not two untouched pools.
         #expect(oldPeerTiles > ShellModel.soloHandSize)
+
+        practice.end()
+    }
+
+    // MARK: - A stale end screen
+
+    /// `results()` is a factory, and SwiftUI calls a factory again on every
+    /// re-render, so `ResultsModel`'s spend-once guard is per screen instance
+    /// and cannot stop an older instance acting. The closures are bound to the
+    /// generation that was live when they were built; each half is proved on its
+    /// own below, because a guard on one closure only is the exact half-fix this
+    /// run has been bitten by.
+    @Test("A stale end screen's Main Menu cannot end the match that replaced it")
+    func aStaleScreenCannotEndTheNewMatch() async throws {
+        let practice = Self.practice()
+        #expect(practice.start())
+        try await Self.waitForPlay(practice)
+
+        // Two screens over the same generation — exactly what a re-render gives.
+        let stale = try #require(practice.results())
+        let current = try #require(practice.results())
+        #expect(current.rematch())
+        try await Self.waitForPlay(practice)
+        let new = try #require(practice.match)
+
+        stale.mainMenu()
+
+        #expect(practice.match === new, "a stale screen dropped the live match")
+        #expect(new.session.isMatchOver == false, "a stale screen ended the live match")
+        #expect(new.session.state.status == .playing)
+        // The live end still delivers, so the stale screen did not take the
+        // current generation's pump down either. The far end's opening grant is
+        // its own message, so it is waited for rather than assumed landed.
+        try await SoloMatchTests.waitUntil("the live far end's opening") {
+            new.peerTileIDs.count == ShellModel.soloHandSize
+        }
+        let dealt = new.peerTileIDs.count
+        #expect(new.session.draw())
+        try await SoloMatchTests.waitUntil("the live far end to take another tile") {
+            new.peerTileIDs.count == dealt + 1
+        }
+
+        practice.end()
+    }
+
+    @Test("A stale end screen's Rematch cannot rebuild over the match that replaced it")
+    func aStaleScreenCannotRebuildOverTheNewMatch() async throws {
+        let practice = Self.practice()
+        #expect(practice.start())
+        try await Self.waitForPlay(practice)
+
+        let stale = try #require(practice.results())
+        let current = try #require(practice.results())
+        #expect(current.rematch())
+        try await Self.waitForPlay(practice)
+        let new = try #require(practice.match)
+        let seedAfterRematch = practice.seed
+
+        // The press is still reported as taken — the screen has a closure — but
+        // the closure must decline, so nothing is built and nothing is spent.
+        #expect(stale.rematch())
+
+        #expect(practice.match === new, "a stale screen rebuilt over the live match")
+        #expect(practice.seed == seedAfterRematch, "a stale screen redealt the live match")
+        #expect(new.session.isMatchOver == false)
+        #expect(new.session.state.status == .playing)
 
         practice.end()
     }

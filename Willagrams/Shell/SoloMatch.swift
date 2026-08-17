@@ -87,10 +87,11 @@ public final class SoloMatch {
     public private(set) var peerTileIDs: Set<UUID> = []
 
     private let setup: MatchSetup
-    /// The far end of the wire. Exposed so a test can send from it — the only
-    /// way to prove a message from a finished match's transport cannot reach the
-    /// session that replaced it. Nothing in the shell sends on it.
-    public let peerTransport: FakeTransport
+    /// The far end of the wire. Internal, not private, so a test can send from
+    /// it — the only way to prove a message from a finished match's transport
+    /// cannot reach the session that replaced it. Not `public`: `@testable
+    /// import Shell` reaches internal, and nothing outside the shell sends here.
+    let peerTransport: FakeTransport
     /// The single consumer of the far end's inbound stream. A second one would
     /// divide the messages between them rather than fail.
     private var peerPump: Task<Void, Never>?

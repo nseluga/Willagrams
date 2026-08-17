@@ -56,6 +56,12 @@ public final class SoloPractice {
     private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
     private let seedSource: @MainActor () -> UInt64
 
+    /// Counts matches started. Not `match`'s identity: ``end()`` nils that, and
+    /// an end screen's Main Menu runs before its Rematch, so an identity check
+    /// would decline the very rematch it was meant to allow. A number that only
+    /// ``start()`` moves survives the gap between the two.
+    private var generation = 0
+
     public init(
         shell: ShellModel,
         dictionary: any WordList,
@@ -91,6 +97,11 @@ public final class SoloPractice {
 
         // A hard guarantee, not a probabilistic one: `.random` can repeat, and
         // an identical pool turns practice into memorising one deal.
+        //
+        // ponytail: guards the immediately previous seed only, so a source that
+        // alternates between two values still deals A, B, A, B. Upgrade to a
+        // monotonic counter mixed into the seed if that ever matters — a full
+        // history set would grow without bound.
         let candidate = explicit ?? seedSource()
         let fresh = candidate == seed ? candidate &+ 1 : candidate
 
@@ -103,6 +114,7 @@ public final class SoloPractice {
         let started = SoloMatch(setup: setup, dictionary: dictionary, sleepFor: sleepFor)
         match = started
         seed = fresh
+        generation &+= 1
         started.start()
         return true
     }
@@ -118,14 +130,27 @@ public final class SoloPractice {
     ///
     /// Built here so Main Menu and Rematch get the same teardown, rather than
     /// each call site assembling its own.
+    ///
+    /// Both closures are bound to the generation that was live when the screen
+    /// was built and no-op once it has been replaced. This is a factory, and
+    /// SwiftUI calls a factory again on every re-render — so `ResultsModel`'s
+    /// own spend-once guard is per screen instance and cannot be relied on to
+    /// stop a stale screen ending or rebuilding over the match that replaced it.
     public func results(board: Board = Board()) -> ResultsModel? {
         guard let match else { return nil }
+        let generation = generation
         return ResultsModel(
             shell: shell,
             session: match.session,
             board: board,
-            teardown: { [weak self] in self?.end() },
-            rematch: { [weak self] in self?.start() }
+            teardown: { [weak self] in
+                guard let self, self.generation == generation else { return }
+                self.end()
+            },
+            rematch: { [weak self] in
+                guard let self, self.generation == generation else { return }
+                self.start()
+            }
         )
     }
 }
