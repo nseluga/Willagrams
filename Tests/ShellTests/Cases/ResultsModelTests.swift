@@ -292,15 +292,43 @@ struct ResultsModelTests {
         #expect(refused.board == mine, "a board that will not build was shown half laid")
     }
 
-    // MARK: - Rematch is offered, not implemented
+    // MARK: - Rematch
 
-    @Test("Rematch is offered and refuses, and Main Menu is local chrome")
-    func rematchIsOfferedAndRefuses() {
-        let results = ResultsModel(
+    /// The labels, and the two ends of the enabled/disabled rule. A screen with
+    /// nothing to rematch into still refuses; one wired to an owner does not.
+    /// What a press actually rebuilds is `RematchTests`.
+    @Test("Rematch is enabled only when wired, and Main Menu is local chrome")
+    func rematchIsEnabledOnlyWhenWired() {
+        let unwired = ResultsModel(
             shell: ShellModel(), winner: nil, localPlayerID: Self.guestID
         )
-        #expect(results.isRematchEnabled == false)
-        #expect(results.rematch() == false)
+        #expect(unwired.isRematchEnabled == false)
+        #expect(unwired.rematch() == false)
+
+        var starts = 0
+        let wired = ResultsModel(
+            shell: ShellModel(), winner: nil, localPlayerID: Self.guestID,
+            rematch: { starts += 1 }
+        )
+        #expect(wired.isRematchEnabled)
+        #expect(wired.rematch())
+        #expect(starts == 1)
+        // Spent, not repeatable: a second tap cannot start a third match.
+        #expect(wired.rematch() == false)
+        #expect(wired.isRematchEnabled == false)
+        #expect(starts == 1)
+
+        // Main Menu spends it too, so a stale screen cannot start a match
+        // behind the menu.
+        let leaving = ResultsModel(
+            shell: ShellModel(), winner: nil, localPlayerID: Self.guestID,
+            rematch: { starts += 1 }
+        )
+        leaving.mainMenu()
+        #expect(leaving.isRematchEnabled == false)
+        #expect(leaving.rematch() == false)
+        #expect(starts == 1)
+
         #expect(ResultsModel.rematchLabel == "Rematch")
         #expect(ResultsModel.mainMenuLabel == "Main Menu")
     }

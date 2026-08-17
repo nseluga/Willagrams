@@ -150,8 +150,12 @@ struct SoloMatchTests {
         for round in 1...12 {
             let before = solo.session.state.hand.count
             #expect(solo.session.draw())
-            try await Self.waitUntil("round \(round)") {
+            // Both ends, not just this one: the far end's grant is a separate
+            // message, so a wait on the local hand alone can read the peer's
+            // count one message early under load.
+            try await Self.waitUntil("round \(round) at both ends") {
                 solo.session.state.hand.count == before + 1
+                    && solo.peerTileIDs.count == Self.setup.startingHandSize + round
             }
             let now = Self.localTileIDs(solo)
             #expect(now.count == seen.count + 1, "round \(round) moved more than one tile")

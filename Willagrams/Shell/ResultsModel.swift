@@ -64,14 +64,23 @@ public final class ResultsModel {
     /// the end screen ships.
     private var teardown: (() -> Void)?
 
+    /// Starts the next match. Spent on the way out, exactly like ``teardown``,
+    /// so a double tap cannot build two.
+    ///
+    /// A closure for the same reason: the thing that owns and rebuilds a solo
+    /// match is `#if DEBUG` and this screen ships.
+    private var startRematch: (() -> Void)?
+
     public init(
         shell: ShellModel,
         winner: PlayerID?,
         localPlayerID: PlayerID,
         winningPlacements: [Placement]? = nil,
         board: Board = Board(),
-        teardown: (() -> Void)? = nil
+        teardown: (() -> Void)? = nil,
+        rematch: (() -> Void)? = nil
     ) {
+        self.startRematch = rematch
         self.shell = shell
         if let winner {
             self.outcome = winner == localPlayerID ? .localWin : .peerWin
@@ -87,7 +96,8 @@ public final class ResultsModel {
         shell: ShellModel,
         session: MatchSession,
         board: Board = Board(),
-        teardown: (() -> Void)? = nil
+        teardown: (() -> Void)? = nil,
+        rematch: (() -> Void)? = nil
     ) {
         self.init(
             shell: shell,
@@ -95,7 +105,8 @@ public final class ResultsModel {
             localPlayerID: session.localPlayerID,
             winningPlacements: session.winningPlacements,
             board: board,
-            teardown: teardown
+            teardown: teardown,
+            rematch: rematch
         )
     }
 
@@ -144,17 +155,27 @@ public final class ResultsModel {
 
     // MARK: - Rematch
 
-    /// Offered, not implemented. A rematch is a fresh transport, session and
-    /// pool, and that belongs to the item that owns building one — this screen
-    /// only shows the control.
-    ///
-    /// ponytail: a control that reports itself disabled AND refuses, rather than
-    /// a button wired to nothing. Return `true` from here when rematch lands.
-    public var isRematchEnabled: Bool { false }
+    /// Whether there is anything to rematch into. A screen built with no
+    /// rematch closure still refuses rather than offering a dead button.
+    public var isRematchEnabled: Bool { startRematch != nil }
 
+    /// Ends the finished match and starts a fresh one — in that order.
+    ///
+    /// The order is the guardrail: the old transport and its stream-iteration
+    /// task are shut down before the replacement is built, so repeated
+    /// rematches cannot pile up live sessions. The closure is spent first, so a
+    /// second tap during the rebuild cannot start a third match.
+    ///
     /// - Returns: whether the press did anything.
     @discardableResult
-    public func rematch() -> Bool { false }
+    public func rematch() -> Bool {
+        guard let start = startRematch else { return false }
+        startRematch = nil
+        teardown?()
+        teardown = nil
+        start()
+        return true
+    }
 
     // MARK: - Main Menu
 
@@ -167,6 +188,7 @@ public final class ResultsModel {
     public func mainMenu() {
         teardown?()
         teardown = nil
+        startRematch = nil
         shell.returnToMenu()
     }
 }
