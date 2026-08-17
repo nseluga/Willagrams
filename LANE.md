@@ -153,7 +153,7 @@ Global rules:
     - Options with swap disabled and a minimum of 4 yield three lines including
       both changed rules
     - Line order is stable across two calls with the same options
-  status: not started
+  status: done
 
 ## Out of scope
 
