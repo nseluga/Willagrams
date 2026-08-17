@@ -144,6 +144,67 @@ struct MatchSessionOpeningDealTests {
         #expect(guest.state.hand.count == 4)
     }
 
+    /// The deal is enqueued, and a freeze can land between the enqueue and the
+    /// work running. Dropped there it would never happen again: the countdown is
+    /// spent, so both racks would stay empty for a match that goes on to be
+    /// played.
+    ///
+    /// The guest's half is asserted as the grant that reached the wire rather
+    /// than through a second session: `GatedTransport` is the only fake that can
+    /// freeze and thaw without finishing its streams, and it is not paired.
+    /// Where that grant lands once it arrives is covered by the phase test above.
+    @Test("A freeze at the moment of the deal defers it to the peer's return")
+    func aFreezeAtCountdownEndDefersTheDeal() async throws {
+        let handSize = 7
+        let wire = MatchSessionTerminalTests.PresenceTransport(
+            localPlayerID: Self.alice,
+            peer: Self.bob
+        )
+        let host = MatchSession(
+            transport: wire,
+            peerPlayerID: Self.bob,
+            dictionary: AnyWordList(),
+            // Only the reconnect window reads the clock here, and it must not
+            // expire: an expired window ends the match instead of thawing it.
+            sleepFor: { _ in try await Task.sleep(for: .seconds(3_600)) }
+        )
+
+        // The gate parks the `.start` send, so the deal is enqueued behind it
+        // and has not run when the peer goes.
+        await wire.closeGate()
+        host.startMatch(seed: 6, startingHandSize: handSize, countdownSeconds: 0)
+        let limit = ContinuousClock.now + .seconds(2)
+        while await wire.parkedCount == 0, ContinuousClock.now < limit {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(await wire.parkedCount == 1)
+
+        wire.drop(Self.bob)
+        try await Self.waitUntil("the freeze") {
+            if case .reconnecting = host.peerPresence { return true }
+            return false
+        }
+
+        // The deal now runs, sees the lock, and must put itself back.
+        await wire.releaseAll()
+        while await wire.count == 0, ContinuousClock.now < limit {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(await wire.count == 1)
+        #expect(host.state.hand.isEmpty)
+
+        wire.restore(Self.bob)
+        try await Self.waitUntil("the deal to land after the thaw") {
+            host.state.hand.count == handSize
+        }
+        let grants = await wire.wire.filter {
+            if case let .grant(player, tiles) = $0 { return player == Self.bob && tiles.count == handSize }
+            return false
+        }
+        #expect(grants.count == 1)
+        #expect(host.pendingDrawTiles.isEmpty)
+    }
+
     @Test("One deal takes both hands out of one pool")
     func dealMovesThePoolOnce() async throws {
         let (transport, _) = FakeTransport.pair(Self.alice, Self.bob)

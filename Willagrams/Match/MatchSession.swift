@@ -408,7 +408,14 @@ public final class MatchSession {
         reconnectTask?.cancel()
         reconnectTask = nil
         peerPresence = .present
-        guard let seconds = heldCountdownSeconds else { return }
+        guard let seconds = heldCountdownSeconds else {
+            // A freeze that landed on the moment of the deal bailed out of it and
+            // re-armed it. The countdown is already spent, so this is the only
+            // place left to deal: without it both racks stay empty for the rest
+            // of the match and nothing says why.
+            dealOpeningHands()
+            return
+        }
         heldCountdownSeconds = nil
         beginCountdown(seconds: seconds)
     }
@@ -625,7 +632,9 @@ public final class MatchSession {
             // arriving here is a modified peer minting tiles into the host's
             // rack, desyncing it from the pool, or latching exhaustion.
             guard hostPool == nil, player == localPlayerID else { break }
-            applyGrant(tiles, requestedByLocal: clearOneOutstandingDraw())
+            // `nil`: only ``applyGrant(_:requestedByLocal:)`` can tell whether
+            // this is the opening deal, and a credit must not be spent on one.
+            applyGrant(tiles, requestedByLocal: nil)
 
         case let .swapGrant(player, tiles, returned):
             guard hostPool == nil, player == localPlayerID else { break }
@@ -677,6 +686,12 @@ public final class MatchSession {
         // Negative or absurd values came off the wire; clamp rather than trap.
         // The ceiling is the whole pool: no deal can hand out more tiles than
         // the match contains.
+        //
+        // BLOCKED, review finding 3: this wants to be `totalTiles / 2`, because
+        // the deal is one draw of `handSize * 2` and anything above half the
+        // pool deals nothing at all. `MatchSessionHardeningTests.swift:424` pins
+        // this ceiling at `totalTiles`, and that assertion is not this item's to
+        // edit — the two need deciding together.
         self.startingHandSize = min(max(0, startingHandSize), LetterDistribution.totalTiles)
         self.awaitingOpeningDeal = self.startingHandSize > 0
 
@@ -700,8 +715,9 @@ public final class MatchSession {
     private func beginCountdown(seconds: Int) {
         countdownTask?.cancel()
         guard seconds > 0 else {
-            // Dealt before the flip, so the grant is on the wire ahead of the
-            // moment this device calls itself playing.
+            // Enqueued ahead of the flip — the send itself runs later, off the
+            // chain, so this orders the deal before any request this device will
+            // answer, not before its own `.playing`.
             dealOpeningHands()
             state.status = .playing
             return
@@ -723,7 +739,7 @@ public final class MatchSession {
                 // game state — and could put a settled match back into play.
                 guard !Task.isCancelled, !self.isLocked else { return }
                 remaining -= 1
-                // Before the flip, for the same reason as the zero-second path.
+                // Enqueued ahead of the flip, as in the zero-second path.
                 if remaining == 0 { self.dealOpeningHands() }
                 self.state.status = remaining > 0
                     ? .countdown(secondsRemaining: remaining)
@@ -743,12 +759,17 @@ public final class MatchSession {
         // the countdown, and a second deal would hand out two hands.
         awaitingOpeningDeal = false
         let handSize = startingHandSize
-        guard handSize > 0 else { return }
         enqueue { [weak self] in
+            guard let self else { return }
             // A frozen or finished session sends nothing and moves nothing, the
             // same bar `blockedByLock` holds every other piece of outbound work
-            // to. The deal is not retried after: the match never began.
-            guard let self, !self.isLocked else { return }
+            // to. Re-armed rather than dropped, because a freeze can lift:
+            // ``peerReturned()`` deals then, and without this both racks stay
+            // empty for a match that goes on to be played.
+            guard !self.isLocked else {
+                self.awaitingOpeningDeal = true
+                return
+            }
             let produced = await hostPool.deal(handSize: handSize)
             for case let .grant(player, tiles) in produced where player == self.localPlayerID {
                 // The grant addressed to the host never travels — this is where
@@ -761,17 +782,26 @@ public final class MatchSession {
 
     /// Whether this grant is the opening deal, and closes the deal if it is.
     ///
-    /// ponytail: the phase carries what the wire cannot say. Wire v1 has one
-    /// `.grant` case for both an opening deal and a draw, and adding a second is
-    /// a format break — so a grant arriving in `.countdown` is read as the deal,
-    /// which is sound because the host answers no request until it is playing.
-    /// A zero-second countdown leaves no phase to read, so a first grant of
-    /// exactly `startingHandSize` tiles is taken as the deal too; with
-    /// `startingHandSize == 1` that is indistinguishable from a peer's draw
-    /// arriving first, and a player who presses Draw in the gap between
-    /// `.playing` and the deal landing spends a credit on it. Upgrade to the
-    /// distinct `deal` case at the pending wire v2 amendment, and delete all of
-    /// this.
+    /// ponytail: the phase carries what the wire cannot say, and it is a
+    /// heuristic. Wire v1 has one `.grant` case for both an opening deal and a
+    /// draw, and adding a second is a format break, so two triggers stand in for
+    /// the case that does not exist. Both can misfire:
+    ///
+    /// - **the phase trigger** takes the *first* grant arriving in `.countdown`
+    ///   as the deal, at any hand size. Sound only because the host gates
+    ///   `.drawRequest` on `state.status == .playing` and ``dealOpeningHands()``
+    ///   enqueues strictly before that flip, so on `.reliable` delivery the deal
+    ///   is always the first grant. Reorder or drop that one grant — a lossy
+    ///   link, a transport that does not keep order — and a one-tile round is
+    ///   read as a whole opening hand instead.
+    /// - **the count trigger** covers a zero-second countdown, which leaves no
+    ///   phase to read, by taking a first grant of exactly `startingHandSize`
+    ///   tiles. At `startingHandSize == 1` that is any round at all.
+    ///
+    /// `awaitingOpeningDeal` bounds either misfire to one grant, and the tiles
+    /// are real tiles from the real pool — the cost is one round taken into hand
+    /// instead of held behind the Draw button. Upgrade to the distinct `deal`
+    /// case at the pending wire v2 amendment, and delete all of this.
     private func takeOpeningDeal(_ tiles: [Tile]) -> Bool {
         guard awaitingOpeningDeal else { return false }
         if case .countdown = state.status {
@@ -789,8 +819,16 @@ public final class MatchSession {
     /// means the opponent drew, so this device owes a tile for the same event
     /// and the board freezes until the player presses Draw. The caller says
     /// which: on the host it answered a request it can name, and only the wire
-    /// has to fall back on the outstanding-request count.
-    private func applyGrant(_ tiles: [Tile], requestedByLocal: Bool) {
+    /// has to fall back on the outstanding-request count — pass `nil` for that,
+    /// and one credit is spent here on every grant that is not the opening deal.
+    private func applyGrant(_ tiles: [Tile], requestedByLocal: Bool?) {
+        // First, and whatever else is done with the grant: the deal is closed by
+        // the message that carried it, and it answers no request. A credit spent
+        // on it would leave the real answer uncredited, and the player owing a
+        // second press for a round they already took.
+        let isOpeningDeal = takeOpeningDeal(tiles)
+        let requested = requestedByLocal ?? (isOpeningDeal ? false : clearOneOutstandingDraw())
+
         // A duplicated grant is peer input: taking it twice would double a tile
         // into the rack and leave the two devices disagreeing about the pool.
         var held = Set(state.hand.map(\.id))
@@ -799,12 +837,7 @@ public final class MatchSession {
         let fresh = tiles.filter { !held.contains($0.id) }
         guard !fresh.isEmpty else { return }
 
-        // Evaluated before the branch, not inside it: the deal is closed either
-        // way, so a hand that also answered a request cannot leave the next
-        // grant looking like an opening deal.
-        let isOpeningDeal = takeOpeningDeal(fresh)
-
-        if requestedByLocal || isOpeningDeal {
+        if requested || isOpeningDeal {
             state.hand.append(contentsOf: fresh)
         } else {
             pendingDrawTiles.append(contentsOf: fresh)
