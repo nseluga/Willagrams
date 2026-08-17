@@ -42,7 +42,7 @@ let package = Package(
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
             // fails if this list and the files that import SwiftUI disagree.
-            exclude: ["ShellRootView.swift", "MenuView.swift", "CountdownView.swift"]
+            exclude: ["ShellRootView.swift", "MenuView.swift", "CountdownView.swift", "MatchHUD.swift"]
         ),
         .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style", "BoardKit"], path: "Cases"),
     ]
