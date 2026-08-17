@@ -121,7 +121,7 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
     - The host's pool is reduced by exactly `startingHandSize * 2` after the deal, with no tile appearing in two hands
     - Existing passing match tests remain passing
   caution: true
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Give `BoardView` a way to report its state to its owner. Today

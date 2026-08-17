@@ -6,7 +6,7 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 ## Current position
 
 - **Status:** running — autonomous round, 11 items, no stop marker
-- **Next:** item 2 (deal the opening hand) running; then items 4-11
+- **Next:** item 4 (author the real app root)
 - **Blockers:** none
 - **Last updated:** 2026-08-17
 
@@ -15,7 +15,7 @@ it — if the two disagree, LANE.md wins for scope and this file wins for state.
 | Item | Status |
 |------|--------|
 | Shell route model and its headless test package | done — The app now has a single place that decides which screen is showing, with its own tests that run without a simulator. |
-| Deal the opening hand | not started |
+| Deal the opening hand | done — Both players now start a match holding their opening tiles instead of an empty rack, and the hand still arrives correctly if someone's connection drops at the exact moment the tiles are dealt. |
 | Give BoardView a way to report its state to its owner | done — The board can now be handed tiles after it is on screen and can tell the rest of the app whether the player may draw. Still needs one check by hand on a real device: panning, zooming, dragging, snapping and double-tap selection. No automated test in this project can touch a gesture, so that one is genuinely unverified. |
 | Author the real app root | not started |
 | Main menu screen | not started |
