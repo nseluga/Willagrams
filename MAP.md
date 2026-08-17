@@ -119,11 +119,35 @@ construction. No other file under `Willagrams/Board/**` is opened by this.
   assignee: nate
   depends on: style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift), board (sequenced — starts after board merges), match (sequenced — starts after match merges), settings (sequenced — starts after settings merges)
 
+- lane: bot
+  area: The CPU opponent for solo practice — a heuristic grid solver that holds tiles, builds a valid connected board from them, draws when its board is complete, and races the player. Owns its difficulty model and the UI for choosing a difficulty. Sits behind the transport seam exactly as a remote peer does.
+  owns: [ Willagrams/Bot/**, Tests/BotTests/** ]
+  assignee: nate
+  depends on: match (MatchTransport seam and the MatchMessage wire — contract Willagrams/Match/MatchTransport.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v1.json), style (tokens for the difficulty control — contract Willagrams/Style/DesignTokens.swift). Also builds on the frozen engine (BoardAnalysis word extraction and connectivity in Sources/WillagramsRules/BoardAnalysis.swift) — no lane edge, fenced under protected:
+
+**Rules, not reinforcement learning.** Building a grid from a tile set is a
+combinatorial construction problem with obvious greedy structure, so heuristic
+search dominates. RL would need a simulator built first, training
+infrastructure, and shipped weights — and it gives *worse* difficulty control,
+because a trained policy's strength cannot be cleanly dialled. Every knob worth
+having is a direct parameter of a heuristic: think time, vocabulary subset, how
+aggressively it rebuilds.
+
+**The bot needs a real board, and the shortcut does not work.** The player never
+sees the opponent's progress, which tempts a bot that only draws on a schedule
+and eventually claims a win. That fails: `MatchMessage.win` carries
+`placements`, and a win is validated against them. A bot with no real grid
+cannot produce valid placements, so the cheap version forces a special case into
+the win path. Build the solver.
+
+The `shell` lane ships a silent placeholder peer so a solo match is playable
+before this lane lands. Replacing it is this lane's first item, not shell's.
+
 - lane: tuning
   area: Final polish across the assembled app — the opening-deal animation (tiles flying into their places), draw and swap motion, timing and easing adjustments, haptic strength, screen transitions, copy tightening, and the small visual corrections that only become visible once every lane is merged and the app is played end to end. Adjustments to what already ships, never new features.
   owns: [ ]   # no exclusive paths — see the fence exception below
   assignee: nate
-  depends on: shell (sequenced — starts after shell merges, by which point every other lane has merged too)
+  depends on: shell (sequenced — starts after shell merges), bot (sequenced — the opponent is polished too, and its pacing is a tuning concern), settings (sequenced — nothing is tuned before every lane has landed)
 
 **Fence exception for `tuning`.** This lane owns no globs, so it passes the
 `owns:` overlap check trivially and adds nothing to the coverage check. That is
