@@ -142,8 +142,8 @@ Any further path outside `owns:` is a fresh amendment: stop and report.
   done when:
     - An owner outside `BoardView` can supply tiles after construction and see them rendered, verified by a test on the state type rather than the view
     - An owner outside `BoardView` can read draw-eligibility without recomputing it
-    - Panning, zooming, dragging, snapping, the input lock and live invalid-word tinting all behave as before, with `Tests/BoardTests` passing unedited
-  caution: true
+    - `Tests/BoardTests` passes unedited, and the input lock and live invalid-word tinting behave as before
+    - Pan, pinch-zoom, tile drag, snap and double-tap selection are confirmed by hand on a device and reported in the item's summary. No test in this repository reaches a gesture, so a green suite is not evidence here — say so plainly rather than inferring it
   status: not started
   parallel-group: a
 
