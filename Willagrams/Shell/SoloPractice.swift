@@ -144,7 +144,10 @@ public final class SoloPractice {
             session: match.session,
             board: board,
             teardown: { [weak self] in
-                guard let self, self.generation == generation else { return false }
+                // A gone owner owns no live match, so there is nothing to hold
+                // the route back for — only a stale generation declines.
+                guard let self else { return true }
+                guard self.generation == generation else { return false }
                 self.end()
                 return true
             },

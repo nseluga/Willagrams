@@ -195,11 +195,15 @@ public final class ResultsModel {
     /// the match that replaced this screen is still live is the worse half of
     /// that. A screen built with no teardown owns nothing to decline, so it
     /// still navigates.
+    ///
+    /// A declined press spends nothing. Dropping the closure would encode the
+    /// decline as "no teardown to run", which is the one state that navigates
+    /// unconditionally — so a second press on a stale screen would go through
+    /// the gap the first press just closed.
     public func mainMenu() {
-        let toreDown = teardown?() ?? true
+        guard teardown?() ?? true else { return }
         teardown = nil
         startRematch = nil
-        guard toreDown else { return }
         shell.returnToMenu()
     }
 }

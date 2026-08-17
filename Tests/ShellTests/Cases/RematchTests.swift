@@ -390,6 +390,46 @@ struct RematchTests {
         practice.end()
     }
 
+    @Test("A stale end screen's Main Menu declines every press, not just the first")
+    func aStaleScreenDeclinesRepeatedMainMenuPresses() async throws {
+        let counter = Counter(99)
+        let shell = ShellModel()
+        let practice = SoloPractice(
+            shell: shell,
+            dictionary: EveryWordIsReal(),
+            sleepFor: { _ in },
+            seedSource: { counter.next() }
+        )
+        #expect(practice.start())
+        try await Self.waitForPlay(practice)
+
+        let stale = try #require(practice.results())
+        let current = try #require(practice.results())
+        #expect(current.rematch())
+        try await Self.waitForPlay(practice)
+        let new = try #require(practice.match)
+        let liveRoute = shell.route
+
+        // A decline must not spend the screen. If the first press drops the
+        // teardown, the screen becomes a no-teardown screen — the one kind that
+        // navigates unconditionally — and the second press goes through.
+        for press in 1...3 {
+            stale.mainMenu()
+            #expect(shell.route == liveRoute, "press \(press) sent the live match to the menu")
+            #expect(shell.route != .menu, "press \(press) reached the menu")
+            #expect(practice.match === new, "press \(press) dropped the live match")
+            #expect(new.session.isMatchOver == false, "press \(press) ended the live match")
+        }
+
+        // The live screen still works after all that.
+        let live = try #require(practice.results())
+        live.mainMenu()
+        #expect(shell.route == .menu)
+        #expect(practice.match == nil)
+
+        practice.end()
+    }
+
     @Test("A stale end screen's Rematch cannot rebuild over the match that replaced it")
     func aStaleScreenCannotRebuildOverTheNewMatch() async throws {
         let practice = Self.practice()
