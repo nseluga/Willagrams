@@ -221,13 +221,13 @@ lands in the lane that owns the file.
   depends on: match (MatchTransport protocol it implements, and the MatchMessage wire it carries — contracts Willagrams/Match/MatchTransport.swift, Sources/WillagramsRules/MatchMessage.swift)
 
 - lane: account
-  area: Identity screens — Sign in with Apple, phone sign-in, the profile page and its stats. Reads the session and the user record from `online`; owns no client and no schema.
+  area: Identity screens — Sign in with Apple, the profile page and its stats. Reads the session and the user record from `online`; owns no client and no schema. No phone sign-in: Supabase sends no SMS itself and every supported provider is paid, so Sign in with Apple is the only route this release.
   owns: [ Willagrams/Account/**, Tests/AccountTests/** ]
   assignee: nate
   depends on: online (auth session + user record — sequenced, the schema is not designed yet), style (tokens — contract Willagrams/Style/DesignTokens.swift)
 
 - lane: friends
-  area: The friends page — friends list, friend requests and accept/block, and phone-number invites. No chat this release.
+  area: The friends page — friends list, friend requests and accept/block, and invites by share link and short friend code. No chat this release, and no phone-number invites: that would need a paid SMS provider, so a friend code carried over any messenger the player already has replaces it.
   owns: [ Willagrams/Friends/**, Tests/FriendsTests/** ]
   assignee: nate
   depends on: online (client + friend tables — sequenced, the schema is not designed yet), account (the current user — sequenced), style (tokens — contract Willagrams/Style/DesignTokens.swift)

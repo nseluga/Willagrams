@@ -276,6 +276,7 @@ if command -v supabase >/dev/null 2>&1; then
   supabase link --project-ref "$SUPABASE_PROJECT_REF" \
     || warn "link failed — re-run 'supabase link --project-ref $SUPABASE_PROJECT_REF'"
   say ""
+  note "supabase/config.toml already exists — 'supabase init' has been run for you."
   note "No migrations exist yet: /foundation writes supabase/migrations/**."
   note "Once it has, apply them with:  supabase db push"
 fi
