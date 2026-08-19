@@ -39,7 +39,7 @@ public enum MatchCodec {
             throw .malformedPayload(description: String(describing: error))
         }
 
-        if case let .start(version, _, _, _, _) = message, version != WireFormat.current {
+        if case let .start(version, _, _, _, _, _) = message, version != WireFormat.current {
             throw .unsupportedVersion(received: version, expected: WireFormat.current)
         }
 

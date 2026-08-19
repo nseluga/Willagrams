@@ -20,6 +20,8 @@ protected:
   - Willagrams.entitlements
   - Package.swift
   - supabase/migrations/**
+  - Willagrams/Online/BackendContracts.swift
+  - Willagrams/Audio/AudioPlayer.swift
 
 In `DesignTokens.swift` the protected surface is the **key names**, not the
 values: every UI lane compiles against the keys, and nothing downstream depends
@@ -40,15 +42,23 @@ changes what the other two read, with no compile error anywhere.
 
 ## Symlink hazard — `owns:` does not fence this
 
-`Tests/ShellTests/` contains directory symlinks into three other lanes:
+Two test packages contain directory symlinks into other lanes:
 
-    Tests/ShellTests/BoardSrc  → Willagrams/Board
-    Tests/ShellTests/MatchSrc  → Willagrams/Match
-    Tests/ShellTests/StyleSrc  → Willagrams/Style/Terminology.swift
+    Tests/ShellTests/BoardSrc   → Willagrams/Board
+    Tests/ShellTests/MatchSrc   → Willagrams/Match
+    Tests/ShellTests/StyleSrc   → Willagrams/Style/Terminology.swift
+    Tests/OnlineTests/MatchSrc  → Willagrams/Match
+    Tests/OnlineTests/OnlineSrc → Willagrams/Online
 
-`shell` owns `Tests/ShellTests/**`, so an agent editing what looks like its own
-test package can write through a symlink into `board`, `match` or `style`. The
-glob overlap check cannot see this — the tracked object is the symlink.
+`shell` owns `Tests/ShellTests/**` and `online` owns `Tests/OnlineTests/**`, so
+an agent editing what looks like its own test package can write through a
+symlink into `board`, `match`, `style` or `online`. The glob overlap check
+cannot see this — the tracked object is the symlink.
+
+`Tests/OnlineTests/OnlineSrc` points inside `online`'s own lane, but
+`Tests/OnlineTests/MatchSrc` is a live write-through into `match`: the app
+compiles `Match` and `Online` as one module, so the fixture package has to
+compile both directories together to see `MatchTransport` at all.
 
 **Agents: treat a path reached through one of these symlinks as belonging to the
 lane that owns its target, and stop.** The same applies to
@@ -93,8 +103,9 @@ Consequences, decided this round:
 
 ## Landed amendment — wire v2, for the `settings` lane
 
-Landed on `main`. `MatchOptions` exists in the engine, `WireFormat.current == 2`,
-and `Tests/WillagramsRulesTests/Fixtures/wire-v2.json` is the golden fixture.
+Landed on `main`. `MatchOptions` exists in the engine, and `WireFormat.current`
+was 2 at the time. The round-2 v3 amendment superseded both: the golden fixture
+is now `Tests/WillagramsRulesTests/Fixtures/wire-v3.json`.
 The spec is `docs/amendment-wire-v2.md`.
 
   - The variants are **disable swap**, **minimum word length**, and a
@@ -200,7 +211,7 @@ lands in the lane that owns the file.
   area: The match session — message codec, host-authoritative pool, draw/swap/grow broadcast, win claim, disconnect freeze and reconnect. Transport-agnostic: it owns the MatchTransport protocol and never imports a networking framework. Reopens this round for wire v3 (up to 6 players).
   owns: [ Willagrams/Match/**, Tests/MatchTests/** ]
   assignee: nate
-  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v2.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. Blocked on the wire v3 amendment landing.
+  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v3.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. Blocked on the wire v3 amendment landing.
 
 - lane: settings
   area: Match configuration and rule variants — the host's pre-match options screen, local persistence of chosen defaults, and showing both players which rules are in force. Ships the disable-swap, minimum-word-length, and selectable-dictionary controls.

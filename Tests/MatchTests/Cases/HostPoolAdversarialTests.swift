@@ -41,7 +41,7 @@ struct HostPoolAdversarialTests {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         let start = Pool(tiles: tiles(5))
         let startIDs = Set(start.tiles.map(\.id))
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 42, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 42, transport: host)
 
         for _ in 0..<3 {
             try await guest.send(.drawRequest(player: guestID), delivery: .reliable)
@@ -93,7 +93,7 @@ struct HostPoolAdversarialTests {
     func concurrentDrawRequestsSerialise() async throws {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         let start = Pool(tiles: tiles(3))
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 42, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 42, transport: host)
 
         // Straight at the production entry point, both at once — this is what
         // an inbound pump does when two requests are already buffered. Wire
@@ -129,7 +129,7 @@ struct HostPoolAdversarialTests {
     func poolExactlyTheSizeOfTheMatchIsFullyDealt() async throws {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         let start = Pool(tiles: tiles(2))
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 1, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 1, transport: host)
 
         for _ in 0..<2 {
             try await guest.send(.drawRequest(player: hostID), delivery: .reliable)
@@ -151,7 +151,7 @@ struct HostPoolAdversarialTests {
             let (host, guest) = FakeTransport.pair(hostID, guestID)
             let start = Pool(tiles: tiles(count))
             let returned = Tile(letter: "Q")
-            let authority = HostPool(players: (hostID, guestID), pool: start, seed: 8, transport: host)
+            let authority = HostPool(players: [hostID, guestID], pool: start, seed: 8, transport: host)
 
             try await guest.send(.swapRequest(player: guestID, returning: returned), delivery: .reliable)
             #expect(await pump(1, from: host, into: authority)?.count == 1)
@@ -200,7 +200,7 @@ struct HostPoolAdversarialTests {
         for scenario in cases {
             let (host, guest) = FakeTransport.pair(hostID, guestID)
             let start = Pool(tiles: scenario.pool)
-            let authority = HostPool(players: (hostID, guestID), pool: start, seed: 3, transport: host)
+            let authority = HostPool(players: [hostID, guestID], pool: start, seed: 3, transport: host)
 
             try await guest.send(scenario.request, delivery: .reliable)
             let produced = try #require(
@@ -228,7 +228,7 @@ struct HostPoolAdversarialTests {
     func grantsAreIndependentOfConstructorArgumentOrder() async throws {
         let start = Pool(tiles: tiles(8))
 
-        func run(_ players: (PlayerID, PlayerID)) async throws -> (produced: [MatchMessage], received: [MatchMessage]) {
+        func run(_ players: [PlayerID]) async throws -> (produced: [MatchMessage], received: [MatchMessage]) {
             let (host, guest) = FakeTransport.pair(hostID, guestID)
             let authority = HostPool(players: players, pool: start, seed: 4, transport: host)
             try await guest.send(.drawRequest(player: guestID), delivery: .reliable)
@@ -237,8 +237,8 @@ struct HostPoolAdversarialTests {
             return (produced, received)
         }
 
-        let forward = try await run((hostID, guestID))
-        let reversed = try await run((guestID, hostID))
+        let forward = try await run([hostID, guestID])
+        let reversed = try await run([guestID, hostID])
         // Both halves of the round, not just the half the peer sees: argument
         // order must not change which tile either player got.
         #expect(forward.produced == reversed.produced, "argument order changed who got which tile")
@@ -253,10 +253,10 @@ struct HostPoolAdversarialTests {
     func nonRequestMessagesAreIgnored() async throws {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         let start = Pool(tiles: tiles(20))
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 6, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 6, transport: host)
 
         let notRequests: [MatchMessage] = [
-            .start(version: 1, seed: 9, startingHandSize: 21, countdownSeconds: 3, options: .standard),
+            .start(version: 1, seed: 9, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [hostID, guestID].sorted { $0.rawValue < $1.rawValue }),
             .grant(player: guestID, tiles: tiles(1)),
             .swapGrant(player: guestID, tiles: tiles(3), returned: Tile(letter: "Q")),
             .poolExhausted,
@@ -284,7 +284,7 @@ struct HostPoolAdversarialTests {
         // with the same comparator the implementation uses and would agree with
         // a reversed rule just as happily.
         #expect(
-            HostPool.host(of: PlayerID(rawValue: "G:999"), PlayerID(rawValue: "G:100"))
+            HostPool.host(of: [PlayerID(rawValue: "G:999"), PlayerID(rawValue: "G:100")])
                 == PlayerID(rawValue: "G:100")
         )
 
@@ -295,14 +295,14 @@ struct HostPoolAdversarialTests {
             for right in ids {
                 let first = PlayerID(rawValue: left)
                 let second = PlayerID(rawValue: right)
-                let elected = HostPool.host(of: first, second)
+                let elected = HostPool.host(of: [first, second])
 
-                #expect(elected == HostPool.host(of: second, first), "\(left)/\(right): order changed the host")
+                #expect(elected == HostPool.host(of: [second, first]), "\(left)/\(right): order changed the host")
                 #expect(elected == first || elected == second, "\(left)/\(right): elected a third party")
                 #expect(elected.rawValue == min(left, right), "\(left)/\(right): the lower rawValue did not win")
                 // Idempotent: re-running it on a device that already knows the
                 // answer must not move it.
-                #expect(HostPool.host(of: elected, elected) == elected)
+                #expect(HostPool.host(of: [elected, elected]) == elected)
             }
         }
     }

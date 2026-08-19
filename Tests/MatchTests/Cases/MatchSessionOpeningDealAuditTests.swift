@@ -117,7 +117,7 @@ struct MatchSessionOpeningDealAuditTests {
         let pool = Pool.standard(seed: 31)
         let before = pool.count
         let hostPool = HostPool(
-            players: (Self.alice, Self.bob), pool: pool, seed: 31, transport: transport
+            players: [Self.alice, Self.bob], pool: pool, seed: 31, transport: transport
         )
         let handSize = 9
         let produced = await hostPool.deal(handSize: handSize)
@@ -289,23 +289,21 @@ struct MatchSessionOpeningDealAuditTests {
         #expect(guest.state.hand.isEmpty)
     }
 
-    /// A negative hand size off the wire is clamped and cannot arm the deal.
-    @Test("A negative hand size off the wire deals nothing")
-    func negativeHandSizeIsClamped() async throws {
+    /// A negative hand size is not a setting, so it is refused outright rather
+    /// than clamped into a match the sender never asked for.
+    @Test("A negative hand size off the wire is refused")
+    func negativeHandSizeIsRefused() async throws {
         let (wire, endpoint) = FakeTransport.pair(Self.alice, Self.bob)
         let guest = MatchSession(
             transport: endpoint, peerPlayerID: Self.alice, dictionary: AnyWordList(), sleepFor: { _ in }
         )
         try await wire.send(
-            .start(version: WireFormat.current, seed: 2, startingHandSize: -4, countdownSeconds: 0, options: .standard),
+            .start(version: WireFormat.current, seed: 2, startingHandSize: -4, countdownSeconds: 0, options: .standard, roster: [Self.alice, Self.bob]),
             delivery: .reliable
         )
-        try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }
+        try await Self.waitUntil("the guest to refuse the start") { guest.lastNote != nil }
+        #expect(guest.state.status == .countdown(secondsRemaining: 0))
         #expect(guest.startingHandSize == 0)
-
-        try await wire.send(.grant(player: Self.bob, tiles: [Tile(letter: "A")]), delivery: .reliable)
-        try await Self.waitUntil("the grant to be held") { guest.hasPendingDraw }
-        #expect(guest.pendingDrawTiles.count == 1)
         #expect(guest.state.hand.isEmpty)
     }
 }

@@ -293,7 +293,7 @@ struct MatchSessionTerminalGateTests {
         try await Terminal.waitUntil("the session to freeze") { guest.peerPresence != .present }
 
         // Everything the wire can carry, and everything the shell can press.
-        wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard))
+        wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard, roster: [Self.alice, Self.bob]))
         wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
         wire.deliver(.swapGrant(player: Self.bob, tiles: [Tile(letter: "R")], returned: tiles[1]))
         wire.deliver(.poolExhausted)

@@ -108,7 +108,7 @@ struct HostPoolTests {
             let (host, guest) = FakeTransport.pair(hostID, guestID)
             let start = Pool.standard(seed: 7)
             let authority = HostPool(
-                players: (hostID, guestID), pool: start, seed: 99, transport: host
+                players: [hostID, guestID], pool: start, seed: 99, transport: host
             )
 
             let (produced, received) = try await exchange(
@@ -157,7 +157,7 @@ struct HostPoolTests {
             let (host, guest) = FakeTransport.pair(hostID, guestID)
             let start = Pool.standard(seed: 13)
             let authority = HostPool(
-                players: (hostID, guestID), pool: start, seed: 21, transport: host
+                players: [hostID, guestID], pool: start, seed: 21, transport: host
             )
 
             let (produced, received) = try await exchange(
@@ -187,7 +187,7 @@ struct HostPoolTests {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         // One tile, two players: nobody can be dealt from this.
         let start = Pool(tiles: [Tile(letter: "Z")])
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 5, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 5, transport: host)
 
         let (produced, received) = try await exchange(
             .drawRequest(player: guestID), with: authority, host: host, guest: guest
@@ -206,7 +206,7 @@ struct HostPoolTests {
     func swapWithTooFewTilesIsRefused() async throws {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         let start = Pool(tiles: [Tile(letter: "A"), Tile(letter: "B")])
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 5, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 5, transport: host)
 
         let (produced, received) = try await exchange(
             .swapRequest(player: guestID, returning: Tile(letter: "Q")),
@@ -227,7 +227,7 @@ struct HostPoolTests {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         let start = Pool.standard(seed: 11)
         let returned = Tile(letter: "Q")
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 5, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 5, transport: host)
 
         let (produced, received) = try await exchange(
             .swapRequest(player: guestID, returning: returned),
@@ -270,7 +270,7 @@ struct HostPoolTests {
             let (host, guest) = FakeTransport.pair(hostID, guestID)
             let start = Pool.standard(seed: 3)
             let authority = HostPool(
-                players: (hostID, guestID), pool: start, seed: 5, transport: host
+                players: [hostID, guestID], pool: start, seed: 5, transport: host
             )
 
             let (produced, received) = try await exchange(
@@ -293,7 +293,7 @@ struct HostPoolTests {
         // below re-derive their expectation with the same comparator the
         // implementation uses, and would agree with it either way round.
         #expect(
-            HostPool.host(of: PlayerID(rawValue: "G:222"), PlayerID(rawValue: "G:111"))
+            HostPool.host(of: [PlayerID(rawValue: "G:222"), PlayerID(rawValue: "G:111")])
                 == PlayerID(rawValue: "G:111")
         )
 
@@ -308,15 +308,15 @@ struct HostPoolTests {
         for (left, right) in pairs {
             let first = PlayerID(rawValue: left)
             let second = PlayerID(rawValue: right)
-            let elected = HostPool.host(of: first, second)
+            let elected = HostPool.host(of: [first, second])
 
             // Order independence is what lets each device evaluate it locally:
             // neither knows which id the other passed first.
-            #expect(elected == HostPool.host(of: second, first), "\(left)/\(right) elected two hosts")
+            #expect(elected == HostPool.host(of: [second, first]), "\(left)/\(right) elected two hosts")
             #expect(elected.rawValue == min(left, right), "the lower rawValue did not win")
         }
 
         let only = PlayerID(rawValue: "same")
-        #expect(HostPool.host(of: only, only) == only)
+        #expect(HostPool.host(of: [only, only]) == only)
     }
 }

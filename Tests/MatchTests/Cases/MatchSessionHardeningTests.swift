@@ -165,7 +165,7 @@ struct MatchSessionHardeningTests {
     static func playingGuest() async throws -> (guest: MatchSession, wire: ScriptedTransport) {
         let wire = ScriptedTransport(localPlayerID: bob)
         let guest = MatchSession(transport: wire, peerPlayerID: alice, dictionary: EveryWordIsReal())
-        wire.deliver(.start(version: WireFormat.current, seed: 1, startingHandSize: 0, countdownSeconds: 0, options: .standard))
+        wire.deliver(.start(version: WireFormat.current, seed: 1, startingHandSize: 0, countdownSeconds: 0, options: .standard, roster: [Self.alice, Self.bob]))
         try await waitUntil("the guest to be playing") { guest.state.status == .playing }
         return (guest, wire)
     }
@@ -185,7 +185,7 @@ struct MatchSessionHardeningTests {
         // --- The host half. It mints these itself; one arriving is a forgery.
         let (host, wire) = Self.playingHost()
         #expect(host.state.status == .playing)
-        #expect(HostPool.host(of: Self.alice, Self.bob) == Self.alice)
+        #expect(HostPool.host(of: [Self.alice, Self.bob]) == Self.alice)
 
         host.draw()
         try await Self.waitUntil("the host's own tile") { host.state.hand.count == 1 }
@@ -415,14 +415,14 @@ struct MatchSessionHardeningTests {
         )
 
         wire.deliver(
-            .start(version: WireFormat.current, seed: 2, startingHandSize: .max, countdownSeconds: 9_999_999, options: .standard)
+            .start(version: WireFormat.current, seed: 2, startingHandSize: 21, countdownSeconds: 9_999_999, options: .standard, roster: [Self.alice, Self.bob])
         )
         try await Self.waitUntil("the countdown to open at the ceiling") {
             guest.state.status == .countdown(secondsRemaining: 10)
         }
-        // The other value off the same message, clamped to half the pool — the
-        // largest hand a single `handSize * 2` deal can actually serve.
-        #expect(guest.startingHandSize == LetterDistribution.totalTiles / 2)
+        // The hand size off the same message is inside its bounds and survives
+        // untouched: only the countdown was absurd.
+        #expect(guest.startingHandSize == 21)
 
         // Ten ticks and no more: the session reaches play on its own.
         for remaining in stride(from: 9, through: 1, by: -1) {
@@ -438,6 +438,35 @@ struct MatchSessionHardeningTests {
 
         #expect(clock.ticksRequested == 10)
         #expect(clock.parkedCount == 0)
+    }
+
+    /// The countdown is clamped because a lobby can honestly disagree about how
+    /// long to wait. A hand size the pool cannot deal is not a disagreement —
+    /// it is a message no honest host sends — so it is refused outright, and a
+    /// refused start leaves the session where it stood rather than wedged.
+    @Test("A start carrying a hand size the pool cannot deal is refused, not clamped")
+    func anAbsurdHandSizeIsRefused() async throws {
+        let wire = ScriptedTransport(localPlayerID: Self.bob)
+        let guest = MatchSession(
+            transport: wire,
+            peerPlayerID: Self.alice,
+            dictionary: EveryWordIsReal(),
+            sleepFor: { _ in }
+        )
+
+        wire.deliver(
+            .start(version: WireFormat.current, seed: 2, startingHandSize: .max, countdownSeconds: 3, options: .standard, roster: [Self.alice, Self.bob])
+        )
+        try await Self.waitUntil("the guest to refuse the start") { guest.lastNote != nil }
+        #expect(guest.state.status == .countdown(secondsRemaining: 0))
+        #expect(guest.startingHandSize == 0)
+
+        // And the session is not wedged: a start it can play still lands.
+        wire.deliver(
+            .start(version: WireFormat.current, seed: 2, startingHandSize: 21, countdownSeconds: 0, options: .standard, roster: [Self.alice, Self.bob])
+        )
+        try await Self.waitUntil("the good start to land") { guest.state.status == .playing }
+        #expect(guest.startingHandSize == 21)
     }
 
     // MARK: - Important 6: nothing moves the pool before play

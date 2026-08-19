@@ -99,7 +99,7 @@ struct MatchSessionTests {
         }
 
         // Election is by id, not by who opened the match.
-        let hostID = HostPool.host(of: alice, bob)
+        let hostID = HostPool.host(of: [alice, bob])
         return hostID == alice ? (one, two) : (two, one)
     }
 
@@ -243,7 +243,7 @@ struct MatchSessionTests {
         )
 
         try await first.send(
-            .start(version: WireFormat.current + 1, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard),
+            .start(version: WireFormat.current + 1, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard, roster: [PlayerID(rawValue: "alice"), PlayerID(rawValue: "bob")]),
             delivery: .reliable
         )
         try await Self.waitUntil("the session to note the bad version") { guest.lastNote != nil }
@@ -251,7 +251,7 @@ struct MatchSessionTests {
 
         // A good start afterwards is still accepted.
         try await first.send(
-            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard),
+            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard, roster: [PlayerID(rawValue: "alice"), PlayerID(rawValue: "bob")]),
             delivery: .reliable
         )
         try await Self.waitUntil("the good start to land") { guest.state.status == .playing }
@@ -266,7 +266,7 @@ struct MatchSessionTests {
             dictionary: AnyWordList()
         )
         try await first.send(
-            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard),
+            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard, roster: [PlayerID(rawValue: "alice"), PlayerID(rawValue: "bob")]),
             delivery: .reliable
         )
         try await Self.waitUntil("the guest to start playing") { guest.state.status == .playing }

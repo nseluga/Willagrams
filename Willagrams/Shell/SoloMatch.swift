@@ -37,7 +37,7 @@ import WillagramsRules
 ///
 /// 1. **The local player is host by construction.** `MatchSession.startMatch`
 ///    silently no-ops for a non-host, so the two ids are handed to the very
-///    election the session will run — ``HostPool/host(of:_:)`` — and whichever
+///    election the session will run — ``HostPool/host(of:)`` — and whichever
 ///    it names becomes the local end.
 /// 2. **The far end is silent.** It consumes its inbound stream and does
 ///    nothing with it: no words, no draws, no schedule, no difficulty. It exists
@@ -57,7 +57,7 @@ public final class SoloMatch {
         PlayerID(rawValue: "solo-local"),
         PlayerID(rawValue: "solo-remote")
     )
-    public static let localPlayerID = HostPool.host(of: candidates.0, candidates.1)
+    public static let localPlayerID = HostPool.host(of: [candidates.0, candidates.1])
     public static let peerPlayerID =
         localPlayerID == candidates.0 ? candidates.1 : candidates.0
 

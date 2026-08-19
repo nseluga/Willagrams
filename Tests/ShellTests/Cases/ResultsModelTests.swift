@@ -31,7 +31,7 @@ struct ResultsModelTests {
     /// the only way to get both outcomes out of the match lane rather than out
     /// of a literal.
     static func playingPair() async throws -> (host: MatchSession, guest: MatchSession) {
-        #expect(HostPool.host(of: hostID, guestID) == hostID)
+        #expect(HostPool.host(of: [hostID, guestID]) == hostID)
         let (hostWire, guestWire) = FakeTransport.pair(hostID, guestID)
         let host = MatchSession(
             transport: hostWire, peerPlayerID: guestID,

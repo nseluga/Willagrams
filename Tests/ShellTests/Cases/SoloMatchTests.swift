@@ -72,7 +72,7 @@ struct SoloMatchTests {
 
         // The election the engine itself runs, not the order the ids were named.
         #expect(
-            HostPool.host(of: SoloMatch.localPlayerID, SoloMatch.peerPlayerID)
+            HostPool.host(of: [SoloMatch.localPlayerID, SoloMatch.peerPlayerID])
                 == SoloMatch.localPlayerID
         )
 

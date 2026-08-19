@@ -110,7 +110,7 @@ struct MatchSessionOpeningDealTests {
         )
 
         try await wire.send(
-            .start(version: WireFormat.current, seed: 4, startingHandSize: 2, countdownSeconds: 3, options: .standard),
+            .start(version: WireFormat.current, seed: 4, startingHandSize: 2, countdownSeconds: 3, options: .standard, roster: [Self.alice, Self.bob]),
             delivery: .reliable
         )
         try await Self.waitUntil("the guest to be counting down") {
@@ -149,7 +149,7 @@ struct MatchSessionOpeningDealTests {
         let (transport, _) = FakeTransport.pair(Self.alice, Self.bob)
         let pool = Pool.standard(seed: 5)
         let hostPool = HostPool(
-            players: (Self.alice, Self.bob),
+            players: [Self.alice, Self.bob],
             pool: pool,
             seed: 5,
             transport: transport
@@ -172,7 +172,7 @@ struct MatchSessionOpeningDealTests {
     func aShortPoolDealsNothing() async throws {
         let (transport, _) = FakeTransport.pair(Self.alice, Self.bob)
         let hostPool = HostPool(
-            players: (Self.alice, Self.bob),
+            players: [Self.alice, Self.bob],
             pool: Pool(tiles: [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]),
             seed: 1,
             transport: transport

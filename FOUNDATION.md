@@ -6,8 +6,10 @@ amendment, it does not edit around it.
 
 Decisions this file encodes:
 
-- **SwiftUI, iOS only, no backend.** GameKit `GKMatch` carries friend-to-friend
-  play; there is no server, no auth, no database.
+- **SwiftUI, iOS only.** Round 1 assumed GameKit `GKMatch` with no server.
+  **Round 2 supersedes that:** no file ever imported GameKit, and the backend is
+  Supabase — hosted Postgres, Sign in with Apple, and realtime channels carrying
+  `MatchMessage`. See the round-2 amendments at the foot of this file.
 - **Tiles live on an integer lattice** (`Coord`, signed, unbounded). The board
   view drags freely and snaps on release, so it feels like nudging tiles on a
   table; the lattice underneath is what makes word extraction exact.
@@ -157,4 +159,154 @@ shape in the item above; that item stays as written because it is history.
         lands mid-play as a rejected word rather than as a setup error
   difficulty: medium — the refusal path and the credit accounting are both easy
         to get subtly wrong
+  status: done
+
+---
+
+## Round 2 amendments — the shippable release
+
+Round 1 froze a two-player, no-backend game. Round 2's `MAP.md` adds `online`,
+`account`, `friends`, `audio` and `launch`, and reopens `match` for up to six
+players. These six items are the contracts those lanes build against. They land
+on `integration` — this repo keeps the map layer on the trunk that carries the
+merged lanes, not on the round-1 `main`.
+
+Decisions this round encodes, each stated here because a lane would otherwise
+discover it:
+
+- **Six players, not two, and the wire carries the roster.** The roster travels
+  in `start`, sorted ascending by `PlayerID.rawValue`, and the host is
+  `roster[0]` — computed identically on every device, so there is still no
+  negotiation message. `MatchTransport` therefore needs **no signature change**:
+  `grant`/`swapGrant` already name their player and every device filters on it,
+  so a broadcast fans out correctly to N peers exactly as it did to one.
+- **A hand is not secret.** Broadcast grants have always let the peer see the
+  tiles you drew; with six players that is five observers rather than one. Kept
+  as-is for v1 — targeted delivery would need a transport change and the tiles
+  come from a shared pool anyway.
+- **A departed peer no longer ends the match.** Round 1 froze the board whenever
+  the one peer was absent. With six, the board freezes only while a peer is
+  `.reconnecting`, a `.gone` peer is dropped from the roster, and the match ends
+  when fewer than two players remain present.
+- **Seeds are signed.** Postgres `bigint` is signed 64-bit, so the host draws
+  seeds in `0...Int64.max` rather than the full `UInt64` range. Nothing depends
+  on the high bit; this avoids a `numeric` column and a lossy round-trip.
+- **The backend gets the same seam the transport got.** `BackendClient` is a
+  protocol with a `#if DEBUG` fake, so `account` and `friends` build and test
+  with no Supabase project, exactly as `match` built against `FakeTransport`.
+  Those two lanes stop being sequenced behind `online`'s implementation.
+- **Every profile is readable by any signed-in player.** Friend codes are looked
+  up by strangers by design, and the stats are the "cool stats" the profile page
+  exists to show. Deliberate, not an oversight.
+
+- task: Pin the audio playback seam so shell can call sound before the audio lane lands
+  done when:
+    - `Willagrams/Audio/AudioPlayer.swift` declares `public enum SoundEffect: String, Sendable, CaseIterable` with exactly `tilePlace`, `tileRecall`, `draw`, `swap`, `invalid`, `countdownTick`, `win`, `loss`, `menuTap`
+    - the same file declares `public enum HapticStrength: Sendable, Equatable { case light, medium, heavy }` and `public protocol AudioPlayer: Sendable { var isMuted: Bool { get }; func play(_ effect: SoundEffect); func impact(_ strength: HapticStrength); func setMuted(_ muted: Bool) }`
+    - `play` and `impact` are non-throwing, non-async and return `Void` — a caller on the main actor must never await a sound, and a missing asset is never an error the UI handles
+    - `public struct SilentAudioPlayer: AudioPlayer` ships in Release, not behind `#if DEBUG`: it is the value every screen holds until the `audio` lane replaces it, and `isMuted` reports the value last set
+    - `Tests/AudioTests/` exists as its own SwiftPM package and a fixture asserts `SoundEffect.allCases.count == 9`, that every `rawValue` is unique, and that `SilentAudioPlayer` round-trips `setMuted(true)` into `isMuted`
+  guardrails:
+    - `Willagrams/Audio/AudioPlayer.swift` is `protected:` after this item — `audio` adds concrete players beside it, it does not edit it
+    - no `AVFoundation` or `CoreHaptics` import in this file; the seam stays platform-free so the engine-speed test package can compile it
+  risk: a seam that returns `async` or `throws` forces every call site into a
+        Task or a do/catch for a sound effect, and the whole app inherits it —
+        loud only after every lane has already written its call sites
+  difficulty: low — one enum, one protocol, one no-op struct
+  status: done
+  parallel-group: r2a
+
+- task: Design the Supabase schema as migrations, with RLS on every table
+  done when:
+    - `supabase/migrations/0001_init.sql` creates exactly four tables in `public`: `profiles`, `friendships`, `matches`, `match_players`
+    - `profiles` — `id uuid primary key references auth.users(id) on delete cascade`, `display_name text not null check (char_length(display_name) between 1 and 24)`, `friend_code text not null unique check (friend_code ~ '^[A-Z0-9]{8}$')`, `created_at timestamptz not null default now()`, `matches_played integer not null default 0`, `matches_won integer not null default 0`, `tiles_placed integer not null default 0`, `fastest_win_seconds integer null`, plus `check (matches_won <= matches_played)` and `check (fastest_win_seconds is null or fastest_win_seconds > 0)`
+    - `friendships` — `requester_id uuid not null references public.profiles(id) on delete cascade`, `addressee_id uuid not null references public.profiles(id) on delete cascade`, `status text not null check (status in ('pending','accepted','blocked'))`, `created_at timestamptz not null default now()`, `responded_at timestamptz null`, `primary key (requester_id, addressee_id)`, `check (requester_id <> addressee_id)`, and `check ((status = 'pending') = (responded_at is null))`
+    - a unique index `friendships_pair_idx on public.friendships (least(requester_id, addressee_id), greatest(requester_id, addressee_id))` makes at most one row exist per unordered pair, so A→B and B→A cannot both be stored
+    - `matches` — `id uuid primary key default gen_random_uuid()`, `host_id uuid not null references public.profiles(id) on delete cascade`, `invite_code text not null unique check (invite_code ~ '^[A-Z0-9]{6}$')`, `wire_version integer not null`, `seed bigint not null check (seed >= 0)`, `options jsonb not null`, `status text not null check (status in ('lobby','playing','finished','abandoned'))`, `created_at timestamptz not null default now()`, `started_at timestamptz null`, `finished_at timestamptz null`, `winner_id uuid null references public.profiles(id) on delete set null`, plus `check ((status in ('playing','finished')) = (started_at is not null))` and `check (winner_id is null or status = 'finished')`
+    - `match_players` — `match_id uuid not null references public.matches(id) on delete cascade`, `player_id uuid not null references public.profiles(id) on delete cascade`, `joined_at timestamptz not null default now()`, `primary key (match_id, player_id)`
+    - `alter table ... enable row level security` on all four, and every table has at least one policy: `profiles` selectable by any authenticated role, insertable and updatable only where `auth.uid() = id`; `friendships` selectable, insertable and updatable only where `auth.uid() in (requester_id, addressee_id)`; `matches` selectable by its host or any row in `match_players`, insertable only where `auth.uid() = host_id`; `match_players` selectable by any member of the same match, insertable only where `auth.uid() = player_id`
+    - `supabase db lint` reports no errors, and `docs/schema.md` records each table's purpose, the invariants above in prose, and the two invariants **not** enforced in SQL — that a `playing` match holds 2 to 6 `match_players` rows, and that `winner_id` names one of them
+  guardrails:
+    - `supabase/migrations/**` is already `protected:` — `online` writes later migrations only through a fresh `/foundation` amendment
+    - no seed data, no service-role key, and no `security definer` function in this migration
+  risk: a table without RLS is world-readable and world-writable to anyone
+        holding the anon key, which ships inside the app binary — silent, and
+        the failure mode is a stranger editing another player's stats
+  difficulty: medium — the RLS policies are the real work; the columns are
+        mechanical
+  status: done
+  parallel-group: r2a
+
+- task: Mirror the schema as Swift row types behind a BackendClient seam with a fake
+  done when:
+    - `Willagrams/Online/BackendContracts.swift` declares, public and `Sendable`: `struct Profile: Codable, Equatable, Identifiable` (`id: UUID`, `displayName: String`, `friendCode: String`, `createdAt: Date`, `matchesPlayed: Int`, `matchesWon: Int`, `tilesPlaced: Int`, `fastestWinSeconds: Int?`); `enum FriendshipStatus: String, Codable { case pending, accepted, blocked }`; `struct Friendship: Codable, Equatable` (`requesterID: UUID`, `addresseeID: UUID`, `status: FriendshipStatus`, `createdAt: Date`, `respondedAt: Date?`); `enum MatchRecordStatus: String, Codable { case lobby, playing, finished, abandoned }`; `struct MatchRecord: Codable, Equatable, Identifiable` (`id: UUID`, `hostID: UUID`, `inviteCode: String`, `wireVersion: Int`, `seed: Int64`, `options: MatchOptions`, `status: MatchRecordStatus`, `createdAt: Date`, `startedAt: Date?`, `finishedAt: Date?`, `winnerID: UUID?`); `struct MatchPlayerRow: Codable, Equatable` (`matchID: UUID`, `playerID: UUID`, `joinedAt: Date`)
+    - every one of those types declares explicit `CodingKeys` mapping each property to its snake_case column name, so a column rename fails at test time rather than decoding to nil
+    - `public enum BackendError: Error, Sendable, Equatable` declares `notAuthenticated`, `notFound`, `alreadyExists`, `blocked`, `matchFull`, `permissionDenied`, `offline`
+    - `public protocol BackendClient: Sendable` declares `var currentUserID: UUID? { get async }`, `func signInWithApple(idToken: String, nonce: String) async throws -> Profile`, `func signOut() async throws`, `func profile(id: UUID) async throws -> Profile`, `func profile(friendCode: String) async throws -> Profile?`, `func updateDisplayName(_ name: String) async throws -> Profile`, `func friendships() async throws -> [Friendship]`, `func requestFriend(addresseeID: UUID) async throws -> Friendship`, `func respondToFriendRequest(requesterID: UUID, accept: Bool) async throws -> Friendship`, `func block(_ playerID: UUID) async throws -> Friendship`, `func createMatch(options: MatchOptions, seed: Int64) async throws -> MatchRecord`, `func joinMatch(inviteCode: String) async throws -> MatchRecord`, `func players(inMatch matchID: UUID) async throws -> [MatchPlayerRow]`, `func transport(for match: MatchRecord, as player: PlayerID) async throws -> any MatchTransport`
+    - `Willagrams/Online/FakeBackend.swift`, behind `#if DEBUG`, is an in-memory `actor` conforming to the whole protocol: it signs a fixed user in, stores profiles and friendships in dictionaries, enforces `matchFull` above six players and `alreadyExists` on a duplicate friend request, and returns a `FakeTransport` from `transport(for:as:)`
+    - `Tests/OnlineTests/` exists as its own SwiftPM package, and fixtures assert that a JSON object using the real snake_case column names decodes into each of the five row types with every field populated, that `fastestWinSeconds`, `respondedAt`, `startedAt`, `finishedAt` and `winnerID` decode as nil when the column is null, and that a full `FakeBackend` run — sign in, request a friend, accept it, create a match, join it — completes with no error
+  guardrails:
+    - `Willagrams/Online/BackendContracts.swift` is `protected:` after this item; `FakeBackend.swift` is not, so `online` may deepen the fake
+    - neither file imports `Supabase` — the seam stays free of the SDK so `account`, `friends` and their test packages compile without it
+    - `PlayerID` still carries the backend user id as a string; `MatchRecord` and `Profile` use `UUID` because that is the column type, and the conversion happens at the seam
+  risk: row types that disagree with the columns decode to nil rather than
+        throwing, so a wrong `CodingKeys` shows up as an empty profile page
+        rather than as an error anyone can trace
+  difficulty: medium — the types are mechanical, the fake is the work
+  status: done
+
+- task: Bump the wire to v3 and carry the roster in start
+  done when:
+    - `Sources/WillagramsRules/MatchMessage.swift` declares `public enum MatchLimits { public static let players = 2...6 }` and `WireFormat.current == 3`
+    - `MatchMessage.start` carries `roster: [PlayerID]` as its last label, alongside the existing `version`, `seed`, `startingHandSize`, `countdownSeconds` and `options`; no other case changes shape
+    - `MatchMessage.validatedStart` (new) returns nil unless the roster is sorted ascending by `rawValue`, holds no duplicate, has `MatchLimits.players.contains(roster.count)`, and satisfies `startingHandSize <= MatchLimits.poolSize / roster.count` (**written as a division, not the multiplication this line first pinned: `startingHandSize * roster.count` traps on overflow for a hand size near `Int.max`, which is exactly what a modified peer sends**) — every field arrives from a peer, so this is the same clamp-at-the-boundary rule `MatchOptions.validated` follows
+    - `Tests/WillagramsRulesTests/Fixtures/wire-v3.json` replaces the v2 fixture and decodes into every case, asserted against hand-built literals rather than re-encoded through this build
+    - `PlayerID` in `Contracts.swift` no longer documents itself as "keyed by `GKPlayer.gamePlayerID`" — it is the backend user id as a string. Doc-comment only; the type does not change
+    - the `MatchMessageTests` size assertion still holds and its comment names the 16KB ceiling as a transport budget rather than as GameKit's limit
+    - a fixture asserts `validatedStart` rejects each of: an unsorted roster, a roster holding a duplicate, a roster of 1, a roster of 7, and `startingHandSize: 21` with a roster of 7
+  guardrails:
+    - `Sources/WillagramsRules/**` is `protected:`; this item is the amendment that opens it
+    - the roster is the only addition — do not add a `players.count` field beside it, because two sources for one number is exactly what desyncs
+  risk: a roster that is unsorted or holds a duplicate makes two devices
+        disagree about who the host is, so both run a pool or neither does —
+        silent, and it surfaces as a match that never deals
+  difficulty: low — one label, one validator, one fixture regeneration
+  status: done
+
+- task: Generalize HostPool from a player pair to a roster
+  done when:
+    - `HostPool.init` takes `players: [PlayerID]` instead of a 2-tuple, and preconditions that the count is in `MatchLimits.players` and that `Set(players).count == players.count`
+    - `HostPool.host(of players: [PlayerID]) -> PlayerID` replaces `host(of:_:)` and returns the lowest `rawValue`, so it agrees with `roster[0]` on every device; the two-argument form is removed rather than kept as an overload
+    - `deal(handSize:)` emits one `grant` per player in roster order and deals nothing at all when `handSize * players.count` exceeds the pool, so a six-player match cannot deal a pool it does not have. **Landed as a guard, not a `precondition`:** the over-capacity case now arrives off the wire and is refused by `MatchMessage.validatedStart` before it reaches the pool, and a trap here would turn a modified peer's message into a crash
+    - `handle(_:)` still rejects a request from a `PlayerID` outside the roster with `.unknownPlayer`, now checked against the array rather than against two stored ids
+    - the existing MatchTests pass unchanged in behaviour for a two-player roster, and a new fixture deals a six-player match and asserts every player receives a distinct tile set and the pool falls by exactly `handSize * 6`
+  guardrails:
+    - `Willagrams/Match/MatchTransport.swift` is `protected:` and does not change in this item — the roster reaches the session through `start`, not through the transport
+  risk: an off-by-one in the capacity precondition deals a partial hand to the
+        last player and the match starts unfair — silent, because every
+        individual grant is well-formed
+  difficulty: low — the players array is already stored sorted internally
+  status: done
+
+- task: Carry a roster and per-player presence through MatchSession
+  done when:
+    - `MatchSession.peerPlayerID: PlayerID` is replaced by `public let roster: [PlayerID]` and `public var peerPlayerIDs: [PlayerID] { roster.filter { $0 != localPlayerID } }`; `init` takes `roster:` in place of `peerPlayerID:` and preconditions that it is sorted, unique, in `MatchLimits.players`, and contains `localPlayerID`. **`peerPlayerID:` survives as a convenience `init`** that sorts `[localPlayerID, peerPlayerID]` into a roster — it is a two-player spelling of the same designated init, and keeping it left 41 call sites unchanged
+    - the per-peer presence store is `public private(set) var peerPresences: [PlayerID: PeerPresence]`, keyed by every peer, and `public func presence(of player: PlayerID) -> PeerPresence` reads it. **Named `peerPresences`, not `peerPresence`:** the old `peerPresence` name is kept as a computed view returning the worst-placed peer's presence, which left ~70 read sites unchanged
+    - the net count of **observed** stored properties on `MatchSession` does not rise: `peerPlayerID` → `roster` and the scalar presence → the dictionary are one-for-one replacements, and any genuinely new storage is `@ObservationIgnored`. `swift test --package-path Tests/MatchTests` is the gate, per the toolchain note in `MAP.md`
+    - the board freezes only while some peer is `.reconnecting`; a peer that goes `.gone` is dropped from the active set and play continues, which is the round-2 behaviour change
+    - `isMatchOver` is true when the match is finished or fewer than two players are still present, rather than when the one peer is gone
+    - `resign()` no longer awards the win to a single named peer: with more than two players it removes the resigner and the match continues, and it finishes only when one player remains
+    - every `guard player == peerPlayerID else { return }` becomes a roster-membership check
+    - `startMatch` sends the sorted roster in `start`, and `applyStart` refuses a start whose `validatedStart` is nil or whose roster does not contain `localPlayerID`
+    - all 114 existing MatchTests pass, and new fixtures cover a four-player match where one peer reconnects, one goes gone, and the remaining two play to a win
+  guardrails:
+    - `Willagrams/Match/MatchTransport.swift` does not change — it is `protected:` and the roster arrives in `start`
+    - do not touch `Willagrams/Shell/**`; `shell` reopens for the routes and the board-commit bridge and will consume whatever this leaves
+  risk: a presence dictionary missing a key reads as absent and freezes a match
+        that should be running, or the reverse; and the toolchain limit means a
+        careless extra observed property aborts the reconnect tests with
+        `swift_task_dealloc` rather than failing an assertion
+  difficulty: open — the largest item this round. 1,192 lines with roughly
+        twenty singular-peer assumptions, a behaviour change in the freeze rule,
+        and a toolchain constraint on stored properties
   status: done

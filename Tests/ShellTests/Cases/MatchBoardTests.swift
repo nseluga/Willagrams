@@ -71,7 +71,7 @@ struct MatchBoardTests {
     ) async throws -> (host: FakeTransport, session: MatchSession) {
         let hostID = PlayerID(rawValue: "aaa")
         let guestID = PlayerID(rawValue: "zzz")
-        #expect(HostPool.host(of: hostID, guestID) == hostID)
+        #expect(HostPool.host(of: [hostID, guestID]) == hostID)
         let (hostWire, guestWire) = FakeTransport.pair(hostID, guestID)
         let session = MatchSession(
             transport: guestWire,
@@ -86,7 +86,7 @@ struct MatchBoardTests {
                 startingHandSize: handSize,
                 countdownSeconds: 0,
                 options: .standard
-            ),
+            , roster: [hostID, guestID].sorted { $0.rawValue < $1.rawValue }),
             delivery: .reliable
         )
         try await SoloMatchTests.waitUntil("play to begin") { session.state.status == .playing }

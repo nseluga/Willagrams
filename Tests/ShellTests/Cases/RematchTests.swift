@@ -65,12 +65,9 @@ struct RematchTests {
         // Same two ids, in the same order, and the local end is still the one
         // the engine's own election names host.
         #expect(second.session.localPlayerID == firstSession.localPlayerID)
-        #expect(second.session.peerPlayerID == firstSession.peerPlayerID)
+        #expect(second.session.roster == firstSession.roster)
         #expect(second.session.localPlayerID == SoloMatch.localPlayerID)
-        #expect(
-            HostPool.host(of: second.session.localPlayerID, second.session.peerPlayerID)
-                == second.session.localPlayerID
-        )
+        #expect(HostPool.host(of: second.session.roster) == second.session.localPlayerID)
         // A non-host start is refused with a note; the new session has none, so
         // it really did open the match itself.
         #expect(second.session.lastNote == nil)

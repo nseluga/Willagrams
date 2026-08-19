@@ -102,7 +102,7 @@ struct MatchSessionCriteriaTests {
         }
 
         // Election is by id, not by who opened the match.
-        return HostPool.host(of: alice, bob) == alice ? (one, two) : (two, one)
+        return HostPool.host(of: [alice, bob]) == alice ? (one, two) : (two, one)
     }
 
     /// A guest holding one tile in hand, one on the board, and owing a tile
@@ -163,7 +163,7 @@ struct MatchSessionCriteriaTests {
 
         let began = ContinuousClock.now
         try await opener.send(
-            .start(version: WireFormat.current, seed: 4, startingHandSize: 21, countdownSeconds: 3, options: .standard),
+            .start(version: WireFormat.current, seed: 4, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [alice, bob]),
             delivery: .reliable
         )
 

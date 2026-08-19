@@ -128,8 +128,8 @@ struct MatchSessionOpeningDealReconnectTests {
 
     /// The clamp the reviewer moved to half the pool: above it, `HostPool.deal`
     /// needs more tiles than the pool holds and silently deals nothing.
-    @Test("A hand size above half the pool is clamped to a size that can actually be dealt")
-    func aHandSizeAboveHalfThePoolIsClamped() async throws {
+    @Test("A hand size the pool cannot deal is refused, not started")
+    func aHandSizeAboveHalfThePoolIsRefused() async throws {
         let (wire, endpoint) = FakeTransport.pair(Self.alice, Self.bob)
         let guest = MatchSession(
             transport: endpoint, peerPlayerID: Self.alice, dictionary: AnyWordList(), sleepFor: { _ in }
@@ -141,21 +141,27 @@ struct MatchSessionOpeningDealReconnectTests {
                 startingHandSize: LetterDistribution.totalTiles,
                 countdownSeconds: 0,
                 options: .standard
-            ),
+            , roster: [Self.alice, Self.bob]),
             delivery: .reliable
         )
-        try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }
-        #expect(guest.startingHandSize == LetterDistribution.totalTiles / 2)
+        // Refused at the wire, not clamped into something the sender never
+        // asked for: a hand this size is a modified peer, and the host that
+        // opened this match validated the same message before it sent it.
+        try await Self.waitUntil("the guest to refuse the start") { guest.lastNote != nil }
+        #expect(guest.state.status == .countdown(secondsRemaining: 0))
+        #expect(guest.startingHandSize == 0)
 
-        // And the clamped size is one a real pool can serve both players.
+        // Half the pool is the largest hand that is *not* refused, and a real
+        // pool serves it to both players.
+        let servable = LetterDistribution.totalTiles / 2
         let (transport, _) = FakeTransport.pair(Self.alice, Self.bob)
         let hostPool = HostPool(
-            players: (Self.alice, Self.bob), pool: Pool.standard(seed: 3), seed: 3, transport: transport
+            players: [Self.alice, Self.bob], pool: Pool.standard(seed: 3), seed: 3, transport: transport
         )
-        let produced = await hostPool.deal(handSize: guest.startingHandSize)
+        let produced = await hostPool.deal(handSize: servable)
         var perPlayer: [PlayerID: [Tile]] = [:]
         for case let .grant(player, tiles) in produced { perPlayer[player, default: []] += tiles }
-        #expect(perPlayer[Self.alice]?.count == guest.startingHandSize)
-        #expect(perPlayer[Self.bob]?.count == guest.startingHandSize)
+        #expect(perPlayer[Self.alice]?.count == servable)
+        #expect(perPlayer[Self.bob]?.count == servable)
     }
 }

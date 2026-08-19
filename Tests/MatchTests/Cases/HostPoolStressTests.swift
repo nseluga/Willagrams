@@ -58,7 +58,7 @@ struct HostPoolStressTests {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
         let start = Pool(tiles: tiles(9))
         let startIDs = Set(start.tiles.map(\.id))
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 42, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 42, transport: host)
 
         let results = await withTaskGroup(of: [MatchMessage].self) { group in
             for _ in 0..<20 {
@@ -116,7 +116,7 @@ struct HostPoolStressTests {
         // twice" unanswerable.
         let returning = tiles(10)
         let returningIDs = Set(returning.map(\.id))
-        let authority = HostPool(players: (hostID, guestID), pool: start, seed: 42, transport: host)
+        let authority = HostPool(players: [hostID, guestID], pool: start, seed: 42, transport: host)
 
         let results = await withTaskGroup(of: [MatchMessage].self) { group in
             for _ in 0..<10 {
@@ -185,7 +185,7 @@ struct HostPoolStressTests {
             let peerID = poolHolderSortsFirst ? guestID : PlayerID(rawValue: "alpha-peer")
             let (local, peer) = FakeTransport.pair(localID, peerID)
             let start = Pool(tiles: tiles(6))
-            let authority = HostPool(players: (localID, peerID), pool: start, seed: 17, transport: local)
+            let authority = HostPool(players: [localID, peerID], pool: start, seed: 17, transport: local)
 
             try await peer.send(.drawRequest(player: peerID), delivery: .reliable)
             let produced = try #require(
