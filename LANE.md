@@ -182,7 +182,7 @@ and `BoardView`'s init are all spent.
     - A session with no `hostPool` publishes `nil` and `poolValue` stays `MatchHUDModel.unknownValue`
     - `swift test --package-path Tests/MatchTests` passes at 124 or more
     - Existing passing tests remain passing
-  status: not started
+  status: done
   parallel-group: a
 
 - task: Add the how-to-play screen and the menu route to it. `MenuView` currently
@@ -200,7 +200,7 @@ and `BoardView`'s init are all spent.
     - The rules copy names Pool, Draw, Swap and the win call via `Terminology`, and contains none of Bunch, Split, Peel, Dump, Bananas or Rotten
     - `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build` succeeds
     - Existing passing tests remain passing
-  status: not started
+  status: done
   parallel-group: a
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
