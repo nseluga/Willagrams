@@ -5,8 +5,8 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** round 2 starting — 6 items above the stop marker, none started.
-- **Next:** item 1 — the shipping in-memory transport and the BotTests package.
+- **Status:** round 2 in progress — 1 of 6 items done.
+- **Next:** item 2 — the bot\'s end of the wire.
 - **Blockers:** none.
 - **Last updated:** 2026-08-19
 
@@ -14,7 +14,7 @@ LANE.md wins for scope.
 
 | Item | Status |
 |------|--------|
-| Build the shipping in-memory transport and its test package | not started |
+| Build the shipping in-memory transport and its test package | done — The bot now has a real in-memory connection to the player that works in a shipping build, not just in debug. |
 | Build the bot's end of the wire — connected, dealt to, playing nothing | not started |
 | Give the bot a difficulty model and a brain that plays the simplest way | not started |
 | Add the two expensive rungs, and a stall floor | not started |

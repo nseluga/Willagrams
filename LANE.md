@@ -99,7 +99,7 @@ frozen.
     - `leave()` on either endpoint finishes both endpoints' `inboundMessages` and `peerConnectionStates` after buffered elements drain, so a `for await` loop over either ends rather than hanging; a subsequent `send` throws `MatchTransportError.peerDisconnected`
     - The surviving endpoint observes `.disconnected` naming the endpoint that left
     - `swift test --package-path Tests/BotTests` runs and passes
-  status: not started
+  status: done
 
 - task: |
     Build the bot's end of the wire — connected, dealt to, playing nothing.
