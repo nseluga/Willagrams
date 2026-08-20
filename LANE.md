@@ -99,7 +99,7 @@ and `BoardView`'s init are all spent.
     - Rematch yields a new `MatchSession` with a different seed, and the previous run's `peerTransport` cannot reach it
     - Existing passing tests remain passing
   caution: true
-  status: not started
+  status: done
 
 - task: Compose the match screen. New `Willagrams/Shell/MatchView.swift` rendering
     `BoardView` bound to `MatchBoard.board` and `MatchBoard.model`, with `MatchHUD`
