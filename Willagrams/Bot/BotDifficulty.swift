@@ -20,10 +20,9 @@ public struct BotDifficulty: Sendable, Equatable {
 
     /// The deepest ladder rung this bot may attempt.
     ///
-    /// `0` extend · `1` repair · `2` rebuild · `3` swap. Rung 0 is the whole
-    /// ladder today; rungs 1–3 arrive in later items and are a no-op until
-    /// then, so a preset naming a depth above 0 plays exactly like depth 0
-    /// rather than misbehaving.
+    /// `0` extend · `1` repair · `2` rebuild · `3` swap. Rungs 0–2 exist;
+    /// rung 3 arrives in a later item and is a no-op until then, so a preset
+    /// naming depth 3 plays exactly like depth 2 rather than misbehaving.
     public var ladderDepth: Int
 
     /// The pause between placements. The bot is not slow — it is *paced*, so a
@@ -33,12 +32,13 @@ public struct BotDifficulty: Sendable, Equatable {
     /// the brain with `.zero` here; nothing else in the lane sleeps.
     public var thinkDelay: Duration
 
-    /// How many consecutive ticks the brain may find no move before the stall
-    /// floor fires — the point at which a rung-2 rebuild becomes worth its cost
-    /// rather than the brain sitting on an unplayable rack forever.
+    /// How many consecutive ticks the brain may place nothing before the stall
+    /// floor fires — granting it one attempt at one rung above ``ladderDepth``,
+    /// after which the count resets.
     ///
-    /// Consumed by item 4. Named here because it is a tuning constant and this
-    /// is where tuning constants live.
+    /// This is the floor under every difficulty: an easy bot is allowed to be
+    /// bad, not to sit on an unplayable rack for the rest of the match, which
+    /// from the player's side of the screen looks exactly like a broken bot.
     public var stallFloorTicks: Int
 
     public init(ladderDepth: Int, thinkDelay: Duration, stallFloorTicks: Int) {

@@ -84,6 +84,14 @@ public actor BotBrain {
     /// that has not moved since it last came back empty.
     private var barren: Fingerprint?
 
+    /// Consecutive search ticks that ended with nothing placed. The stall
+    /// floor: at ``BotDifficulty/stallFloorTicks`` the brain is allowed one
+    /// attempt one rung above its own depth, and the count resets. An easy bot
+    /// that could never reach for repair would otherwise sit on an unplayable
+    /// rack for the rest of the match, which from the player's side of the
+    /// screen is indistinguishable from a broken bot.
+    private var stalledTicks = 0
+
     /// The shipping initialiser: the session and the word list both come from
     /// one ``BotMatch``, so they cannot be handed disagreeing dictionaries.
     public init(match: BotMatch, difficulty: BotDifficulty = .medium) {
@@ -139,7 +147,7 @@ public actor BotBrain {
                 drawMark = mark
             case let .search(snapshot):
                 drawMark = nil
-                await apply(searchIfMoved(snapshot))
+                await attempt(snapshot)
             }
             try? await Task.sleep(for: difficulty.thinkDelay)
         }
@@ -187,50 +195,141 @@ public actor BotBrain {
         )
     }
 
-    /// Searches, unless the last search over this same rack and board came back
-    /// empty. Rung 0 is ~rack × frontier whole-board validations; a brain with
-    /// an unplayable rack would otherwise pay that on every tick forever.
-    private func searchIfMoved(_ snapshot: Snapshot) -> Move? {
+    /// One search tick: decide how deep to reach, search, apply, and keep the
+    /// stall count.
+    ///
+    /// The search is skipped when the last one over this same rack and board
+    /// came back empty — rung 0 alone is ~rack × frontier whole-board
+    /// validations, and a brain with an unplayable rack would otherwise pay
+    /// that on every tick forever. The stall floor is what stops that skip
+    /// becoming permanent: once ``BotDifficulty/stallFloorTicks`` ticks have
+    /// passed with nothing placed, the brain searches anyway and reaches one
+    /// rung above its own depth for exactly one attempt.
+    private func attempt(_ snapshot: Snapshot) async {
         let fingerprint = Fingerprint(snapshot)
-        guard fingerprint != barren else { return nil }
-        guard let move = move(on: snapshot) else {
+        let granted = stalledTicks >= max(1, difficulty.stallFloorTicks)
+        guard granted || fingerprint != barren else {
+            stalledTicks += 1
+            return
+        }
+        // Clamped once, here: the grant may lift the depth by one rung and no
+        // further, and never past the last rung that exists.
+        let depth = min(3, max(0, difficulty.ladderDepth) + (granted ? 1 : 0))
+        if granted { stalledTicks = 0 }
+
+        guard let plan = plan(on: snapshot, depth: depth) else {
             barren = fingerprint
-            return nil
+            stalledTicks += 1
+            return
         }
         barren = nil
-        return move
+        if await apply(plan, from: snapshot) {
+            stalledTicks = 0
+        } else {
+            stalledTicks += 1
+        }
     }
 
-    /// Puts a chosen move through the session, which is the only thing that
-    /// decides whether it is still legal.
-    private func apply(_ move: Move?) async {
-        guard let move else { return }
+    /// Puts a chosen plan through the session, which is the only thing that
+    /// decides whether it is still legal. Returns whether the board kept it.
+    private func apply(_ plan: Plan, from snapshot: Snapshot) async -> Bool {
+        let dictionary = Self.effectiveDictionary(
+            base: baseDictionary,
+            options: snapshot.options
+        )
+        let board = snapshot.board
+        // The snapshot this plan came from may be stale — a grant landed, or
+        // the match locked. Recorded, not swallowed: the tick ends here and the
+        // next one re-reads the session and tries again.
+        let error = await MainActor.run { [session] in
+            Self.commit(plan, session, from: board, dictionary: dictionary)
+        }
+        lastPlacementError = error
+        return error == nil
+    }
+
+    /// Applies a whole plan on the session's actor, or leaves the board exactly
+    /// as it found it.
+    ///
+    /// This body is synchronous, so nothing interleaves with it: no grant lands
+    /// between the recalls and the placements, and `isLocked` and
+    /// `hasPendingDraw` cannot change under it. That is what makes the rollback
+    /// total rather than best-effort — if the first recall was accepted, every
+    /// recall and re-placement in ``restore(_:to:)`` is accepted too.
+    ///
+    /// The goodness check is the transactional guardrail for rungs 1 and 2: an
+    /// attempt that ends with fewer tiles down, an invalid word, or a second
+    /// cluster is rolled all the way back. Rung 0 skips it — a single extension
+    /// was already validated as a whole board by the search, and re-validating
+    /// per placement would double the cost of the common case.
+    @MainActor
+    private static func commit(
+        _ plan: Plan,
+        _ session: MatchSession,
+        from board: Board,
+        dictionary: some WordList
+    ) -> BoardActionError? {
+        // A plan names coordinates. A board that moved under it has different
+        // tiles at those coordinates, so recalling them would pull the wrong
+        // ones. Re-snapshot instead.
+        guard session.state.board == board else {
+            return .placementFailed("the board moved under the plan")
+        }
+        let before = board.placementList
         do {
-            try await MainActor.run { [session] in
-                try session.place(tileID: move.tileID, at: move.coord)
-            }
-            lastPlacementError = nil
+            for coord in plan.recalls { try session.recall(from: coord) }
+            for move in plan.moves { try session.place(tileID: move.tileID, at: move.coord) }
         } catch {
-            // The snapshot this move came from is now known stale — a grant
-            // landed, or the match locked. Recorded, not swallowed: the tick
-            // ends here and the next one re-reads the session and retries.
-            lastPlacementError =
-                error as? BoardActionError ?? .placementFailed(String(describing: error))
+            restore(session, to: before)
+            return error
+        }
+        guard !plan.recalls.isEmpty else { return nil }
+
+        let now = session.state.board
+        let check = now.validate(against: dictionary)
+        guard now.placements.count > board.placements.count,
+              check.invalidWords.isEmpty,
+              check.clusterCount <= 1
+        else {
+            restore(session, to: before)
+            return .placementFailed("the attempt left the board no better")
+        }
+        return nil
+    }
+
+    /// Puts the board back exactly as `placements` had it — the same tiles at
+    /// the same coordinates.
+    ///
+    /// Every recall returns its tile to the rack and frees its cell, so by the
+    /// time the re-placements run each tile is in hand and each cell is empty:
+    /// nothing here can be refused. The `try?`s are the belt on that reasoning,
+    /// not a shrug at it.
+    @MainActor
+    private static func restore(_ session: MatchSession, to placements: [Placement]) {
+        for coord in Array(session.state.board.placements.keys) {
+            try? session.recall(from: coord)
+        }
+        for placement in placements {
+            try? session.place(tileID: placement.tileID, at: placement.coord)
         }
     }
 
     // MARK: - The ladder
 
-    /// Walks the ladder up to ``BotDifficulty/ladderDepth`` and returns the
-    /// first move any rung offers.
+    /// Walks the ladder up to `depth` and returns the first plan any rung
+    /// offers.
     ///
-    /// Rungs 1–3 (repair, rebuild, swap) are later items; adding one is adding
-    /// a `case` here, not changing the tick above it.
-    private func move(on snapshot: Snapshot) -> Move? {
-        for rung in 0...min(3, max(0, difficulty.ladderDepth)) {
+    /// Rung 3 (swap) is a later item; adding it is adding a `case` here, not
+    /// changing the tick above it.
+    private func plan(on snapshot: Snapshot, depth: Int) -> Plan? {
+        for rung in 0...depth {
             switch rung {
             case 0:
-                if let move = extend(snapshot) { return move }
+                if let move = extend(snapshot) { return Plan(recalls: [], moves: [move]) }
+            case 1:
+                if let plan = repair(snapshot) { return plan }
+            case 2:
+                if let plan = rebuild(snapshot) { return plan }
             default:
                 continue
             }
@@ -261,24 +360,257 @@ public actor BotBrain {
     /// new cell can change, so this could be narrowed further, but that copy
     /// would be this lane re-implementing rules `Board.validate` already owns.
     private func extend(_ snapshot: Snapshot) -> Move? {
-        let dictionary = Self.effectiveDictionary(
-            base: baseDictionary,
-            options: snapshot.options
+        // Rung 0 needs no budget: it is bounded by construction at distinct
+        // letters × frontier, both of which are small and both of which shrink
+        // as the rack empties. Rungs 1 and 2 are the ones that need a ceiling.
+        var unbounded = Int.max
+        return Self.step(
+            on: snapshot.board,
+            from: snapshot.hand,
+            dictionary: Self.effectiveDictionary(base: baseDictionary, options: snapshot.options),
+            budget: &unbounded
         )
-        let frontier = Self.frontier(of: snapshot.board)
+    }
+
+    /// Rung 0's inner loop, shared with the two rungs above it. One legal
+    /// placement of one of `tiles` onto `board`, or nothing. Spends one unit of
+    /// `budget` per whole-board validation and stops dead when it runs out.
+    private static func step(
+        on board: Board,
+        from tiles: [Tile],
+        dictionary: some WordList,
+        budget: inout Int
+    ) -> Move? {
+        let frontier = frontier(of: board)
         var tried: Set<Candidate> = []
-        for tile in snapshot.hand {
+        for tile in tiles {
             for coord in frontier {
+                guard budget > 0 else { return nil }
                 guard tried.insert(Candidate(letter: tile.letter, coord: coord)).inserted
                 else { continue }
-                var trial = snapshot.board
+                var trial = board
                 guard (try? trial.place(tile, at: coord)) != nil else { continue }
+                budget -= 1
                 if trial.validate(against: dictionary).invalidWords.isEmpty {
                     return Move(tileID: tile.id, coord: coord)
                 }
             }
         }
         return nil
+    }
+
+    /// Greedily lands as many of `tiles` on `board` as it can, one legal
+    /// placement at a time, until nothing more fits or `budget` runs out.
+    ///
+    /// Every intermediate board is one cluster with no invalid word, because
+    /// every candidate cell touches a placed tile and every placement is
+    /// whole-board validated — so the board handed back is legal whether the
+    /// fill finished or the budget cut it short.
+    private static func fill(
+        _ board: Board,
+        with tiles: [Tile],
+        dictionary: some WordList,
+        budget: inout Int
+    ) -> (board: Board, moves: [Move]) {
+        var board = board
+        var pool = tiles
+        var moves: [Move] = []
+        while budget > 0, let move = step(on: board, from: pool, dictionary: dictionary, budget: &budget) {
+            guard let index = pool.firstIndex(where: { $0.id == move.tileID }),
+                  (try? board.place(pool[index], at: move.coord)) != nil
+            else { break }
+            pool.remove(at: index)
+            moves.append(move)
+        }
+        return (board, moves)
+    }
+
+    // MARK: - Rung 1: local repair
+
+    /// Rung 1. No single tile fits, so free the cheapest patch of board and
+    /// re-place what was freed together with the whole rack.
+    ///
+    /// **Which tiles to pull** is the design here. The seed is one placed word,
+    /// tried shortest first and, among equal lengths, the one crossed by the
+    /// fewest other words — the least load-bearing thing on the board. Pulling
+    /// it shortens every word that crossed it, so ``settle(_:pulling:against:)``
+    /// then grows the pull until what remains is legal again: any run the
+    /// removal left invalid comes out too, and so does anything it orphaned
+    /// off the main cluster. A pull that swallows the whole board is refused —
+    /// that is rung 2's job, and rung 2 has a budget for it.
+    ///
+    /// The result is kept only if it puts strictly more tiles on the board than
+    /// were there before; ``commit(_:_:from:dictionary:)`` re-checks that
+    /// against the real session and rolls back if it does not hold.
+    private func repair(_ snapshot: Snapshot) -> Plan? {
+        let board = snapshot.board
+        let placed = board.placements.count
+        guard placed > 0 else { return nil }
+        let dictionary = Self.effectiveDictionary(
+            base: baseDictionary,
+            options: snapshot.options
+        )
+
+        let seeds = board.words().sorted {
+            (
+                $0.text.count, Self.crossings(of: $0, on: board),
+                $0.origin.row, $0.origin.col
+            ) < (
+                $1.text.count, Self.crossings(of: $1, on: board),
+                $1.origin.row, $1.origin.col
+            )
+        }
+
+        var budget = Self.repairNodeBudget
+        for seed in seeds.prefix(Self.repairSeedLimit) {
+            guard budget > 0 else { break }
+            guard let settled = Self.settle(
+                board,
+                pulling: Set(Self.coords(of: seed)),
+                against: dictionary
+            ), settled.pull.count < placed else { continue }
+
+            let pull = settled.pull.sorted(by: Self.byCoord)
+            let freed = pull.compactMap { board.tile(at: $0) }
+            let built = Self.fill(
+                settled.rest,
+                with: freed + snapshot.hand,
+                dictionary: dictionary,
+                budget: &budget
+            )
+            guard built.board.placements.count > placed else { continue }
+            return Plan(recalls: pull, moves: built.moves)
+        }
+        return nil
+    }
+
+    /// Grows `seed` until the board left behind is legal again, or gives up.
+    ///
+    /// Removing a word's tiles shortens the words that crossed it, and a
+    /// shortened run is usually not a word any more; it can also cut the board
+    /// into pieces. Both are repaired by pulling more, which can expose more of
+    /// the same, so this iterates — bounded by ``settleRounds``, and returning
+    /// nothing rather than looping if it has not converged by then.
+    private static func settle(
+        _ board: Board,
+        pulling seed: Set<Coord>,
+        against dictionary: some WordList
+    ) -> (pull: Set<Coord>, rest: Board)? {
+        var pull = seed
+        var rest = board
+        for coord in seed { rest.remove(at: coord) }
+
+        for _ in 0..<settleRounds {
+            var grew = false
+            for word in rest.words() where !dictionary.contains(word.text) {
+                for coord in coords(of: word) where pull.insert(coord).inserted {
+                    rest.remove(at: coord)
+                    grew = true
+                }
+            }
+            let clusters = rest.clusters
+            if clusters.count > 1, let keep = clusters.max(by: { rank($0) < rank($1) }) {
+                for cluster in clusters where cluster != keep {
+                    for coord in cluster.sorted(by: byCoord) where pull.insert(coord).inserted {
+                        rest.remove(at: coord)
+                        grew = true
+                    }
+                }
+            }
+            if !grew { return (pull, rest) }
+        }
+        return nil
+    }
+
+    /// Biggest cluster wins, ties broken by the topmost-leftmost cell, so the
+    /// same board always keeps the same piece.
+    private static func rank(_ cluster: Set<Coord>) -> (Int, Int, Int) {
+        let corner = cluster.map { ($0.row, $0.col) }.min { $0 < $1 } ?? (0, 0)
+        return (cluster.count, -corner.0, -corner.1)
+    }
+
+    /// How many other words cross this one — how load-bearing it is.
+    static func crossings(of word: BoardWord, on board: Board) -> Int {
+        coords(of: word).filter { coord in
+            let (back, forward) = word.direction == .across
+                ? (Coord(row: coord.row - 1, col: coord.col), Coord(row: coord.row + 1, col: coord.col))
+                : (Coord(row: coord.row, col: coord.col - 1), Coord(row: coord.row, col: coord.col + 1))
+            return board.tile(at: back) != nil || board.tile(at: forward) != nil
+        }.count
+    }
+
+    /// The cells a word occupies, from its origin.
+    static func coords(of word: BoardWord) -> [Coord] {
+        (0..<word.text.count).map { offset in
+            word.direction == .across
+                ? Coord(row: word.origin.row, col: word.origin.col + offset)
+                : Coord(row: word.origin.row + offset, col: word.origin.col)
+        }
+    }
+
+    // MARK: - Rung 2: full rebuild
+
+    /// Rung 2. Take everything off the board and lay the whole rack out again
+    /// from nothing, keeping the best board found.
+    ///
+    /// Bounded by ``rebuildNodeBudget`` whole-board validations, spent across
+    /// at most ``rebuildRestarts`` greedy passes that differ only in which tile
+    /// is tried first — a rotation, because greedy from an empty board is
+    /// decided almost entirely by its opening tile. The budget is shared, not
+    /// per pass, so the total work is the same whether one pass eats it or
+    /// three do: a 21-tile rack cannot make this run longer than a 5-tile one.
+    ///
+    /// Returns nothing unless a pass beat the board that is already down, which
+    /// is what leaves a fruitless rebuild tile-for-tile identical.
+    private func rebuild(_ snapshot: Snapshot) -> Plan? {
+        let board = snapshot.board
+        let placed = board.placements.count
+        var order = board.placementList.map(\.tile) + snapshot.hand
+        guard !order.isEmpty else { return nil }
+        let dictionary = Self.effectiveDictionary(
+            base: baseDictionary,
+            options: snapshot.options
+        )
+
+        var budget = Self.rebuildNodeBudget
+        var best: [Move] = []
+        for _ in 0..<Self.rebuildRestarts {
+            guard budget > 0 else { break }
+            let built = Self.fill(Board(), with: order, dictionary: dictionary, budget: &budget)
+            if built.moves.count > best.count { best = built.moves }
+            if best.count == order.count { break }
+            order = Array(order.dropFirst()) + order.prefix(1)
+        }
+        guard best.count > placed else { return nil }
+        return Plan(recalls: board.placements.keys.sorted(by: Self.byCoord), moves: best)
+    }
+
+    // MARK: - Budgets
+
+    /// Whole-board validations one rung-1 repair may spend across every seed it
+    /// tries. Repair is meant to be the cheap rung; a repair that costs more
+    /// than a rebuild has no reason to exist.
+    static let repairNodeBudget = 4_000
+
+    /// How many placed words repair will try pulling before giving up. The list
+    /// is ordered cheapest-first, so the tail is the expensive end.
+    static let repairSeedLimit = 6
+
+    /// How many times a pull may grow before repair abandons that seed.
+    static let settleRounds = 4
+
+    /// Whole-board validations one rung-2 rebuild may spend, in total, across
+    /// every pass. This is the ceiling that makes "re-solve the whole rack" a
+    /// bounded operation rather than a hang.
+    static let rebuildNodeBudget = 20_000
+
+    /// Greedy passes a rebuild may make, each starting from a different tile.
+    static let rebuildRestarts = 3
+
+    /// One fixed order for coordinates, so two runs over one board pull and
+    /// place the same tiles in the same sequence.
+    static func byCoord(_ a: Coord, _ b: Coord) -> Bool {
+        (a.row, a.col) < (b.row, b.col)
     }
 
     /// Every empty cell edge-adjacent to a placed tile, in a fixed order — or
@@ -372,5 +704,16 @@ public actor BotBrain {
     private struct Move: Sendable {
         let tileID: UUID
         let coord: Coord
+    }
+
+    /// One rung's whole answer: what to take off the board, then what to put
+    /// down. Empty `recalls` is rung 0 — a plain extension.
+    ///
+    /// A plan is inert. It names coordinates and tile ids and nothing else, so
+    /// it can be carried from the search actor to the main one and applied, or
+    /// dropped, without either side holding the other's state.
+    private struct Plan: Sendable {
+        let recalls: [Coord]
+        let moves: [Move]
     }
 }
