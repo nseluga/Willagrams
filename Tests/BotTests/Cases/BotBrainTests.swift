@@ -299,4 +299,152 @@ struct BotBrainTests {
             match.session.state.hand.count + match.session.state.board.placements.count >= 3
         )
     }
+
+    // MARK: - Ending on something other than a win
+
+    /// The match can end with nobody named: this device leaves, and the roster
+    /// is `.gone` with `winner == nil`. `isLocked` then refuses every move for
+    /// good, so a brain watching only for `.finished` would search a board it
+    /// can never touch again, every tick, for the life of the process.
+    @Test("leave() ends the brain, though nobody won")
+    func leaveStopsTheBrain() async throws {
+        let (match, human) = Self.matched(AnyWordList())
+        defer { match.leave() }
+        human.startMatch(seed: 21, startingHandSize: 3, countdownSeconds: 0)
+        try await Self.waitUntil("bot dealt") { match.session.state.hand.count == 3 }
+
+        let returned = UncheckedFlag()
+        let brain = BotBrain(match: match, difficulty: Self.instant)
+        let driver = Task { await brain.run(); returned.set() }
+        defer { driver.cancel() }
+        try await Self.waitUntil("the brain is placing") {
+            !match.session.state.board.placements.isEmpty
+        }
+
+        match.leave()
+        #expect(match.session.isMatchOver)
+        #expect(match.session.winner == nil)
+        // Bounded: a brain that spins forever fails here rather than hanging.
+        try await Self.waitUntil("run() returned by itself") { returned.isSet }
+    }
+
+    /// The same ending from the other side — the peer goes away and never comes
+    /// back. The grace period runs on the injected clock, so it elapses at once.
+    @Test("A peer that goes away ends the brain, though nobody won")
+    func peerGoneStopsTheBrain() async throws {
+        let (match, human) = Self.matched(AnyWordList())
+        defer { match.leave() }
+        human.startMatch(seed: 21, startingHandSize: 3, countdownSeconds: 0)
+        try await Self.waitUntil("bot dealt") { match.session.state.hand.count == 3 }
+
+        let returned = UncheckedFlag()
+        let brain = BotBrain(match: match, difficulty: Self.instant)
+        let driver = Task { await brain.run(); returned.set() }
+        defer { driver.cancel() }
+        try await Self.waitUntil("the brain is placing") {
+            !match.session.state.board.placements.isEmpty
+        }
+
+        human.leave()
+        try await Self.waitUntil("the bot noticed the peer go") {
+            match.session.isMatchOver
+        }
+        #expect(match.session.winner == nil)
+        try await Self.waitUntil("run() returned by itself") { returned.isSet }
+    }
+
+    // MARK: - One draw request per round trip
+
+    /// `canDraw` stays true from the request until the grant lands, so a brain
+    /// that re-checked it alone would fire a fresh `drawRequest` every tick of
+    /// that window — draining the pool and handing the human a pending tile per
+    /// extra request.
+    ///
+    /// Observable as rack size: the human never presses Draw here, so every
+    /// tile the bot receives after the opening deal answers a request the bot
+    /// made. One request outstanding means one tile in hand at a time.
+    @Test("Only one draw request is outstanding at a time")
+    func drawIsRequestedOncePerRoundTrip() async throws {
+        let handSize = 3
+        let (match, human) = Self.matched(AnyWordList())
+        defer { match.leave() }
+        human.startMatch(seed: 21, startingHandSize: handSize, countdownSeconds: 0)
+        try await Self.waitUntil("bot dealt") { match.session.state.hand.count == handSize }
+
+        let brain = BotBrain(match: match, difficulty: Self.instant)
+        let driver = Task { await brain.run() }
+        defer { driver.cancel() }
+
+        var granted = 0
+        let probe: @MainActor () -> Void = {
+            let placed = match.session.state.board.placements.count
+            let hand = match.session.state.hand.count
+            granted = max(granted, hand + placed - handSize)
+            // Once the opening rack is down, a rack of more than one tile means
+            // more than one request was in flight.
+            if placed >= handSize { #expect(hand <= 1) }
+        }
+
+        try await Self.waitUntil("several rounds of draw and place", seconds: 60, probe: probe) {
+            granted >= 4 || match.session.poolIsExhausted
+        }
+        #expect(granted >= 4)
+    }
+
+    // MARK: - A thrown placement is recorded, not swallowed
+
+    /// Forces the throw from inside the search: the human draws while the brain
+    /// is mid-`contains`, so the grant lands as a pending obligation before the
+    /// chosen move is applied, and `place` throws `.drawPending`. The error must
+    /// be recorded and the brain must go on to take the tile and keep playing.
+    @Test("A placement thrown against a stale snapshot is recorded and retried")
+    func staleePlacementIsRecordedAndRetried() async throws {
+        let (match, human) = Self.matched(AnyWordList())
+        defer { match.leave() }
+
+        let humanBox = UncheckedBox(human)
+        let spy = BotBrainAdversarialTests.Spy { n in
+            guard n % 8 == 1, n < 400 else { return }
+            Task { @MainActor in humanBox.value.draw() }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+
+        human.startMatch(seed: 5, startingHandSize: 4, countdownSeconds: 0)
+        try await Self.waitUntil("bot dealt") { match.session.state.hand.count == 4 }
+
+        let brain = BotBrain(
+            session: match.session,
+            dictionary: BotBrainAdversarialTests.SpyWordList(spy: spy),
+            difficulty: Self.instant
+        )
+        let driver = Task { await brain.run() }
+        defer { driver.cancel() }
+
+        // Bounded by hand, because the condition needs the brain's own actor.
+        // The poll keeps the pool moving too, so the match does not simply end
+        // before a grant ever lands on a snapshot the brain is holding.
+        var sawError = false
+        let limit = ContinuousClock.now + .seconds(30)
+        while !sawError {
+            sawError = await brain.lastPlacementError == .drawPending
+            guard !sawError else { break }
+            guard match.session.winner == nil else {
+                Issue.record("the match ended before any placement was refused")
+                break
+            }
+            guard ContinuousClock.now < limit else {
+                Issue.record("timed out waiting for a recorded placement refusal")
+                break
+            }
+            if !human.poolIsExhausted { human.draw() }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(sawError)
+
+        // Not a jam: the brain took the pending tile and went on placing.
+        let placed = match.session.state.board.placements.count
+        try await Self.waitUntil("the brain kept playing", seconds: 30) {
+            match.session.state.board.placements.count > placed
+        }
+    }
 }

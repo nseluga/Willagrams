@@ -65,6 +65,12 @@ public final class BotMatch {
     /// the next item — silent.
     public let session: MatchSession
 
+    /// The list the session was built with, kept so ``BotBrain`` can take its
+    /// session and its dictionary from the same place and cannot be handed two
+    /// that disagree. Not the *effective* list — the session narrows its own by
+    /// the match's minimum word length, and so does the brain, from `options`.
+    public let dictionary: any WordList
+
     public init(
         dictionary: any WordList,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
@@ -73,6 +79,7 @@ public final class BotMatch {
     ) {
         let (human, bot) = LocalMatchLink.pair(Self.humanPlayerID, Self.botPlayerID)
         self.humanTransport = human
+        self.dictionary = dictionary
         self.session = MatchSession(
             transport: bot,
             peerPlayerID: Self.humanPlayerID,

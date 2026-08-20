@@ -74,6 +74,29 @@ public actor BotBrain {
     /// that lands.
     public private(set) var lastPlacementError: BoardActionError?
 
+    /// One `run()` at a time. Two would interleave at every `await` and issue
+    /// two draws and two placements per tick against one session.
+    private var isRunning = false
+
+    /// The rack-and-board fingerprint of the last search that found nothing.
+    /// Not a copy of the rack or the board and never a source of truth for a
+    /// move — only a reason to skip re-running an exhaustive search over state
+    /// that has not moved since it last came back empty.
+    private var barren: Fingerprint?
+
+    /// The shipping initialiser: the session and the word list both come from
+    /// one ``BotMatch``, so they cannot be handed disagreeing dictionaries.
+    public init(match: BotMatch, difficulty: BotDifficulty = .medium) {
+        self.session = match.session
+        self.baseDictionary = match.dictionary
+        self.difficulty = difficulty
+    }
+
+    /// Splits the session from the word list, which only a test wants: it is
+    /// how the search's list is instrumented without instrumenting the
+    /// session's. Real callers use ``init(match:difficulty:)`` — a list passed
+    /// here that disagrees with the session's is a bot playing by a different
+    /// dictionary than its own match.
     public init(
         session: MatchSession,
         dictionary: any WordList,
@@ -88,19 +111,35 @@ public actor BotBrain {
 
     /// Plays until the match is over or the task is cancelled.
     ///
-    /// Ends on `.finished` however it arrives — the bot's own ``claimWin()``,
-    /// or the human's `.win` landing on the bot's session. Sleeps
-    /// ``BotDifficulty/thinkDelay`` after every tick, placement or not, so a
-    /// brain with nothing to do waits rather than spins.
+    /// Ends on ``MatchSession/isMatchOver`` however it arrives — the bot's own
+    /// ``claimWin()``, the human's `.win`, or `leave()` and a peer that went
+    /// away, which lock the session with no winner at all. A brain that watched
+    /// only for `.finished` would spin the full search every `thinkDelay` for
+    /// the life of the process against a session that refuses every move.
+    ///
+    /// Safe to check from the first tick: `roster` is set once in `init` and
+    /// holds both players, and an unheard-from peer reads `.present`, so
+    /// `presentPlayers.count` is 2 before the peer ever connects.
+    ///
+    /// Sleeps ``BotDifficulty/thinkDelay`` after every tick, placement or not,
+    /// so a brain with nothing to do waits rather than spins. A second
+    /// concurrent call returns immediately rather than doubling every move.
     public func run() async {
+        guard !isRunning else { return }
+        isRunning = true
+        defer { isRunning = false }
+
+        var drawMark: WireMark?
         while !Task.isCancelled {
-            switch await MainActor.run(body: { Self.step(self.session) }) {
+            let mark = drawMark
+            switch await MainActor.run(body: { [session] in Self.step(session, mark) }) {
             case .finished:
                 return
-            case .acted:
-                break
+            case let .acted(mark):
+                drawMark = mark
             case let .search(snapshot):
-                await apply(move(on: snapshot))
+                drawMark = nil
+                await apply(searchIfMoved(snapshot))
             }
             try? await Task.sleep(for: difficulty.thinkDelay)
         }
@@ -113,20 +152,31 @@ public actor BotBrain {
     /// aged. Nothing on the wire verifies a win claim, so `canDraw &&
     /// poolIsExhausted` is the only thing keeping the bot honest, and it is
     /// checked where it cannot be stale.
+    /// `drawMark` is what the wire looked like when this brain last asked for a
+    /// round. `canDraw` stays true across the whole request/grant round trip,
+    /// so without it every tick inside that window fires another
+    /// `drawRequest` — each one draining the pool and handing the human another
+    /// pending tile. The credits are `MatchSession`'s to count; this only
+    /// declines to ask twice for the same unanswered round.
     @MainActor
-    private static func step(_ session: MatchSession) -> Tick {
-        if case .finished = session.state.status { return .finished }
+    private static func step(_ session: MatchSession, _ drawMark: WireMark?) -> Tick {
+        if session.isMatchOver { return .finished }
         if session.hasPendingDraw {
             session.draw()
-            return .acted
+            return .acted(nil)
         }
         if session.canDraw {
             if session.poolIsExhausted {
                 session.claimWin()
-            } else {
-                session.draw()
+                return .acted(nil)
             }
-            return .acted
+            // Every way the request can be answered — the grant landing, the
+            // pool running dry, a refusal — moves one of these. Unmoved means
+            // unanswered, and asking again would spend a second round.
+            let now = WireMark(session)
+            guard now != drawMark else { return .acted(drawMark) }
+            session.draw()
+            return .acted(now)
         }
         return .search(
             Snapshot(
@@ -135,6 +185,20 @@ public actor BotBrain {
                 options: session.options
             )
         )
+    }
+
+    /// Searches, unless the last search over this same rack and board came back
+    /// empty. Rung 0 is ~rack × frontier whole-board validations; a brain with
+    /// an unplayable rack would otherwise pay that on every tick forever.
+    private func searchIfMoved(_ snapshot: Snapshot) -> Move? {
+        let fingerprint = Fingerprint(snapshot)
+        guard fingerprint != barren else { return nil }
+        guard let move = move(on: snapshot) else {
+            barren = fingerprint
+            return nil
+        }
+        barren = nil
+        return move
     }
 
     /// Puts a chosen move through the session, which is the only thing that
@@ -163,7 +227,7 @@ public actor BotBrain {
     /// Rungs 1–3 (repair, rebuild, swap) are later items; adding one is adding
     /// a `case` here, not changing the tick above it.
     private func move(on snapshot: Snapshot) -> Move? {
-        for rung in 0...max(0, difficulty.ladderDepth) {
+        for rung in 0...min(3, max(0, difficulty.ladderDepth)) {
             switch rung {
             case 0:
                 if let move = extend(snapshot) { return move }
@@ -182,19 +246,31 @@ public actor BotBrain {
     /// re-validated. Clustering takes care of itself — every candidate cell
     /// touches a placed tile, so the board never gains a second cluster.
     ///
-    /// ponytail: re-validates the whole board per candidate — O(rack ×
-    /// frontier × tiles). Only the two runs through the new cell can change, so
-    /// this can be narrowed if a large board ever feels slow. Left whole
-    /// because `Board.validate` is the frozen definition of legal and a
-    /// narrowed copy would be this lane re-implementing rules.
+    /// Two rack tiles with the same letter are the same board at the same cell,
+    /// so the second one is skipped: identity is what differs, and legality
+    /// cannot see identity. That narrowing costs nothing in fidelity — it is a
+    /// fact about `Board`, not a claim about the rules — and on a 21-tile rack
+    /// full of repeated letters it is most of the work.
+    ///
+    /// Tile-major order is deliberate: the skipped candidates are exactly the
+    /// ones an earlier tile already failed at, so the move chosen is the same
+    /// move the unnarrowed loop chose.
+    ///
+    /// ponytail: still re-validates the whole board per surviving candidate —
+    /// O(distinct letters × frontier × tiles). Only the two runs through the
+    /// new cell can change, so this could be narrowed further, but that copy
+    /// would be this lane re-implementing rules `Board.validate` already owns.
     private func extend(_ snapshot: Snapshot) -> Move? {
         let dictionary = Self.effectiveDictionary(
             base: baseDictionary,
             options: snapshot.options
         )
         let frontier = Self.frontier(of: snapshot.board)
+        var tried: Set<Candidate> = []
         for tile in snapshot.hand {
             for coord in frontier {
+                guard tried.insert(Candidate(letter: tile.letter, coord: coord)).inserted
+                else { continue }
                 var trial = snapshot.board
                 guard (try? trial.place(tile, at: coord)) != nil else { continue }
                 if trial.validate(against: dictionary).invalidWords.isEmpty {
@@ -242,8 +318,46 @@ public actor BotBrain {
     /// this actor rather than searching on the main one.
     private enum Tick: Sendable {
         case finished
-        case acted
+        /// Carries forward the mark of an unanswered draw request, or `nil`
+        /// when nothing is outstanding.
+        case acted(WireMark?)
         case search(Snapshot)
+    }
+
+    /// Everything about the session that a draw request's answer would move.
+    /// Cheap to take and cheap to compare; holds no tiles.
+    struct WireMark: Equatable, Sendable {
+        let handCount: Int
+        let hasPendingDraw: Bool
+        let poolIsExhausted: Bool
+        let note: String?
+
+        @MainActor
+        init(_ session: MatchSession) {
+            handCount = session.state.hand.count
+            hasPendingDraw = session.hasPendingDraw
+            poolIsExhausted = session.poolIsExhausted
+            note = session.lastNote
+        }
+    }
+
+    /// What a search's outcome depends on. Tile ids rather than letters: a
+    /// swapped-in tile with the same letters is still a different rack.
+    private struct Fingerprint: Equatable {
+        let boardCount: Int
+        let rack: [UUID]
+
+        init(_ snapshot: Snapshot) {
+            boardCount = snapshot.board.placements.count
+            rack = snapshot.hand.map(\.id)
+        }
+    }
+
+    /// A letter at a cell — the whole of what a trial placement's legality
+    /// depends on.
+    private struct Candidate: Hashable {
+        let letter: Character
+        let coord: Coord
     }
 
     /// Everything the search needs, read in one hop so the parts cannot
