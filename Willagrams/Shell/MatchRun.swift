@@ -74,11 +74,12 @@ public final class MatchRun {
     /// The one session. `SoloMatch` owns it; this is the short way to it.
     public var session: MatchSession { match.session }
 
-    /// Weak, like ``MatchHUDModel``'s: `ShellModel` owns this run, so a strong
-    /// reference back would close a cycle that survives the shell being
-    /// dropped mid-match. Everything below copes with a gone shell by doing
-    /// nothing, which is the correct answer once nothing is left to route.
-    private weak var shell: ShellModel?
+    /// `unowned`, like ``MatchHUDModel``'s: `ShellModel` owns this run, so a
+    /// strong reference back would close a cycle that survives the shell being
+    /// dropped mid-match. The run cannot outlive its owner, so there is nothing
+    /// to unwrap — only the escaping closures in ``results(board:)``, which do
+    /// outlive the run by design, capture the shell weakly.
+    private unowned let shell: ShellModel
 
     /// Which `ShellModel` generation built this. See "Staleness" above.
     private let generation: Int
@@ -117,8 +118,7 @@ public final class MatchRun {
     /// Built here so Main Menu and Rematch get the same teardown rather than
     /// each call site assembling its own — and so the closures `ResultsModel`
     /// declares but cannot provide have exactly one implementation.
-    public func results(board: Board = Board()) -> ResultsModel? {
-        guard let shell else { return nil }
+    public func results(board: Board = Board()) -> ResultsModel {
         let generation = generation
         return ResultsModel(
             shell: shell,

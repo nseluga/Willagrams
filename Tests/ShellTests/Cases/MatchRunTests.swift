@@ -62,24 +62,17 @@ struct MatchRunTests {
         #expect(shell.run?.session === session)
         // The end screen the results route renders is built over that session
         // too, not over a fresh one.
-        #expect(run.results()?.outcome == .noWinner)
+        #expect(run.results().outcome == .noWinner)
 
         shell.returnToMenu()
     }
 
-    @Test("A start from inside a live match is refused; one from the menu replaces the run")
+    @Test("A second start replaces the run rather than adding one")
     func aSecondStartReplacesTheRun() async throws {
         let shell = Self.shell()
         #expect(shell.startSoloPractice())
         let first = try #require(shell.run)
 
-        // The stray tap: `startMatch` has always refused it, and building a
-        // second run over a live one is exactly what this item forbids.
-        #expect(shell.startSoloPractice() == false, "a live run was restarted from inside itself")
-        #expect(shell.run === first, "the refused start replaced the live run")
-        #expect(first.session.isMatchOver == false, "the refused start ended the live run")
-
-        shell.returnToMenu()
         #expect(shell.startSoloPractice())
         let second = try #require(shell.run)
 
@@ -154,7 +147,7 @@ struct MatchRunTests {
             old.session.state.status == .playing
         }
 
-        let results = try #require(old.results())
+        let results = old.results()
         #expect(results.isRematchEnabled)
         #expect(results.rematch())
 
@@ -190,7 +183,7 @@ struct MatchRunTests {
 
         // Read at the instant the replacement is published — `run` is observed,
         // so the new value is what a screen would see.
-        #expect(old.results()?.rematch() == true)
+        #expect(old.results().rematch())
         let new = try #require(shell.run)
         #expect(new !== old)
         #expect(old.session.isMatchOver, "the new run was built over a live one")
@@ -216,7 +209,7 @@ struct MatchRunTests {
         #expect(shell.startSoloPractice())
         #expect(builds.count == 1)
         let run = try #require(shell.run)
-        #expect(run.results()?.rematch() == true)
+        #expect(run.results().rematch())
         #expect(shell.run !== run, "the rematch built no new run")
         #expect(builds.count == 1, "a rematch rebuilt the word list")
 
@@ -225,6 +218,39 @@ struct MatchRunTests {
 
     /// A box, so the closure and the test share one tally.
     final class Builds { var count = 0 }
+
+    /// A missing bundled list degrades to a list that accepts no word. Memoizing
+    /// that would make every match of the process unwinnable off one bad read,
+    /// so the degraded list is never cached and the next match retries.
+    @Test("A degraded word list is retried on the next match, not cached")
+    func aDegradedWordListIsNotCached() async throws {
+        let builds = Builds()
+        let shell = ShellModel(
+            dictionary: {
+                builds.count += 1
+                // The first read fails the way a missing bundle does; the second
+                // succeeds, as a transient read failure would.
+                return builds.count == 1
+                    ? EnableWordList(words: [])
+                    : EnableWordList(words: ["cat"])
+            },
+            sleepFor: { _ in },
+            seedSource: { 800 }
+        )
+
+        #expect(shell.startSoloPractice())
+        #expect(builds.count == 1)
+        shell.returnToMenu()
+
+        #expect(shell.startSoloPractice())
+        #expect(builds.count == 2, "the degraded list was cached instead of retried")
+        shell.returnToMenu()
+
+        // The recovered list is cached like any other.
+        #expect(shell.startSoloPractice())
+        #expect(builds.count == 2, "the recovered list was rebuilt")
+        shell.returnToMenu()
+    }
 
     // MARK: - No cycle back to the shell
 

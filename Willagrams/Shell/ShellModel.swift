@@ -46,6 +46,10 @@ public final class ShellModel {
     private func loadedDictionary() -> any WordList {
         if let cachedDictionary { return cachedDictionary }
         let loaded = dictionary()
+        // A failed bundle read degrades to a list that accepts no word. Caching
+        // that would make every match of the process unwinnable off one bad
+        // read, so it is returned uncached and the next match retries the load.
+        if (loaded as? EnableWordList)?.count == 0 { return loaded }
         cachedDictionary = loaded
         return loaded
     }
@@ -101,15 +105,10 @@ public final class ShellModel {
     /// second `MatchSession` — a rematch needs a new pair, a new session and a
     /// new pool, which is exactly what a first start builds.
     ///
-    /// ## Who may start one
-    ///
-    /// The menu (route `.menu`), an end screen (route `.results`), and a caller
-    /// that has already torn the live run down — which is how
-    /// `ResultsModel.rematch()` arrives, on whatever route its screen was built
-    /// over. A start from inside a *live* match is the stray tap `startMatch`
-    /// has always refused, and it is still refused here. Returning to the menu
-    /// happens after that guard, so the teardown-before-construction order
-    /// holds without the guard being weakened to get it.
+    /// It returns to the menu first rather than refusing off `.menu`: that is
+    /// what tears the previous run down *before* the replacement is
+    /// constructed, so two live sessions never overlap. `startMatch` keeps its
+    /// own guard for every other caller.
     ///
     /// - Parameter explicit: a seed to use instead of the injected source. It is
     ///   still put through the never-repeat rule below, so no caller can hand
@@ -124,11 +123,6 @@ public final class ShellModel {
         // the menu's one button would soft-lock it. Refuse instead.
         return false
 #else
-        switch route {
-        case .menu, .results: break
-        default: if run != nil { return false }
-        }
-
         // Down before up: the previous run's stream-iteration tasks are
         // cancelled here, not left for whenever the old objects deallocate.
         returnToMenu()

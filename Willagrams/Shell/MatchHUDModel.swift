@@ -56,11 +56,11 @@ public final class MatchHUDModel {
     /// resigns.
     public private(set) var resignArmed = false
 
-    /// Weak: `ShellModel` owns the run that owns this, so a strong reference
-    /// here closes a cycle that leaks the whole match when the shell is
-    /// dropped mid-match. The shell always outlives this in the app; the
-    /// resign path below still copes if it does not.
-    @ObservationIgnored private weak var shell: ShellModel?
+    /// `unowned`: `ShellModel` owns the run that owns this, so a strong
+    /// reference here closes a cycle that leaks the whole match when the shell
+    /// is dropped mid-match. The shell cannot outlive this, so there is nothing
+    /// to unwrap.
+    @ObservationIgnored private unowned let shell: ShellModel
     @ObservationIgnored private let session: MatchSession
     @ObservationIgnored private let board: MatchBoard
 
@@ -210,9 +210,7 @@ public final class MatchHUDModel {
         guard resignArmed else { return false }
         resignArmed = false
         guard session.resign() else { return false }
-        // A gone shell has no route to move. The session is resigned either
-        // way, which is what the return value reports.
-        shell?.matchEnded(winner: session.winner)
+        shell.matchEnded(winner: session.winner)
         return true
     }
 }
