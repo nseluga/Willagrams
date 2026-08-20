@@ -13,13 +13,12 @@ struct RematchTests {
 
     typealias EveryWordIsReal = SoloMatchTests.EveryWordIsReal
 
-    /// A practice owner whose seeds are a known increasing sequence, so "the
-    /// seed changed" is an exact assertion rather than a probabilistic one.
-    static func practice(from first: UInt64 = 100) -> SoloPractice {
+    /// A shell whose seeds are a known increasing sequence, so "the seed
+    /// changed" is an exact assertion rather than a probabilistic one.
+    static func practice(from first: UInt64 = 100) -> ShellModel {
         let counter = Counter(first &- 1)
-        return SoloPractice(
-            shell: ShellModel(),
-            dictionary: EveryWordIsReal(),
+        return ShellModel(
+            dictionary: { EveryWordIsReal() },
             sleepFor: { _ in },
             seedSource: { counter.next() }
         )
@@ -32,9 +31,9 @@ struct RematchTests {
         func next() -> UInt64 { value &+= 1; return value }
     }
 
-    static func waitForPlay(_ practice: SoloPractice) async throws {
+    static func waitForPlay(_ practice: ShellModel) async throws {
         try await SoloMatchTests.waitUntil("play to begin") {
-            practice.match?.session.state.status == .playing
+            practice.run?.match.session.state.status == .playing
         }
     }
 
@@ -43,19 +42,19 @@ struct RematchTests {
     @Test("A rematch is the same two players, still host, on a different seed")
     func rematchKeepsPlayersAndChangesSeed() async throws {
         let practice = Self.practice()
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
 
-        let first = try #require(practice.match)
+        let first = try #require(practice.run?.match)
         let firstSeed = try #require(practice.seed)
         let firstSession = first.session
 
-        let results = try #require(practice.results())
+        let results = try #require(practice.run?.results())
         #expect(results.isRematchEnabled)
         #expect(results.rematch())
         try await Self.waitForPlay(practice)
 
-        let second = try #require(practice.match)
+        let second = try #require(practice.run?.match)
         let secondSeed = try #require(practice.seed)
 
         #expect(second !== first, "rematch reused the finished match")
@@ -72,7 +71,7 @@ struct RematchTests {
         // it really did open the match itself.
         #expect(second.session.lastNote == nil)
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     /// The never-repeat rule is a guarantee, not a probability: even a seed
@@ -80,22 +79,21 @@ struct RematchTests {
     /// twice running.
     @Test("A seed source that repeats itself still cannot repeat a deal")
     func aRepeatingSeedSourceStillChangesTheDeal() async throws {
-        let practice = SoloPractice(
-            shell: ShellModel(),
-            dictionary: EveryWordIsReal(),
+        let practice = ShellModel(
+            dictionary: { EveryWordIsReal() },
             sleepFor: { _ in },
             seedSource: { 42 }
         )
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
         #expect(practice.seed == 42)
 
-        let results = try #require(practice.results())
+        let results = try #require(practice.run?.results())
         #expect(results.rematch())
         try await Self.waitForPlay(practice)
         #expect(practice.seed != 42)
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     // MARK: - Criterion 2
@@ -113,21 +111,21 @@ struct RematchTests {
         var weakMatches: [WeakBox<SoloMatch>] = []
         var weakSessions: [WeakBox<MatchSession>] = []
 
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
-        weakMatches.append(WeakBox(practice.match))
-        weakSessions.append(WeakBox(practice.match?.session))
+        weakMatches.append(WeakBox(practice.run?.match))
+        weakSessions.append(WeakBox(practice.run?.match.session))
 
         for round in 1...10 {
             let previousMatch = weakMatches[round - 1]
             let previousSession = weakSessions[round - 1]
 
-            let results = try #require(practice.results())
+            let results = try #require(practice.run?.results())
             #expect(results.rematch(), "rematch \(round) did nothing")
             try await Self.waitForPlay(practice)
 
-            weakMatches.append(WeakBox(practice.match))
-            weakSessions.append(WeakBox(practice.match?.session))
+            weakMatches.append(WeakBox(practice.run?.match))
+            weakSessions.append(WeakBox(practice.run?.match.session))
 
             // The generation just replaced is released, read on a later turn.
             try await SoloMatchTests.waitUntil("generation \(round - 1) to be released") {
@@ -144,7 +142,7 @@ struct RematchTests {
         // take the current generation's pump with them. Scoped, so no strong
         // reference to it outlives the check and fakes the release below.
         try await {
-            let live = try #require(practice.match)
+            let live = try #require(practice.run?.match)
             // `.playing` says the match opened, not that the far end has taken
             // its opening tiles — those land on a later turn. Reading the count
             // straight after the status wait races that, and loses about one run
@@ -159,7 +157,7 @@ struct RematchTests {
             }
         }()
 
-        practice.end()
+        practice.returnToMenu()
         try await SoloMatchTests.waitUntil("the last generation to be released") {
             weakMatches.allSatisfy { $0.value == nil }
                 && weakSessions.allSatisfy { $0.value == nil }
@@ -177,16 +175,16 @@ struct RematchTests {
     @Test("A message from the finished match's transport cannot reach the new session")
     func theOldTransportCannotReachTheNewSession() async throws {
         let practice = Self.practice()
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
         // Held strongly on purpose: a wire that refuses only because its owner
         // deallocated would prove nothing about the teardown.
-        let old = try #require(practice.match)
+        let old = try #require(practice.run?.match)
 
-        let results = try #require(practice.results())
+        let results = try #require(practice.run?.results())
         #expect(results.rematch())
         try await Self.waitForPlay(practice)
-        let new = try #require(practice.match)
+        let new = try #require(practice.run?.match)
 
         #expect(old.session.isMatchOver, "the finished match was never torn down")
 
@@ -217,7 +215,7 @@ struct RematchTests {
         )
         #expect(new.session.winningPlacements == nil)
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     /// The end screen is not the only way in. A start called straight on the
@@ -227,14 +225,14 @@ struct RematchTests {
     @Test("Starting again without the end screen still tears the previous match down")
     func aDirectRestartStillTearsTheOldMatchDown() async throws {
         let practice = Self.practice()
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
-        let old = try #require(practice.match)
+        let old = try #require(practice.run?.match)
 
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
 
-        #expect(practice.match !== old, "a second start handed back the live match")
+        #expect(practice.run?.match !== old, "a second start handed back the live match")
         #expect(old.session.isMatchOver, "the previous match was left running")
         await #expect(throws: MatchTransportError.peerDisconnected) {
             try await old.peerTransport.send(
@@ -242,7 +240,7 @@ struct RematchTests {
             )
         }
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     // MARK: - Criterion 4
@@ -257,38 +255,36 @@ struct RematchTests {
     @Test("No state from the finished match is visible in the new one")
     func theNewMatchStartsFresh() async throws {
         let practice = Self.practice()
-        #expect(practice.start())
-        try await SoloMatchTests.waitUntil("the opening hand") {
-            practice.match?.session.state.hand.count == ShellModel.soloHandSize
+        #expect(practice.startSoloPractice())
+        // The run's `MatchBoard` lays every arrival, so the opening deal shows
+        // up on the board rather than sitting in the hand — the wired path a
+        // player actually sees, not a bare session's.
+        try await SoloMatchTests.waitUntil("the opening deal to be laid") {
+            practice.run?.session.state.board.placementList.count == ShellModel.soloHandSize
         }
-        let old = try #require(practice.match)
+        let old = try #require(practice.run?.match)
 
         // Play the finished match into a state a leak would be visible in: a
-        // tile on the board, a drawn tile, and a win.
-        let placed = try #require(old.session.state.hand.first)
-        try old.session.place(tileID: placed.id, at: Coord(row: 8, col: 8))
+        // full board and a drawn tile on top of it.
         #expect(old.session.draw())
         // Both ends: `HostPool` grants to each player per draw, and the far
         // end's grant is a separate message that need not have landed yet.
         try await SoloMatchTests.waitUntil("the drawn tile at both ends") {
-            old.session.state.hand.count == ShellModel.soloHandSize
+            old.session.state.board.placementList.count == ShellModel.soloHandSize + 1
                 && old.peerTileIDs.count == ShellModel.soloHandSize + 1
         }
-        #expect(old.session.state.board.placementList.isEmpty == false)
-        let oldTileIDs = Set(old.session.state.hand.map(\.id))
-            .union(old.session.state.board.placementList.map(\.tile.id))
-            .union(old.peerTileIDs)
+        let oldTileIDs = Self.localTileIDs(old).union(old.peerTileIDs)
         let oldPeerTiles = old.peerTileIDs.count
 
-        let results = try #require(practice.results())
+        let results = try #require(practice.run?.results())
         #expect(results.rematch())
-        try await SoloMatchTests.waitUntil("the new opening hand") {
-            practice.match?.session.state.hand.count == ShellModel.soloHandSize
+        try await SoloMatchTests.waitUntil("the new opening deal to be laid") {
+            practice.run?.session.state.board.placementList.count == ShellModel.soloHandSize
         }
-        let new = try #require(practice.match)
+        let new = try #require(practice.run?.match)
 
-        #expect(new.session.state.board.placementList.isEmpty, "the finished board carried over")
-        #expect(new.session.state.hand.count == ShellModel.soloHandSize)
+        #expect(new.session.state.board.placementList.count == ShellModel.soloHandSize)
+        #expect(new.session.state.hand.isEmpty)
         #expect(new.session.pendingDrawTiles.isEmpty)
         #expect(new.session.winner == nil)
         #expect(new.session.winningPlacements == nil)
@@ -307,7 +303,7 @@ struct RematchTests {
 
         // A fresh `HostPool`, as far as it is observable: every tile in the new
         // match is a tile the finished one never held, at both ends.
-        let newTileIDs = Set(new.session.state.hand.map(\.id)).union(new.peerTileIDs)
+        let newTileIDs = Self.localTileIDs(new).union(new.peerTileIDs)
         #expect(newTileIDs.isDisjoint(with: oldTileIDs), "a tile survived the rematch")
         #expect(new.peerTileIDs.count == ShellModel.soloHandSize)
         // The finished match had spent more of its pool than an opening deal —
@@ -315,7 +311,16 @@ struct RematchTests {
         // is over a real difference and not two untouched pools.
         #expect(oldPeerTiles > ShellModel.soloHandSize)
 
-        practice.end()
+        practice.returnToMenu()
+    }
+
+    /// Every tile the local end holds anywhere: laid, in hand, and waiting
+    /// behind Draw. A wired run lays its arrivals, so a hand-only read would
+    /// miss most of them.
+    static func localTileIDs(_ solo: SoloMatch) -> Set<UUID> {
+        Set(solo.session.state.board.placementList.map(\.tile.id))
+            .union(solo.session.state.hand.map(\.id))
+            .union(solo.session.pendingDrawTiles.map(\.id))
     }
 
     // MARK: - A stale end screen
@@ -329,19 +334,19 @@ struct RematchTests {
     @Test("A stale end screen's Main Menu cannot end the match that replaced it")
     func aStaleScreenCannotEndTheNewMatch() async throws {
         let practice = Self.practice()
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
 
         // Two screens over the same generation — exactly what a re-render gives.
-        let stale = try #require(practice.results())
-        let current = try #require(practice.results())
+        let stale = try #require(practice.run?.results())
+        let current = try #require(practice.run?.results())
         #expect(current.rematch())
         try await Self.waitForPlay(practice)
-        let new = try #require(practice.match)
+        let new = try #require(practice.run?.match)
 
         stale.mainMenu()
 
-        #expect(practice.match === new, "a stale screen dropped the live match")
+        #expect(practice.run?.match === new, "a stale screen dropped the live match")
         #expect(new.session.isMatchOver == false, "a stale screen ended the live match")
         #expect(new.session.state.status == .playing)
         // The live end still delivers, so the stale screen did not take the
@@ -356,7 +361,7 @@ struct RematchTests {
             new.peerTileIDs.count == dealt + 1
         }
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     /// The route change and the teardown are one decision. A stale press that
@@ -365,59 +370,57 @@ struct RematchTests {
     @Test("A stale end screen's Main Menu leaves the live match's route alone")
     func aStaleScreenCannotSendTheNewMatchToTheMenu() async throws {
         let counter = Counter(99)
-        let shell = ShellModel()
-        let practice = SoloPractice(
-            shell: shell,
-            dictionary: EveryWordIsReal(),
+        let practice = ShellModel(
+            dictionary: { EveryWordIsReal() },
             sleepFor: { _ in },
             seedSource: { counter.next() }
         )
-        #expect(practice.start())
+        let shell = practice
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
 
-        let stale = try #require(practice.results())
-        let current = try #require(practice.results())
+        let stale = try #require(practice.run?.results())
+        let current = try #require(practice.run?.results())
         #expect(current.rematch())
         try await Self.waitForPlay(practice)
-        let new = try #require(practice.match)
+        let new = try #require(practice.run?.match)
         let liveRoute = shell.route
 
         stale.mainMenu()
 
         #expect(shell.route == liveRoute, "a stale screen sent the live match to the menu")
         #expect(shell.route != .menu)
-        #expect(practice.match === new, "a stale screen dropped the live match")
+        #expect(practice.run?.match === new, "a stale screen dropped the live match")
         #expect(new.session.isMatchOver == false)
         #expect(new.session.state.status == .playing)
 
         // A live screen over the current generation still works: it both tears
         // down and navigates. (`current` spent its closures on the rematch.)
-        let live = try #require(practice.results())
+        let live = try #require(practice.run?.results())
         live.mainMenu()
         #expect(shell.route == .menu)
-        #expect(practice.match == nil)
+        #expect(practice.run == nil)
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     @Test("A stale end screen's Main Menu declines every press, not just the first")
     func aStaleScreenDeclinesRepeatedMainMenuPresses() async throws {
         let counter = Counter(99)
-        let shell = ShellModel()
-        let practice = SoloPractice(
-            shell: shell,
-            dictionary: EveryWordIsReal(),
+        let practice = ShellModel(
+            dictionary: { EveryWordIsReal() },
             sleepFor: { _ in },
             seedSource: { counter.next() }
         )
-        #expect(practice.start())
+        let shell = practice
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
 
-        let stale = try #require(practice.results())
-        let current = try #require(practice.results())
+        let stale = try #require(practice.run?.results())
+        let current = try #require(practice.run?.results())
         #expect(current.rematch())
         try await Self.waitForPlay(practice)
-        let new = try #require(practice.match)
+        let new = try #require(practice.run?.match)
         let liveRoute = shell.route
 
         // A decline must not spend the screen. If the first press drops the
@@ -427,7 +430,7 @@ struct RematchTests {
             stale.mainMenu()
             #expect(shell.route == liveRoute, "press \(press) sent the live match to the menu")
             #expect(shell.route != .menu, "press \(press) reached the menu")
-            #expect(practice.match === new, "press \(press) dropped the live match")
+            #expect(practice.run?.match === new, "press \(press) dropped the live match")
             #expect(new.session.isMatchOver == false, "press \(press) ended the live match")
         }
 
@@ -437,29 +440,29 @@ struct RematchTests {
         #expect(stale.rematch() == false, "a stale screen claimed it started a rematch")
         stale.mainMenu()
         #expect(shell.route == liveRoute, "Main Menu after a stale Rematch reached the menu")
-        #expect(practice.match === new, "a stale Rematch dropped the live match")
+        #expect(practice.run?.match === new, "a stale Rematch dropped the live match")
         #expect(new.session.isMatchOver == false)
 
         // The live screen still works after all that.
-        let live = try #require(practice.results())
+        let live = try #require(practice.run?.results())
         live.mainMenu()
         #expect(shell.route == .menu)
-        #expect(practice.match == nil)
+        #expect(practice.run == nil)
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     @Test("A stale end screen's Rematch cannot rebuild over the match that replaced it")
     func aStaleScreenCannotRebuildOverTheNewMatch() async throws {
         let practice = Self.practice()
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
 
-        let stale = try #require(practice.results())
-        let current = try #require(practice.results())
+        let stale = try #require(practice.run?.results())
+        let current = try #require(practice.run?.results())
         #expect(current.rematch())
         try await Self.waitForPlay(practice)
-        let new = try #require(practice.match)
+        let new = try #require(practice.run?.match)
         let seedAfterRematch = practice.seed
 
         // The press is refused outright: a stale screen builds nothing, so
@@ -467,12 +470,12 @@ struct RematchTests {
         // leave it able to navigate on the way out. Nothing built, nothing spent.
         #expect(stale.rematch() == false, "a stale screen claimed it started a rematch")
 
-        #expect(practice.match === new, "a stale screen rebuilt over the live match")
+        #expect(practice.run?.match === new, "a stale screen rebuilt over the live match")
         #expect(practice.seed == seedAfterRematch, "a stale screen redealt the live match")
         #expect(new.session.isMatchOver == false)
         #expect(new.session.state.status == .playing)
 
-        practice.end()
+        practice.returnToMenu()
     }
 
     // MARK: - The ordering guardrail
@@ -482,23 +485,23 @@ struct RematchTests {
     @Test("Rematch tears the old match down before it starts the new one")
     func rematchTearsDownBeforeStarting() async throws {
         let practice = Self.practice()
-        #expect(practice.start())
+        #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
-        let old = try #require(practice.match)
+        let old = try #require(practice.run?.match)
 
         var log: [String] = []
         let results = ResultsModel(
             shell: ShellModel(),
             session: old.session,
-            teardown: { log.append("down"); practice.end(); return true },
+            teardown: { log.append("down"); practice.returnToMenu(); return true },
             rematch: {
                 log.append(old.session.isMatchOver ? "up-after-down" : "up-too-early")
-                practice.start()
+                practice.startSoloPractice()
             }
         )
         #expect(results.rematch())
         #expect(log == ["down", "up-after-down"], "the new match was built over a live one")
 
-        practice.end()
+        practice.returnToMenu()
     }
 }
