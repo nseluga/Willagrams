@@ -238,7 +238,7 @@ frozen.
     - A bot at `ladderDepth` 3 whose rack and board admit no placement sends exactly one `swapRequest`, and places a tile once the `swapGrant` lands
     - A bot answered with `.swapDisabled` sends no further swap request for the remainder of the match
     - A bot at `ladderDepth` 2 or below never sends a `swapRequest`
-  status: not started
+  status: done
 
 - task: |
     Build the difficulty screen.
@@ -262,7 +262,7 @@ frozen.
     - The three presets differ in both `ladderDepth` and `thinkDelay`, and `.easy` carries the lowest depth and the longest delay
     - Every visual value in the file resolves through a `DesignTokens` key, and no player-facing string uses the Bananagrams vocabulary — confirmed by a source check
     - `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build` succeeds
-  status: not started
+  status: done
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
 
