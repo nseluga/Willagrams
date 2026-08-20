@@ -67,6 +67,11 @@ public final class MatchRun {
     /// What the in-match HUD shows and what its controls do.
     public let hud: MatchHUDModel
 
+    /// The word list this run was built against. Held so the three screens read
+    /// the list their own match validates with, rather than the root view
+    /// reaching for a second one.
+    public let dictionary: any WordList
+
     /// The seed this run was dealt from. Read by `ShellModel` to guarantee the
     /// next run is a different deal, and by tests to prove it.
     public let seed: UInt64
@@ -98,6 +103,7 @@ public final class MatchRun {
         self.shell = shell
         self.generation = generation
         self.seed = setup.seed
+        self.dictionary = dictionary
         let match = SoloMatch(setup: setup, dictionary: dictionary, sleepFor: sleepFor)
         let board = MatchBoard(session: match.session, dictionary: dictionary)
         self.match = match
