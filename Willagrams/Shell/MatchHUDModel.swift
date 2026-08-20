@@ -91,17 +91,14 @@ public final class MatchHUDModel {
 
     /// How many tiles are left to take, or `nil` when the session cannot say.
     ///
-    /// Today it is always `nil`. `MatchSession.state.pool` is a documented
-    /// placeholder — permanently empty on host and guest alike — and the real
-    /// supply lives behind `MatchSession.hostPool`, which is private, inside an
-    /// actor, and in a lane this one may not edit. **Amendment needed:
-    /// `Willagrams/Match/MatchSession.swift` must publish a remaining count;
-    /// this property then returns it and nothing else here changes.**
+    /// Straight from `MatchSession.poolRemaining`, which reads the host's real
+    /// pool back after every movement of it. `nil` on a device that runs no
+    /// pool — a guest cannot know this number.
     ///
-    /// It is `nil` rather than a number counted here on purpose: a shell-side
-    /// ledger of grants is a second source of truth that can silently disagree
-    /// with the pool it claims to describe.
-    public var poolRemaining: Int? { nil }
+    /// Nothing is counted here on purpose: a shell-side ledger of grants is a
+    /// second source of truth that can silently disagree with the pool it
+    /// claims to describe.
+    public var poolRemaining: Int? { session.poolRemaining }
 
     /// The frozen name for the supply.
     public var poolLabel: String { Terminology.pool }
