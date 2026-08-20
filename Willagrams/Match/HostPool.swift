@@ -28,22 +28,26 @@ import WillagramsRules
 /// stream and hands each message to ``handle(_:)``.
 public actor HostPool {
 
-    /// Which of two players runs the pool.
+    /// Which player in a roster runs the pool.
     ///
-    /// Pure and total, so both devices compute the same answer from the same
-    /// two ids with no negotiation message — never a timestamp, a random value
-    /// or connection order. Lower `rawValue` wins, so the answer does not
-    /// depend on argument order either.
-    public static func host(of first: PlayerID, _ second: PlayerID) -> PlayerID {
-        first.rawValue <= second.rawValue ? first : second
+    /// Pure and total, so every device computes the same answer from the same
+    /// roster with no negotiation message — never a timestamp, a random value
+    /// or connection order. Lowest `rawValue` wins, so the answer does not
+    /// depend on the order the caller happened to name them in, and it agrees
+    /// with `ValidatedStart.host`, which reads `roster[0]` off a sorted roster.
+    ///
+    /// - Precondition: `players` is not empty.
+    public static func host(of players: [PlayerID]) -> PlayerID {
+        precondition(!players.isEmpty, "a match needs at least one player")
+        return players.min { $0.rawValue < $1.rawValue }!
     }
 
     /// The one real pool in the match. Readable so the host's own UI can show
     /// how many tiles are left; only this actor may move it.
     public private(set) var pool: Pool
 
-    /// Both players, ordered by `rawValue` so a fan-out does not depend on the
-    /// order the caller happened to name them in.
+    /// Every player in the match, ordered by `rawValue` so a fan-out does not
+    /// depend on the order the caller happened to name them in.
     private let players: [PlayerID]
 
     private let transport: any MatchTransport
@@ -63,17 +67,23 @@ public actor HostPool {
     private let swapEnabled: Bool
 
     public init(
-        players: (PlayerID, PlayerID),
+        players: [PlayerID],
         pool: Pool,
         seed: UInt64,
         transport: any MatchTransport,
         swapEnabled: Bool = true
     ) {
         self.swapEnabled = swapEnabled
-        // Our own bug, not a peer payload: two equal ids would pass the
-        // membership guard and fan a round out to the same player twice.
-        precondition(players.0 != players.1, "a match needs two different players")
-        self.players = [players.0, players.1].sorted { $0.rawValue < $1.rawValue }
+        // Our own bug, not a peer payload — a roster off the wire has already
+        // been through `MatchMessage.validatedStart` by the time it reaches
+        // here. A repeated id would pass the membership guard and fan a round
+        // out to the same player twice.
+        precondition(
+            MatchLimits.players.contains(players.count),
+            "a match holds \(MatchLimits.players.lowerBound) to \(MatchLimits.players.upperBound) players, got \(players.count)"
+        )
+        precondition(Set(players).count == players.count, "a match needs distinct players")
+        self.players = players.sorted { $0.rawValue < $1.rawValue }
         self.pool = pool
         self.generator = SeededGenerator(seed: seed)
         self.transport = transport
@@ -150,6 +160,37 @@ public actor HostPool {
         default:
             return []
         }
+    }
+
+    /// Deals the opening hand: `handSize` tiles to every player, once.
+    ///
+    /// One draw for the whole deal, like a round, so a pool too small to go
+    /// round moves nothing rather than dealing one player short. A slice per
+    /// player means no tile can reach two racks.
+    ///
+    /// With six players this is the tight case: `handSize * players.count` has
+    /// to fit inside the pool, and `Pool.draw` refusing as a unit is what keeps
+    /// the last player from starting a tile short. `validatedStart` refuses the
+    /// same arithmetic up front, so a legal match never reaches the refusal
+    /// here — this is the second line, not the first.
+    ///
+    /// - Returns: the grants it produced, the peer's already on the wire and the
+    ///   host's for the caller to apply — the same contract as ``handle(_:)``.
+    ///   Empty when there is nothing to deal, or not enough pool to deal from:
+    ///   no `poolExhausted` goes out, because a match that cannot deal an
+    ///   opening hand is a lobby problem, not a mid-match one.
+    @discardableResult
+    public func deal(handSize: Int) async -> [MatchMessage] {
+        guard handSize > 0, let drawn = pool.draw(handSize * players.count) else { return [] }
+        let grants = players.enumerated().map { index, player in
+            MatchMessage.grant(
+                player: player,
+                tiles: Array(drawn[(index * handSize)..<((index + 1) * handSize)])
+            )
+        }
+        // No requester: the deal answers nobody's request. Only `rejected` and
+        // the default arm read it, and this produces neither.
+        return await answer(grants, to: transport.localPlayerID)
     }
 
     /// Puts the part of `produced` the peer is entitled to see on the wire, in

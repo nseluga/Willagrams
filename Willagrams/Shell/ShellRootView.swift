@@ -1,0 +1,98 @@
+import SwiftUI
+import WillagramsRules
+
+/// The app root: a `switch` over ``ShellModel/route`` and nothing else.
+///
+/// No navigation container of any kind — a guardrail test enforces that by
+/// name. The screens are full-bleed modes rather than a drill-down hierarchy,
+/// so a nav bar would be hidden on every one of them, and a navigation path
+/// lives inside a View where no test in this repo can reach it.
+/// This view holds no navigation state and makes no routing decision — it
+/// renders whatever route `ShellModel` reports.
+///
+/// ## Why the three match screens are `#if DEBUG`
+///
+/// `MatchRun` — and therefore `ShellModel.run` — is `#if DEBUG`, because
+/// `SoloMatch` owns a `FakeTransport` that must not reach a shipping build.
+/// So the three screens that read a run cannot be *named* in Release, and this
+/// file fences their bodies rather than their cases: the `switch` stays
+/// exhaustive over `AppRoute` in both configurations and the routing shape is
+/// identical.
+///
+/// That cannot strand a player on a blank screen. `.countdown` is only ever
+/// assigned by `ShellModel.startMatch`, whose only caller is
+/// `startSoloPractice`, which returns `false` before touching the route in
+/// Release; `.match` and `.results` are only reachable onward from
+/// `.countdown`. The menu's one button is `startSoloPractice`. So in Release
+/// the route never leaves `.menu` and the empty branches are unreachable, and
+/// in Debug `shell.run` is non-nil for the whole life of those three routes.
+/// A run that is nevertheless absent renders nothing rather than crashing or
+/// fabricating a second session — the transition that failed to build one is
+/// the defect, and it is `ShellModel`'s to fix.
+struct ShellRootView: View {
+
+    let shell: ShellModel
+
+    var body: some View {
+        Group {
+            switch shell.route {
+            case .menu: MenuView(shell: shell)
+            // Not fenced by `#if DEBUG` like the three below it: the rules
+            // screen reads no run, so it ships.
+            case .howToPlay: HowToPlayView(shell: shell)
+            case .countdown: countdown
+            case .match: match
+            case .results: results
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DesignTokens.Palette.canvasTop)
+    }
+
+#if DEBUG
+
+    /// The board, with the count over it. Reads the run's session (the count),
+    /// its `MatchBoard` (the tiles the deal is landing) and its dictionary.
+    /// Bindings, not copies: the deal writes into the very board the match
+    /// screen goes on to show.
+    @ViewBuilder private var countdown: some View {
+        if let run = shell.run {
+            @Bindable var matchBoard = run.board
+            CountdownView(
+                session: run.session,
+                board: $matchBoard.board,
+                model: $matchBoard.model,
+                dictionary: run.dictionary
+            )
+        }
+    }
+
+    /// The board, with the HUD over it. Reads the run's `MatchBoard`, its
+    /// `MatchHUDModel` and its dictionary — the same instances the countdown
+    /// just showed, so nothing is rebuilt across the transition.
+    @ViewBuilder private var match: some View {
+        if let run = shell.run {
+            MatchView(matchBoard: run.board, hud: run.hud, dictionary: run.dictionary)
+        }
+    }
+
+    /// The end screen over the board the match ended on. Reads the run's
+    /// `results(board:)` factory — the one place the two ways out are wired —
+    /// and its dictionary.
+    @ViewBuilder private var results: some View {
+        if let run = shell.run {
+            ResultsView(results: run.results(board: run.board.board), dictionary: run.dictionary)
+        }
+    }
+
+#else
+
+    // No `MatchRun` type exists here, so there is nothing these three could
+    // render. See "Why the three match screens are `#if DEBUG`" above: the
+    // routes that would reach them are unreachable in this configuration.
+    private var countdown: some View { EmptyView() }
+    private var match: some View { EmptyView() }
+    private var results: some View { EmptyView() }
+
+#endif
+}

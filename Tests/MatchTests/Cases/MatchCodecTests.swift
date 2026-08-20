@@ -11,7 +11,7 @@ struct MatchCodecTests {
     static var everyCase: [MatchMessage] {
         let tiles = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
         return [
-            .start(version: WireFormat.current, seed: 0xDEAD_BEEF, startingHandSize: 21, countdownSeconds: 3, options: .standard),
+            .start(version: WireFormat.current, seed: 0xDEAD_BEEF, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [PlayerID(rawValue: "a"), PlayerID(rawValue: "b")]),
             .drawRequest(player: player),
             .grant(player: player, tiles: tiles),
             .swapRequest(player: player, returning: tiles[0]),
@@ -36,7 +36,7 @@ struct MatchCodecTests {
     }
 
     static var goldenFixtureURL: URL {
-        repoRoot.appendingPathComponent("Tests/WillagramsRulesTests/Fixtures/wire-v2.json")
+        repoRoot.appendingPathComponent("Tests/WillagramsRulesTests/Fixtures/wire-v3.json")
     }
 
     @Test("Every case round-trips through the codec unchanged")
@@ -64,7 +64,7 @@ struct MatchCodecTests {
 
     @Test("A start with a foreign version is refused, not decoded")
     func foreignVersionIsRefused() throws {
-        let foreign = MatchMessage.start(version: WireFormat.current + 1, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard)
+        let foreign = MatchMessage.start(version: WireFormat.current + 1, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [PlayerID(rawValue: "a"), PlayerID(rawValue: "b")])
         let data = try MatchCodec.encode(foreign)
 
         #expect {
@@ -77,7 +77,7 @@ struct MatchCodecTests {
     @Test("A start at the current version is accepted")
     func currentVersionIsAccepted() throws {
         let data = try MatchCodec.encode(
-            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard)
+            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [PlayerID(rawValue: "a"), PlayerID(rawValue: "b")])
         )
         let decoded = try MatchCodec.decode(data)
         guard case .start = decoded else {

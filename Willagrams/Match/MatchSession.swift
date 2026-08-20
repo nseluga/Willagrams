@@ -122,9 +122,34 @@ public final class MatchSession {
     /// next completed board ends the match.
     public private(set) var poolIsExhausted = false
 
-    /// Where the peer is. Everything that locks the board while the peer is
+    /// Where every peer is. Everything that locks the board while a peer is
     /// away, and the deadline the shell counts down to, reads from here.
-    public private(set) var peerPresence: PeerPresence = .present
+    ///
+    /// Absent means present: a six-player roster would otherwise need six
+    /// entries written before the first message ever arrives, and an empty
+    /// dictionary is the state every match opens in. Read it through
+    /// ``presence(of:)`` rather than subscripting it.
+    public private(set) var peerPresences: [PlayerID: PeerPresence] = [:]
+
+    /// Where one player is. `.present` for anyone this session has heard
+    /// nothing about, ``localPlayerID`` included.
+    public func presence(of player: PlayerID) -> PeerPresence {
+        peerPresences[player] ?? .present
+    }
+
+    /// The match's presence as one value: how far the *worst-placed* peer is.
+    ///
+    /// What a banner and a lock actually want to know — somebody is away, or
+    /// somebody has left — never which of six it was. `.reconnecting` wins over
+    /// `.gone` because a match with anyone still inside their window is frozen,
+    /// not over. Derived, so it costs no observed storage.
+    public var peerPresence: PeerPresence {
+        for player in peerPlayerIDs {
+            let presence = presence(of: player)
+            if case .reconnecting = presence { return presence }
+        }
+        return peerPlayerIDs.contains { presence(of: $0) == .gone } ? .gone : .present
+    }
 
     /// The winner's board as it was sent, straight off the wire.
     ///
@@ -158,6 +183,35 @@ public final class MatchSession {
     //
     // Before adding observed state here, re-run `swift test --package-path
     // Tests/MatchTests`. A green engine suite does not cover this.
+
+    /// The last count read back from ``HostPool/pool``, or `nil` on a device
+    /// that runs no pool. `@ObservationIgnored` for the reason above; observers
+    /// are driven through ``poolRemaining`` and ``setPoolRemaining(_:)``, which
+    /// register and fire on that computed key path directly rather than
+    /// borrowing another property's code path.
+    @ObservationIgnored private var storedPoolRemaining: Int?
+
+    /// How many tiles the host's pool still holds, or `nil` on a device that
+    /// does not run one — a guest cannot know this number, and no guess is made
+    /// for it.
+    ///
+    /// Never a tally of grants: the value is read back from ``HostPool/pool``
+    /// itself after every movement of it, so it cannot drift from the pool it
+    /// describes.
+    public var poolRemaining: Int? {
+        access(keyPath: \.poolRemaining)
+        return storedPoolRemaining
+    }
+
+    private func setPoolRemaining(_ count: Int?) {
+        withMutation(keyPath: \.poolRemaining) { storedPoolRemaining = count }
+    }
+
+    /// Re-reads the count from the pool. Called after every `HostPool` call
+    /// that can move it, from the main actor, inside the same enqueued step.
+    private func refreshPoolRemaining(from hostPool: HostPool) async {
+        setPoolRemaining(await hostPool.pool.count)
+    }
 
     @ObservationIgnored private var storedOptions: MatchOptions = .standard
 
@@ -208,7 +262,7 @@ public final class MatchSession {
     /// `state.status` alone cannot answer this — it has no terminal case
     /// without a winner — so a lost peer leaves the status where it stood and
     /// is reported here. Nothing is sent and no game state moves either way.
-    public var isMatchOver: Bool { isFinished || peerPresence == .gone }
+    public var isMatchOver: Bool { isFinished || presentPlayers.count < 2 }
 
     /// Who won, or `nil` if nobody did.
     ///
@@ -228,7 +282,31 @@ public final class MatchSession {
     // MARK: - Fixed for the life of the match
 
     public let localPlayerID: PlayerID
-    public let peerPlayerID: PlayerID
+
+    /// Every player in this match, sorted ascending by `rawValue`.
+    ///
+    /// Sorted is load-bearing, not tidiness: the host election is the first
+    /// element, so every device computes the same host from the same list with
+    /// no message about it.
+    public let roster: [PlayerID]
+
+    /// The roster without this device.
+    public var peerPlayerIDs: [PlayerID] { roster.filter { $0 != localPlayerID } }
+
+    /// The players who have not left. A match is over when fewer than two are
+    /// left, whoever went and however they went.
+    private var presentPlayers: [PlayerID] {
+        roster.filter { presence(of: $0) != .gone }
+    }
+
+    /// Whether a `PlayerID` off the wire is somebody *else* in this match.
+    ///
+    /// Everything inbound that names a player is gated on this. A message
+    /// naming this device, or naming nobody on the roster, is a modified peer
+    /// rather than a move.
+    private func isPeer(_ player: PlayerID) -> Bool {
+        player != localPlayerID && roster.contains(player)
+    }
 
     private let transport: any MatchTransport
 
@@ -261,6 +339,14 @@ public final class MatchSession {
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
     @ObservationIgnored private var reconnectTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
+
+    /// The opening deal has not happened yet on this device.
+    ///
+    /// On the host it stops a second deal — a peer returning restarts the
+    /// countdown, and that would hand out two hands. On the guest it is half of
+    /// how an opening grant is told from a peer's draw; see
+    /// ``takeOpeningDeal(_:)``.
+    @ObservationIgnored private var awaitingOpeningDeal = false
 
     /// The countdown the freeze interrupted, held so a peer that comes back
     /// resumes from the second it stopped on rather than from the top.
@@ -308,10 +394,11 @@ public final class MatchSession {
     /// - Parameters:
     ///   - transport: the wire. This session becomes the sole consumer of its
     ///     inbound stream immediately.
-    ///   - peerPlayerID: the one opponent. Injected rather than read from
+    ///   - roster: every player in the match, this device included, sorted
+    ///     ascending by `rawValue`. Injected rather than read from
     ///     `peerConnectionStates` so nothing races the arrival of `.start`;
-    ///     that stream is consumed here only to learn when this player leaves
-    ///     and comes back, and a state naming anyone else is ignored.
+    ///     that stream is consumed here only to learn when a player leaves and
+    ///     comes back, and a state naming anyone off the roster is ignored.
     ///   - dictionary: what a complete board is validated against.
     ///   - dictionaryHash: the content hash of `dictionary`, per
     ///     ``canonicalWordListHash(_:)``. Declared rather than derived: `any
@@ -323,6 +410,44 @@ public final class MatchSession {
     ///     real time.
     public init(
         transport: any MatchTransport,
+        roster: [PlayerID],
+        dictionary: any WordList,
+        dictionaryHash: String = MatchOptions.standardDictionaryHash,
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        }
+    ) {
+        // Trapping, not refusing: none of this came off the wire. A caller that
+        // built a roster this way has a bug, and a session that quietly played
+        // on with it would desync every device in the match.
+        precondition(
+            MatchLimits.players.contains(roster.count),
+            "a match holds \(MatchLimits.players.lowerBound)...\(MatchLimits.players.upperBound) players"
+        )
+        precondition(Set(roster).count == roster.count, "a match needs distinct players")
+        precondition(
+            roster == roster.sorted(by: { $0.rawValue < $1.rawValue }),
+            "the roster travels sorted, so every device elects the same host"
+        )
+        precondition(
+            roster.contains(transport.localPlayerID),
+            "the roster must contain the device playing it"
+        )
+        self.transport = transport
+        self.localPlayerID = transport.localPlayerID
+        self.roster = roster
+        self.dictionary = dictionary
+        self.localDictionaryHash = dictionaryHash
+        self.sleepFor = sleepFor
+        beginReceiving()
+    }
+
+    /// The two-player case: the only lobby this release ships.
+    ///
+    /// Sorts the pair into the order every device computes the host from, so a
+    /// caller never has to know that the roster travels sorted.
+    public convenience init(
+        transport: any MatchTransport,
         peerPlayerID: PlayerID,
         dictionary: any WordList,
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
@@ -330,13 +455,14 @@ public final class MatchSession {
             try await Task.sleep(for: $0)
         }
     ) {
-        self.transport = transport
-        self.localPlayerID = transport.localPlayerID
-        self.peerPlayerID = peerPlayerID
-        self.dictionary = dictionary
-        self.localDictionaryHash = dictionaryHash
-        self.sleepFor = sleepFor
-        beginReceiving()
+        self.init(
+            transport: transport,
+            roster: [transport.localPlayerID, peerPlayerID]
+                .sorted { $0.rawValue < $1.rawValue },
+            dictionary: dictionary,
+            dictionaryHash: dictionaryHash,
+            sleepFor: sleepFor
+        )
     }
 
     /// This device's word-list hash, compared against the host's on start.
@@ -368,18 +494,18 @@ public final class MatchSession {
         }
     }
 
-    /// Applies one connection-state change for the one peer.
+    /// Applies one connection-state change for one peer.
     ///
-    /// A state naming anybody else is not about this match's opponent — two
-    /// players per match — and is ignored rather than trusted.
+    /// A state naming somebody off this match's roster, or naming this device,
+    /// is ignored rather than trusted.
     private func apply(_ connection: PeerConnectionState) {
         switch connection {
         case let .connected(player):
-            guard player == peerPlayerID else { return }
-            peerReturned()
+            guard isPeer(player) else { return }
+            peerReturned(player)
         case let .disconnected(player):
-            guard player == peerPlayerID else { return }
-            peerDropped()
+            guard isPeer(player) else { return }
+            peerDropped(player)
         }
     }
 
@@ -388,8 +514,13 @@ public final class MatchSession {
     /// Nothing about the game moves here. No winner is declared — a dropped
     /// peer is not a forfeit, and the only two messages that name a winner are
     /// `.win` and `.resign`.
-    private func peerDropped() {
-        guard peerPresence == .present else { return }
+    ///
+    /// ponytail: one reconnect window covers every away peer at once, so a
+    /// second drop restarts it and hands the first peer extra grace. Give each
+    /// player its own task when a six-player match shows the difference
+    /// matters; at two players there is only ever one window.
+    private func peerDropped(_ player: PlayerID) {
+        guard presence(of: player) == .present else { return }
         // A countdown that kept ticking through the freeze would move `status`,
         // which is game state, and could reach `.playing` on a match nobody is
         // playing. Cancelled here and resumed from the same second if the peer
@@ -402,14 +533,14 @@ public final class MatchSession {
         guard !isFinished else {
             // The match already has a winner, so there is nothing to wait for
             // and a reconnecting banner over the end screen would be a lie.
-            peerPresence = .gone
+            peerPresences[player] = .gone
             return
         }
 
         // A `Date` for the shell to count down to. The wait itself is timed by
         // the injected clock below, never by comparing this against `Date()`:
         // it is a display value, and the clock is the seam a test drives.
-        peerPresence = .reconnecting(
+        peerPresences[player] = .reconnecting(
             deadline: Date().addingTimeInterval(TimeInterval(Self.reconnectGraceSeconds))
         )
         reconnectTask?.cancel()
@@ -426,14 +557,20 @@ public final class MatchSession {
             // observe cancellation, and a peer that came back must not have the
             // match ended out from under it.
             guard !Task.isCancelled else { return }
-            self?.peerIsGone()
+            self?.awayPeersAreGone()
         }
     }
 
-    /// The deadline passed. The match is over and nobody won.
-    private func peerIsGone() {
-        guard case .reconnecting = peerPresence else { return }
-        peerPresence = .gone
+    /// The deadline passed. Every peer still away has left for good, and if
+    /// that leaves fewer than two players the match is over with nobody named.
+    private func awayPeersAreGone() {
+        var anyLeft = false
+        for player in roster {
+            guard case .reconnecting = presence(of: player) else { continue }
+            peerPresences[player] = .gone
+            anyLeft = true
+        }
+        guard anyLeft, isMatchOver else { return }
         // Over is over, so `receive` discards everything from here on: against a
         // real stream, which never finishes, this task would go on decoding and
         // dropping for the life of the session. The presence pump stays — a peer
@@ -453,13 +590,13 @@ public final class MatchSession {
     /// keeps ``isMatchOver`` true and every entry point shut, so nothing goes
     /// back into play. It is the only chance to hand the returning peer the
     /// outcome it never heard.
-    private func peerReturned() {
+    private func peerReturned(_ player: PlayerID) {
         if isFinished {
             guard owesTerminalMessage, let outcome = winner else { return }
             owesTerminalMessage = false
             // Unfrozen first, so the flush is not a frozen session sending: the
             // peer really is back, and only `isFinished` locks the session now.
-            peerPresence = .present
+            peerPresences[player] = .present
             // Rebuilt, not replayed: `finish()` recorded the same placements
             // `claimWin()` sent, and a resignation carries nothing but its
             // sender, so this is the message that was blocked.
@@ -470,11 +607,22 @@ public final class MatchSession {
             )
             return
         }
-        guard case .reconnecting = peerPresence else { return }
+        guard case .reconnecting = presence(of: player) else { return }
+        peerPresences[player] = .present
+        // Another peer still away keeps the match frozen, and its window keeps
+        // running: resuming the countdown now would move game state nobody is
+        // playing through.
+        guard !isFrozen else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
-        peerPresence = .present
-        guard let seconds = heldCountdownSeconds else { return }
+        guard let seconds = heldCountdownSeconds else {
+            // A freeze that landed on the moment of the deal bailed out of it and
+            // re-armed it. The countdown is already spent, so this is the only
+            // place left to deal: without it both racks stay empty for the rest
+            // of the match and nothing says why.
+            dealOpeningHands()
+            return
+        }
         heldCountdownSeconds = nil
         beginCountdown(seconds: seconds)
     }
@@ -493,27 +641,28 @@ public final class MatchSession {
         // The same election that hands out the pool decides who opens. Both
         // devices calling this would each honour their own seed and countdown
         // and ignore the other's, and reach play at different moments.
-        guard HostPool.host(of: localPlayerID, peerPlayerID) == localPlayerID else {
+        guard HostPool.host(of: roster) == localPlayerID else {
             lastNote = "only the host opens the match"
             return
         }
         guard !isLocked else { return }
-        send(
-            .start(
-                version: WireFormat.current,
-                seed: seed,
-                startingHandSize: startingHandSize,
-                countdownSeconds: countdownSeconds,
-                options: options
-            )
-        )
-        applyStart(
+        let message = MatchMessage.start(
             version: WireFormat.current,
             seed: seed,
             startingHandSize: startingHandSize,
             countdownSeconds: countdownSeconds,
-            options: options
+            options: options,
+            roster: roster
         )
+        // Validated before it is sent, not after: the host is the one device
+        // that can still refuse a set of settings without the match already
+        // being half open on somebody else's screen.
+        guard let start = message.validatedStart(for: localPlayerID) else {
+            lastNote = "these match settings cannot be played"
+            return
+        }
+        send(message)
+        applyStart(start)
     }
 
     /// Leaves the match and stops every task this session owns.
@@ -522,7 +671,9 @@ public final class MatchSession {
         // and not its predecessors, one of which can still be parked inside
         // `transport.send`. The lock is what actually stops those, and it is read
         // when each piece of work runs rather than when it was enqueued.
-        peerPresence = .gone
+        // The whole roster, not just this device: leaving ends the match here,
+        // and every banner, lock and end screen reads presence to find that out.
+        for player in roster { peerPresences[player] = .gone }
         // A `.connected` already buffered when the pump is cancelled can still
         // be delivered, and the flush would put a message on the wire from a
         // device that has left.
@@ -657,8 +808,20 @@ public final class MatchSession {
     public func resign() -> Bool {
         guard !isLocked else { return false }
         send(.resign(player: localPlayerID))
-        finish(winner: peerPlayerID, placements: nil)
+        depart(localPlayerID)
         return true
+    }
+
+    /// A player left for good, by resigning here or on the wire.
+    ///
+    /// Only the last player standing wins. With more than two on the roster the
+    /// rest play on, and this device — if it was the one that left — is shut out
+    /// by ``isLocked`` rather than by an ending nobody else sees.
+    private func depart(_ player: PlayerID) {
+        peerPresences[player] = .gone
+        let remaining = presentPlayers
+        guard remaining.count == 1 else { return }
+        finish(winner: remaining[0], placements: nil)
     }
 
     // MARK: - Inbound
@@ -679,14 +842,17 @@ public final class MatchSession {
         guard !isFrozen || Self.endsTheMatch(message) else { return }
         switch message {
 
-        case let .start(version, seed, startingHandSize, countdownSeconds, options):
-            applyStart(
-                version: version,
-                seed: seed,
-                startingHandSize: startingHandSize,
-                countdownSeconds: countdownSeconds,
-                options: options
-            )
+        case let .start(version, _, _, _, _, _):
+            // One gate for six checks — version, roster shape, roster
+            // membership, and a deal the pool can cover. Everything past it is
+            // inside its documented bounds.
+            guard let start = message.validatedStart(for: localPlayerID) else {
+                lastNote = version == WireFormat.current
+                    ? "this start message cannot be played"
+                    : "unsupported wire version \(version)"
+                return
+            }
+            applyStart(start)
 
         case .drawRequest, .swapRequest:
             // Only the host answers these, and only once play has begun.
@@ -706,7 +872,9 @@ public final class MatchSession {
             // arriving here is a modified peer minting tiles into the host's
             // rack, desyncing it from the pool, or latching exhaustion.
             guard hostPool == nil, player == localPlayerID else { break }
-            applyGrant(tiles, requestedByLocal: clearOneOutstandingDraw())
+            // `nil`: only ``applyGrant(_:requestedByLocal:)`` can tell whether
+            // this is the opening deal, and a credit must not be spent on one.
+            applyGrant(tiles, requestedByLocal: nil)
 
         case let .swapGrant(player, tiles, returned):
             guard hostPool == nil, player == localPlayerID else { break }
@@ -722,18 +890,18 @@ public final class MatchSession {
         case let .win(player, placements):
             // A device declares its own win. One naming this device as the
             // winner of the peer's own message is a modified peer, not a result.
-            guard player == peerPlayerID else { break }
+            guard isPeer(player) else { break }
             // The placements are kept exactly as they arrived. Nothing here
             // trusts them enough to build a board out of: that can fail, and
             // this is a decode path.
-            finish(winner: peerPlayerID, placements: placements)
+            finish(winner: player, placements: placements)
 
         case let .resign(player):
-            // Only the peer can resign to this device, so the winner is this
-            // device. `.resign(player: localPlayerID)` off the wire would
-            // otherwise hand the match to the peer.
-            guard player == peerPlayerID else { break }
-            finish(winner: localPlayerID, placements: nil)
+            // Only somebody else can resign to this device.
+            // `.resign(player: localPlayerID)` off the wire would otherwise let
+            // a modified peer forfeit this device's match for it.
+            guard isPeer(player) else { break }
+            depart(player)
 
         case let .rejected(reason):
             // Both swap refusals answer a swap, not a draw. Counting either as a
@@ -750,26 +918,19 @@ public final class MatchSession {
     ///
     /// A second start is ignored rather than trusted: two countdowns racing
     /// would fight over `status`.
-    private func applyStart(
-        version: Int,
-        seed: UInt64,
-        startingHandSize: Int,
-        countdownSeconds: Int,
-        options: MatchOptions
-    ) {
+    private func applyStart(_ start: MatchMessage.ValidatedStart) {
         guard !hasStarted else { return }
-        guard version == WireFormat.current else {
-            lastNote = "unsupported wire version \(version)"
-            return
-        }
-        guard peerPlayerID != localPlayerID else {
-            lastNote = "a match needs two different players"
+        // The host deals to the roster it sent. A roster that is not this
+        // session's is a different match, and playing it would leave this
+        // device filtering grants addressed to players it never joined with.
+        guard start.roster == roster else {
+            lastNote = "this start message is for a different match"
             return
         }
 
-        // Everything below `validated` is inside its documented bounds; the raw
-        // value came off the wire and is never used again.
-        let options = options.validated
+        // Already validated by ``MatchMessage/validatedStart(for:)``; the raw
+        // values off the wire are never used again.
+        let options = start.options
 
         // The hash gate, before anything moves. Two devices holding different
         // word lists disagree about legal words for the whole match, and the
@@ -795,34 +956,49 @@ public final class MatchSession {
             )
         }
         // Negative or absurd values came off the wire; clamp rather than trap.
-        // The ceiling is the whole pool: no deal can hand out more tiles than
-        // the match contains.
-        self.startingHandSize = min(max(0, startingHandSize), LetterDistribution.totalTiles)
-        // ponytail: the opening deal of `startingHandSize` tiles is a later
-        // item — HostPool has no deal API — upgrade when that API exists.
+        // The ceiling is *half* the pool, not all of it: the deal is one draw of
+        // `handSize * 2`, so anything above half leaves that draw short and
+        // ``HostPool/deal(handSize:)`` hands out nothing at all — a silently
+        // dealless match instead of a clamped one.
+        self.startingHandSize = min(
+            max(0, start.startingHandSize),
+            LetterDistribution.totalTiles / roster.count
+        )
+        self.awaitingOpeningDeal = self.startingHandSize > 0
 
-        if HostPool.host(of: localPlayerID, peerPlayerID) == localPlayerID {
+        if start.host == localPlayerID {
+            let pool = Pool.standard(seed: start.seed)
             hostPool = HostPool(
-                players: (localPlayerID, peerPlayerID),
-                pool: Pool.standard(seed: seed),
-                seed: seed,
+                players: roster,
+                pool: pool,
+                seed: start.seed,
                 transport: transport,
                 swapEnabled: options.swapEnabled
             )
+            // The opening count, from the very pool just handed over — the HUD
+            // shows a full pool before the deal rather than a placeholder.
+            setPoolRemaining(pool.count)
         }
         // Clamped at both ends: one `.start` carrying a huge value off the wire
         // would otherwise park this session in `.countdown` for the rest of the
         // process. Ten seconds is the ceiling — longer than any lobby needs and
         // short enough that a wedged session recovers on its own.
-        beginCountdown(seconds: min(max(0, countdownSeconds), 10))
+        beginCountdown(seconds: min(max(0, start.countdownSeconds), 10))
     }
 
     /// Counts down one second at a time from *now*, not towards an instant the
     /// peer named.
     private func beginCountdown(seconds: Int) {
         countdownTask?.cancel()
-        state.status = seconds > 0 ? .countdown(secondsRemaining: seconds) : .playing
-        guard seconds > 0 else { return }
+        guard seconds > 0 else {
+            // Enqueued ahead of the flip — the send itself runs later, off the
+            // chain, so this orders the deal before any request this device will
+            // answer, not before its own `.playing`.
+            dealOpeningHands()
+            state.status = .playing
+            return
+        }
+        state.status = .countdown(secondsRemaining: seconds)
 
         countdownTask = Task { @MainActor [weak self] in
             var remaining = seconds
@@ -839,11 +1015,82 @@ public final class MatchSession {
                 // game state — and could put a settled match back into play.
                 guard !Task.isCancelled, !self.isLocked else { return }
                 remaining -= 1
+                // Enqueued ahead of the flip, as in the zero-second path.
+                if remaining == 0 { self.dealOpeningHands() }
                 self.state.status = remaining > 0
                     ? .countdown(secondsRemaining: remaining)
                     : .playing
             }
         }
+    }
+
+    /// Deals both opening hands, once, from the host's pool.
+    ///
+    /// Only the host has a pool to deal from; the guest's hand arrives as a
+    /// `.grant` and lands through ``takeOpeningDeal(_:)``. Nothing happens on
+    /// the guest, and nothing happens twice.
+    private func dealOpeningHands() {
+        guard awaitingOpeningDeal, let hostPool else { return }
+        // Closed synchronously, before the suspension: a peer returning restarts
+        // the countdown, and a second deal would hand out two hands.
+        awaitingOpeningDeal = false
+        let handSize = startingHandSize
+        enqueue { [weak self] in
+            guard let self else { return }
+            // A frozen or finished session sends nothing and moves nothing, the
+            // same bar `blockedByLock` holds every other piece of outbound work
+            // to. Re-armed rather than dropped, because a freeze can lift:
+            // ``peerReturned()`` deals then, and without this both racks stay
+            // empty for a match that goes on to be played.
+            guard !self.isLocked else {
+                self.awaitingOpeningDeal = true
+                return
+            }
+            let produced = await hostPool.deal(handSize: handSize)
+            await self.refreshPoolRemaining(from: hostPool)
+            for case let .grant(player, tiles) in produced where player == self.localPlayerID {
+                // The grant addressed to the host never travels — this is where
+                // the host's own opening hand lands, as `applyProduced` does for
+                // a draw.
+                self.applyGrant(tiles, requestedByLocal: true)
+            }
+        }
+    }
+
+    /// Whether this grant is the opening deal, and closes the deal if it is.
+    ///
+    /// ponytail: the phase carries what the wire cannot say, and it is a
+    /// heuristic. Wire v1 has one `.grant` case for both an opening deal and a
+    /// draw, and adding a second is a format break, so two triggers stand in for
+    /// the case that does not exist. Both can misfire:
+    ///
+    /// - **the phase trigger** takes the *first* grant arriving in `.countdown`
+    ///   as the deal, at any hand size. Sound only because the host gates
+    ///   `.drawRequest` on `state.status == .playing` and ``dealOpeningHands()``
+    ///   enqueues strictly before that flip, so on `.reliable` delivery the deal
+    ///   is always the first grant. Reorder or drop that one grant — a lossy
+    ///   link, a transport that does not keep order — and a one-tile round is
+    ///   read as a whole opening hand instead.
+    /// - **the count trigger** covers the two cases that leave no `.countdown`
+    ///   phase to read, by taking a first grant of exactly `startingHandSize`
+    ///   tiles: a zero-second countdown, and — the larger producer — a deal
+    ///   recovered from a freeze, which ``peerReturned()`` sends after the thaw
+    ///   at *any* countdown length, by which time the guest is already
+    ///   `.playing`. At `startingHandSize == 1` that is any round at all.
+    ///
+    /// `awaitingOpeningDeal` bounds either misfire to one grant, and the tiles
+    /// are real tiles from the real pool — the cost is one round taken into hand
+    /// instead of held behind the Draw button. Upgrade to the distinct `deal`
+    /// case at the pending wire v2 amendment, and delete all of this.
+    private func takeOpeningDeal(_ tiles: [Tile]) -> Bool {
+        guard awaitingOpeningDeal else { return false }
+        if case .countdown = state.status {
+            awaitingOpeningDeal = false
+            return true
+        }
+        guard tiles.count == startingHandSize else { return false }
+        awaitingOpeningDeal = false
+        return true
     }
 
     /// Takes a granted tile, or holds it behind the obligation.
@@ -852,8 +1099,16 @@ public final class MatchSession {
     /// means the opponent drew, so this device owes a tile for the same event
     /// and the board freezes until the player presses Draw. The caller says
     /// which: on the host it answered a request it can name, and only the wire
-    /// has to fall back on the outstanding-request count.
-    private func applyGrant(_ tiles: [Tile], requestedByLocal: Bool) {
+    /// has to fall back on the outstanding-request count — pass `nil` for that,
+    /// and one credit is spent here on every grant that is not the opening deal.
+    private func applyGrant(_ tiles: [Tile], requestedByLocal: Bool?) {
+        // First, and whatever else is done with the grant: the deal is closed by
+        // the message that carried it, and it answers no request. A credit spent
+        // on it would leave the real answer uncredited, and the player owing a
+        // second press for a round they already took.
+        let isOpeningDeal = takeOpeningDeal(tiles)
+        let requested = requestedByLocal ?? (isOpeningDeal ? false : clearOneOutstandingDraw())
+
         // A duplicated grant is peer input: taking it twice would double a tile
         // into the rack and leave the two devices disagreeing about the pool.
         var held = Set(state.hand.map(\.id))
@@ -862,7 +1117,7 @@ public final class MatchSession {
         let fresh = tiles.filter { !held.contains($0.id) }
         guard !fresh.isEmpty else { return }
 
-        if requestedByLocal {
+        if requested || isOpeningDeal {
             state.hand.append(contentsOf: fresh)
         } else {
             pendingDrawTiles.append(contentsOf: fresh)
@@ -911,7 +1166,9 @@ public final class MatchSession {
         // left at `.reconnecting` puts a banner and a countdown to a deadline
         // nothing reaches over an end screen — the same lie `peerDropped()`
         // guards against in the opposite ordering.
-        if case .reconnecting = peerPresence { peerPresence = .gone }
+        for player in roster {
+            if case .reconnecting = presence(of: player) { peerPresences[player] = .gone }
+        }
         state.status = .finished(winner: winner)
         winningPlacements = placements
         // Nothing may move a settled match, so every further inbound message is
@@ -925,11 +1182,29 @@ public final class MatchSession {
         return false
     }
 
-    /// The peer is not here, so nothing may be sent and nothing may move.
-    private var isFrozen: Bool { peerPresence != .present }
+    /// Somebody is away and may yet come back, so nothing may be sent and
+    /// nothing may move. A peer that already left for good does not freeze the
+    /// match — ``isMatchOver`` answers that one.
+    private var isFrozen: Bool {
+        peerPlayerIDs.contains { player in
+            if case .reconnecting = presence(of: player) { return true }
+            return false
+        }
+    }
 
-    /// The board is shut: the match ended, or the peer is away.
-    private var isLocked: Bool { isFinished || isFrozen }
+    /// Nobody is away, however far away. The exemption that lets this device's
+    /// own terminal message onto the wire is gated on this rather than on
+    /// ``isFrozen``: a peer that already left is not coming back for it either,
+    /// and the message has to be remembered instead of thrown at a closed link.
+    private var everyPeerIsPresent: Bool {
+        peerPlayerIDs.allSatisfy { presence(of: $0) == .present }
+    }
+
+    /// The board is shut: the match ended, somebody is away, or this device is
+    /// the one that left.
+    private var isLocked: Bool {
+        isFinished || isFrozen || isMatchOver || presence(of: localPlayerID) == .gone
+    }
 
     /// The two messages that name a winner, and the only two a frozen session
     /// still honours.
@@ -966,6 +1241,7 @@ public final class MatchSession {
             guard let self, !self.blockedByLock(message) else { return }
             guard let hostPool = self.hostPool else { return }
             let produced = await hostPool.handle(message)
+            await self.refreshPoolRemaining(from: hostPool)
             self.applyProduced(produced, answering: message)
         }
     }
@@ -1023,7 +1299,7 @@ public final class MatchSession {
     /// nothing, terminal message or not — it is remembered in
     /// `owesTerminalMessage` and flushed by ``peerReturned()``.
     private func blockedByLock(_ message: MatchMessage) -> Bool {
-        if !isFrozen, Self.endsTheMatch(message) { return false }
+        if everyPeerIsPresent, Self.endsTheMatch(message) { return false }
         guard isLocked else { return false }
         // Frozen, with this device's own terminal message still on the chain —
         // the only way a terminal message reaches here, since `claimWin()` and

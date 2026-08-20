@@ -83,7 +83,12 @@ public struct Placement: Hashable, Codable, Sendable {
     }
 }
 
-/// A player, keyed by `GKPlayer.gamePlayerID`.
+/// A player, keyed by the backend user id.
+///
+/// Round 1 keyed this to `GKPlayer.gamePlayerID`. Game Center was dropped
+/// before any file imported it, so this now carries `Profile.id.uuidString` —
+/// the `auth.users` row behind the signed-in player. The type is unchanged: it
+/// was always an opaque string, and nothing below this line ever parsed it.
 public struct PlayerID: Hashable, Codable, Sendable {
     public let rawValue: String
 

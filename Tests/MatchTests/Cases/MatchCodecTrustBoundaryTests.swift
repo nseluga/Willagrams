@@ -9,7 +9,7 @@ import WillagramsRules
 @Suite("MatchCodec golden fixture and version gate")
 struct MatchCodecTrustBoundaryTests {
 
-    /// Every element of `wire-v2.json`, hand-built from the literals in the
+    /// Every element of `wire-v3.json`, hand-built from the literals in the
     /// spec — never re-encoded through this build's own encoder, since that
     /// would launder the golden bytes through the code under test.
     static var expectedFixtureMessages: [MatchMessage] {
@@ -25,7 +25,7 @@ struct MatchCodecTrustBoundaryTests {
         let tileI = Tile(id: UUID(uuidString: "88888888-8888-4888-8888-888888888888")!, letter: "I")
 
         return [
-            .start(version: 2, seed: 3735928559, startingHandSize: 21, countdownSeconds: 3, options: .standard),
+            .start(version: WireFormat.current, seed: 3735928559, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [PlayerID(rawValue: "G:1234567890"), PlayerID(rawValue: "G:9876543210")]),
             .drawRequest(player: player),
             .grant(player: player, tiles: [tileA, tileB]),
             .swapRequest(player: player, returning: tileQ),
@@ -64,7 +64,7 @@ struct MatchCodecTrustBoundaryTests {
     )
     func foreignVersionsAreRefused(version: Int) throws {
         let data = try MatchCodec.encode(
-            .start(version: version, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard)
+            .start(version: version, seed: 1, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [PlayerID(rawValue: "a"), PlayerID(rawValue: "b")])
         )
 
         #expect {

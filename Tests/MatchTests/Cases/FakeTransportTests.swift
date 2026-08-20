@@ -76,7 +76,7 @@ struct FakeTransportTests {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
 
         let sent: [MatchMessage] = [
-            .start(version: WireFormat.current, seed: 42, startingHandSize: 21, countdownSeconds: 3, options: .standard),
+            .start(version: WireFormat.current, seed: 42, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [hostID, guestID].sorted { $0.rawValue < $1.rawValue }),
             .drawRequest(player: hostID),
             .poolExhausted,
         ]

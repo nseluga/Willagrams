@@ -68,7 +68,7 @@ struct MatchSessionTerminalGateTests {
         #expect(guest.claimWin() == false)
         #expect(guest.claimWin() == false)
         #expect(guest.resign() == false)
-        guest.startMatch(seed: 7, startingHandSize: 3, countdownSeconds: 2, options: .standard)
+        guest.startMatch(seed: 7, startingHandSize: 0, countdownSeconds: 2, options: .standard)
         try await Terminal.settle()
 
         // Not "one more did not change the winner" — nothing more was ever
@@ -293,7 +293,7 @@ struct MatchSessionTerminalGateTests {
         try await Terminal.waitUntil("the session to freeze") { guest.peerPresence != .present }
 
         // Everything the wire can carry, and everything the shell can press.
-        wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 5, countdownSeconds: 7, options: .standard))
+        wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard, roster: [Self.alice, Self.bob]))
         wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
         wire.deliver(.swapGrant(player: Self.bob, tiles: [Tile(letter: "R")], returned: tiles[1]))
         wire.deliver(.poolExhausted)
@@ -302,7 +302,7 @@ struct MatchSessionTerminalGateTests {
         #expect(guest.swap(tiles[1]) == false)
         #expect(guest.claimWin() == false)
         #expect(guest.resign() == false)
-        guest.startMatch(seed: 9, startingHandSize: 4, countdownSeconds: 3, options: .standard)
+        guest.startMatch(seed: 9, startingHandSize: 0, countdownSeconds: 3, options: .standard)
         #expect(throws: BoardActionError.drawPending) {
             try guest.place(tileID: tiles[1].id, at: Coord(row: 0, col: 1))
         }

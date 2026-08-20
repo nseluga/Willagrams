@@ -15,11 +15,11 @@ are counted from their merge commit message.
 | board | nate | lane/board | done — merged 2026-08-15 `22d6c22` via /octopus-merge, 10 items, archived `progress/board.md` |
 | match | nate | lane/match | done — merged 2026-08-15 `22d6c22` via /octopus-merge, 10 items, archived `progress/match.md`; reopens for the wire v3 amendment |
 | settings | nate | lane/settings | done — merged 2026-08-17 `68cb22d`; no archive, /merge-lane was skipped |
-| shell | nate | lane/shell | round 1 done — merged 2026-08-17 `ec9d186`, items 1–11; no archive; round 2 not started (placeholder routes + board-commit bridge) |
+| shell | nate | lane/shell-r2 | round 2 done — octopus-merged 2026-08-20 `0e25124`, items 1–7; archive `progress/shell.md` + `progress/shell-lane-plan.md`; ShellTests 61 → 99. Round 1 merged 2026-08-17 `ec9d186`, items 1–11 |
 | online | nate | — | not started — blocked on /foundation (schema) and a live Supabase project |
 | account | nate | — | not started — blocked on online, and on the Apple Developer membership |
 | friends | nate | — | not started — blocked on online and account |
-| bot | nate | lane/bot | not started — branch cut at `8f3a4da`, no items |
+| bot | nate | lane/bot | round 2 done — octopus-merged 2026-08-20 `0e25124`, items 1–6 at `457e20f`; archive `progress/bot.md` + `progress/bot-lane-plan.md`; BotTests 0 → 63 |
 | audio | nate | — | not started — blocked on /foundation (playback seam) |
 | launch | nate | — | not started — runs last, after the tuning pass |
 

@@ -122,11 +122,11 @@ struct MatchSessionOrderingTests {
         let alice = PlayerID(rawValue: "alice")
         let bob = PlayerID(rawValue: "bob")
         // This device must be the one holding the pool, or nothing is submitted.
-        #expect(HostPool.host(of: alice, bob) == alice)
+        #expect(HostPool.host(of: [alice, bob]) == alice)
 
         let wire = OrderRecordingTransport(localPlayerID: alice)
         let host = MatchSession(transport: wire, peerPlayerID: bob, dictionary: EveryWordIsReal())
-        host.startMatch(seed: 11, startingHandSize: 21, countdownSeconds: 0, options: .standard)
+        host.startMatch(seed: 11, startingHandSize: 0, countdownSeconds: 0, options: .standard)
         #expect(host.state.status == .playing)
 
         // Each swap request carries a tile no other request carries, so the
@@ -214,7 +214,7 @@ struct MatchSessionOrderingTests {
         let wire = OrderRecordingTransport(localPlayerID: bob)
         let guest = MatchSession(transport: wire, peerPlayerID: alice, dictionary: EveryWordIsReal())
 
-        wire.deliver(.start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard))
+        wire.deliver(.start(version: WireFormat.current, seed: 1, startingHandSize: 0, countdownSeconds: 0, options: .standard, roster: [alice, bob]))
         try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }
 
         // Reordered in flight: the exhaustion notice overtook the grant.
@@ -248,14 +248,14 @@ struct MatchSessionOrderingTests {
     func aDeviceNeverReceivesItsOwnSends() async throws {
         let alice = PlayerID(rawValue: "alice")
         let bob = PlayerID(rawValue: "bob")
-        #expect(HostPool.host(of: alice, bob) == alice)
+        #expect(HostPool.host(of: [alice, bob]) == alice)
 
         let wire = OrderRecordingTransport(localPlayerID: alice)
         let host = MatchSession(transport: wire, peerPlayerID: bob, dictionary: EveryWordIsReal())
 
         // Nothing is ever delivered to this endpoint except the peer's traffic —
         // one draw request, below. The start is never heard back.
-        host.startMatch(seed: 5, startingHandSize: 21, countdownSeconds: 0, options: .standard)
+        host.startMatch(seed: 5, startingHandSize: 0, countdownSeconds: 0, options: .standard)
         #expect(host.state.status == .playing)
 
         host.draw()
@@ -275,7 +275,7 @@ struct MatchSessionOrderingTests {
         #expect(host.pendingDrawTiles.isEmpty)
 
         let landed = await wire.wire
-        #expect(landed.first == .start(version: WireFormat.current, seed: 5, startingHandSize: 21, countdownSeconds: 0, options: .standard))
+        #expect(landed.first == .start(version: WireFormat.current, seed: 5, startingHandSize: 0, countdownSeconds: 0, options: .standard, roster: [alice, bob]))
         // Two rounds, two answers to the peer, none of them addressed here.
         let grantCount = await wire.grantCount()
         #expect(grantCount == 2)

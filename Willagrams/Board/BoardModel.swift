@@ -98,7 +98,36 @@ public struct BoardModel: Sendable {
     /// which has no board to take the letters out of.
     private var liftedRuns: [Set<Coord>]?
 
+    /// The coords the surface is tinting right now, and empty almost always.
+    ///
+    /// Nothing goes red for putting a word down. A bad word is only news when
+    /// the player claims to be done with it, so this is written by
+    /// `attemptedCompletion` and cleared again — by `clearFlash` when the flash
+    /// has run its course, and by `revalidate` the moment any tile moves, so a
+    /// flash can never outlive the board it was an answer about.
+    public private(set) var flashedInvalid: Set<Coord> = []
+
+    /// The player pressed Draw or claimed the win. Lights the bad runs when the
+    /// board is not finished, and returns whether the claim stands.
+    ///
+    /// The gate is `canDraw`, the same published answer the button's enabled
+    /// state reads — no completeness rule is restated here. A caller that acts
+    /// on the `true` and ignores the `false` gets the flash for free.
+    @discardableResult
+    public mutating func attemptedCompletion() -> Bool {
+        flashedInvalid = canDraw ? [] : invalidCoords
+        return canDraw
+    }
+
+    /// Ends a flash. Whoever started one owns the timing; this type holds no
+    /// clock — a pure value type that scheduled its own fade would be a second
+    /// source of truth about what is on screen.
+    public mutating func clearFlash() { flashedInvalid = [] }
+
     /// Every coord that reads as part of a bad word right now.
+    ///
+    /// Not what the surface draws — `flashedInvalid` is. This is the standing
+    /// truth a flash is taken FROM, and the answer a lift changes as it goes.
     ///
     /// While a letter is held this is the tint of the board the lift LEAVES
     /// BEHIND, not the tint of the last commit. Both directions matter and only
@@ -352,6 +381,9 @@ public struct BoardModel: Sendable {
     private mutating func revalidate(_ board: Board, against dictionary: some WordList) {
         validation = board.validate(against: dictionary)
         invalidRuns = Self.runs(of: validation)
+        // Any commit ends a flash: it was an answer about the board as it stood
+        // when the player claimed to be done, and that board no longer exists.
+        flashedInvalid = []
         tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
     }
 

@@ -113,7 +113,7 @@ struct MatchSessionTerminalAuditTests {
     static func playingHost(
         clock: Terminal.HandCrankedClock
     ) async throws -> (host: MatchSession, wire: Terminal.PresenceTransport) {
-        #expect(HostPool.host(of: alice, bob) == alice)
+        #expect(HostPool.host(of: [alice, bob]) == alice)
         let wire = Terminal.PresenceTransport(localPlayerID: alice, peer: bob)
         let host = MatchSession(
             transport: wire,
@@ -121,7 +121,7 @@ struct MatchSessionTerminalAuditTests {
             dictionary: Terminal.EveryWordIsReal(),
             sleepFor: { await clock.tick($0) }
         )
-        host.startMatch(seed: 3, startingHandSize: 21, countdownSeconds: 0, options: .standard)
+        host.startMatch(seed: 3, startingHandSize: 0, countdownSeconds: 0, options: .standard)
         #expect(host.state.status == .playing)
         // The gate below only means anything once the opening send is past it.
         try await Terminal.waitUntil("the opening start to reach the wire") { await wire.count == 1 }
@@ -187,7 +187,7 @@ struct MatchSessionTerminalAuditTests {
             sleepFor: { await clock.tick($0) }
         )
         wire.deliver(
-            .start(version: WireFormat.current, seed: 1, startingHandSize: 21, countdownSeconds: 0, options: .standard)
+            .start(version: WireFormat.current, seed: 1, startingHandSize: 0, countdownSeconds: 0, options: .standard, roster: [Self.alice, Self.bob])
         )
         try await Terminal.waitUntil("the guest to be playing") { guest.state.status == .playing }
 
@@ -292,7 +292,7 @@ struct MatchSessionTerminalAuditTests {
         // A second start would restart the countdown; a grant or a swap grant
         // would move the rack; exhaustion would latch; a second win or a
         // resignation would rename the winner.
-        wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 5, countdownSeconds: 7, options: .standard))
+        wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard, roster: [Self.alice, Self.bob]))
         wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
         wire.deliver(.swapGrant(player: Self.bob, tiles: [Tile(letter: "R")], returned: tiles[1]))
         wire.deliver(.poolExhausted)
