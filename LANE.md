@@ -164,7 +164,7 @@ and `BoardView`'s init are all spent.
     - A refused claim increments the flash counter from item 4 and leaves the route on `.match`
     - An accepted claim routes to `.results` with the local player as the winner
     - Existing passing tests remain passing
-  status: not started
+  status: done
 
 - task: Publish the host's remaining pool count and show it in the HUD.
     `MatchHUDModel.poolRemaining` is hardcoded `nil`, so Pool reads `—` for the whole
