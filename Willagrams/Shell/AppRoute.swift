@@ -30,6 +30,10 @@ public struct MatchSetup: Hashable, Sendable {
 public enum AppRoute: Hashable, Sendable {
     /// The root screen. Renders nothing match-specific, so it carries nothing.
     case menu
+    /// The rules screen. Reachable from the menu and back again, never from
+    /// inside a match, and it renders nothing match-specific — so, like `menu`,
+    /// it carries nothing.
+    case howToPlay
     case countdown(MatchSetup)
     case match(MatchSetup)
     /// `winner` is nil when the match ended without one — a draw, or a peer that

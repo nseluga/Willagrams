@@ -37,6 +37,9 @@ struct ShellRootView: View {
         Group {
             switch shell.route {
             case .menu: MenuView(shell: shell)
+            // Not fenced by `#if DEBUG` like the three below it: the rules
+            // screen reads no run, so it ships.
+            case .howToPlay: HowToPlayView(shell: shell)
             case .countdown: countdown
             case .match: match
             case .results: results
