@@ -19,7 +19,7 @@ are counted from their merge commit message.
 | online | nate | — | not started — blocked on /foundation (schema) and a live Supabase project |
 | account | nate | — | not started — blocked on online, and on the Apple Developer membership |
 | friends | nate | — | not started — blocked on online and account |
-| bot | nate | lane/bot | not started — branch cut at `8f3a4da`, no items |
+| bot | nate | lane/bot | planned — branch fast-forwarded to `e2efecf`, LANE.md at `e4516f5`, 6 items, none run |
 | audio | nate | — | not started — blocked on /foundation (playback seam) |
 | launch | nate | — | not started — runs last, after the tuning pass |
 
