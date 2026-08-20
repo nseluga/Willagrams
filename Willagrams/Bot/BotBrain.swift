@@ -92,6 +92,18 @@ public actor BotBrain {
     /// screen is indistinguishable from a broken bot.
     private var stalledTicks = 0
 
+    /// Set the first time a swap request is answered with a refusal, and never
+    /// cleared. A stored property on this actor, deliberately: derived from a
+    /// snapshot it would come back false the moment the session's note moved
+    /// on, and recomputed from session state it would come back false after a
+    /// reconnect. The host's answer stands for the life of this brain.
+    private var swapAnswerStands = false
+    /// The wire as it looked when a swap request went out, or `nil` when none
+    /// is outstanding. One request at a time: `canDraw` and the rack look
+    /// identical from the request until the answer lands, so a brain that only
+    /// re-checked those would ask again on every tick of that window.
+    private var pendingSwap: WireMark?
+
     /// The shipping initialiser: the session and the word list both come from
     /// one ``BotMatch``, so they cannot be handed disagreeing dictionaries.
     public init(match: BotMatch, difficulty: BotDifficulty = .medium) {
@@ -206,6 +218,7 @@ public actor BotBrain {
     /// passed with nothing placed, the brain searches anyway and reaches one
     /// rung above its own depth for exactly one attempt.
     private func attempt(_ snapshot: Snapshot) async {
+        if pendingSwap != nil { await settleSwap() }
         let fingerprint = Fingerprint(snapshot)
         let granted = stalledTicks >= max(1, difficulty.stallFloorTicks)
         guard granted || fingerprint != barren else {
@@ -213,14 +226,25 @@ public actor BotBrain {
             return
         }
         // Clamped once, here: the grant may lift the depth by one rung and no
-        // further, and never past the last rung that exists — which is 2 until
-        // swap lands. A bot already at rung 2 therefore gains nothing from the
-        // floor; raise this to 3 with rung 3, not before, or the grant re-runs
-        // the identical search that just came back empty.
-        let depth = min(2, max(0, difficulty.ladderDepth) + (granted ? 1 : 0))
+        // further, and never past rung 2 — the last rung that *searches*. Rung 3
+        // is not a search and is not the floor's to grant: it hands a tile back
+        // to the host, which a bot the player chose as easy or medium must never
+        // do, however long it has been stuck. It is gated on the declared depth
+        // alone, below, so no path through this clamp can reach it.
+        let climb = min(2, max(0, difficulty.ladderDepth) + (granted ? 1 : 0))
+        let depth = mayAskToSwap(snapshot) ? 3 : climb
         if granted { stalledTicks = 0 }
 
         guard let plan = plan(on: snapshot, depth: depth) else {
+            barren = fingerprint
+            stalledTicks += 1
+            return
+        }
+        if let tile = plan.swap {
+            await ask(toSwap: tile)
+            // Nothing on the board moved, so the next tick would find this same
+            // rack, this same board and this same plan. The answer is what moves
+            // the rack, and moving the rack moves the fingerprint.
             barren = fingerprint
             stalledTicks += 1
             return
@@ -240,6 +264,84 @@ public actor BotBrain {
             barren = fingerprint
             stalledTicks += 1
         }
+    }
+
+    /// Whether rung 3 may be reached on this tick.
+    ///
+    /// Four conditions, and every one of them is a guardrail: the bot was built
+    /// at the depth that swaps, no answer has already stood, no request is
+    /// outstanding, and this match allows swapping at all. The stall floor
+    /// appears nowhere here on purpose.
+    private func mayAskToSwap(_ snapshot: Snapshot) -> Bool {
+        difficulty.ladderDepth >= 3
+            && !swapAnswerStands
+            && pendingSwap == nil
+            && snapshot.options.swapEnabled
+    }
+
+    /// Asks the host for three tiles in exchange for `tile`, and records what
+    /// came of asking.
+    ///
+    /// A `false` from ``MatchSession/swap(_:)`` is two different things. With
+    /// swapping off it is the local half of `.swapDisabled` — the host's own
+    /// answer, arrived at without a round trip — and it latches. With a lock or
+    /// a tile still waiting to be taken it is a *not now*, which is no answer at
+    /// all and must not latch, or one pending draw would silence rung 3 for the
+    /// rest of the match.
+    private func ask(toSwap tile: Tile) async {
+        switch await MainActor.run(body: { [session] in Self.offer(tile, to: session) }) {
+        case .refused:
+            swapAnswerStands = true
+        case .declined:
+            break
+        case let .asked(mark):
+            pendingSwap = mark
+        }
+    }
+
+    @MainActor
+    private static func offer(_ tile: Tile, to session: MatchSession) -> Ask {
+        // Read here rather than from the snapshot: the snapshot's copy is a tick
+        // old, and this is the read the latch is made from.
+        guard session.options.swapEnabled else { return .refused }
+        guard session.swap(tile) else { return .declined }
+        return .asked(WireMark(session))
+    }
+
+    /// Looks for the answer to the outstanding swap request.
+    ///
+    /// The only signal a `MatchSession` shows the outside world for a refusal is
+    /// ``MatchSession/lastNote``. A swap is only ever requested with no draw
+    /// outstanding and `canDraw` false, so a note that *turns into* a refusal
+    /// while a swap is in flight is that swap's refusal — the reason itself is
+    /// never spelled out here, only the fact of one.
+    ///
+    /// An unmoved mark means unanswered, so nothing is cleared and nothing is
+    /// asked again. (A refusal whose note is character-for-character the note
+    /// already showing therefore reads as still-outstanding, which leaves the
+    /// brain silent — the same side the latch errs on.)
+    private func settleSwap() async {
+        guard let outstanding = pendingSwap else { return }
+        let now = await MainActor.run { [session] in WireMark(session) }
+        guard now != outstanding else { return }
+        pendingSwap = nil
+        if now.note != outstanding.note, now.note?.hasPrefix(Self.refusalPrefix) == true {
+            swapAnswerStands = true
+        }
+    }
+
+    /// How `MatchSession` opens the note it writes for any refusal off the wire.
+    /// A coupling to that one string, and the only one in this file.
+    static let refusalPrefix = "refused:"
+
+    /// What came of offering a tile back.
+    private enum Ask: Sendable {
+        /// The request is on the wire; the mark is what to watch for its answer.
+        case asked(WireMark)
+        /// Not now — locked, or a tile is waiting to be taken. Not an answer.
+        case declined
+        /// The host's answer, and it stands for the match.
+        case refused
     }
 
     /// Puts a chosen plan through the session, which is the only thing that
@@ -352,8 +454,9 @@ public actor BotBrain {
     /// Walks the ladder up to `depth` and returns the first plan any rung
     /// offers.
     ///
-    /// Rung 3 (swap) is a later item; adding it is adding a `case` here, not
-    /// changing the tick above it.
+    /// Rung 3 is only ever in range when ``mayAskToSwap(_:)`` said so, and it
+    /// returns a plan with no recalls and no moves — a swap is not a board
+    /// change and never reaches ``commit(_:_:from:dictionary:)``.
     func plan(on snapshot: Snapshot, depth: Int) -> Plan? {
         for rung in 0...depth {
             switch rung {
@@ -363,6 +466,8 @@ public actor BotBrain {
                 if let plan = repair(snapshot) { return plan }
             case 2:
                 if let plan = rebuild(snapshot) { return plan }
+            case 3:
+                if let tile = giveBack(snapshot) { return Plan(recalls: [], moves: [], swap: tile) }
             default:
                 continue
             }
@@ -618,6 +723,80 @@ public actor BotBrain {
         return Plan(recalls: board.placements.keys.sorted(by: Self.byCoord), moves: best)
     }
 
+    // MARK: - Rung 3: give a tile back
+
+    /// Rung 3. Nothing extends the board, nothing repairs it and nothing
+    /// rebuilds it — so pick the tile the rack is least likely to ever use and
+    /// hand it back for three others.
+    ///
+    /// **Least useful** is: a tile whose letter pairs with nothing the rack
+    /// holds comes before one that pairs with something; among equals, the
+    /// rarer letter in English comes first; ties then by letter, then by tile
+    /// id, so the order is total and two identical racks always give back the
+    /// same tile.
+    ///
+    /// "Pairs with nothing" is the whole of the cheap test: every ordered pair
+    /// of the rack's *distinct* letters is asked of the word list once, which is
+    /// at most 26 × 26 = 676 `contains` calls and no board validation at all —
+    /// next to nothing beside the 20,000-validation rebuild that has already
+    /// failed by the time this runs.
+    ///
+    /// ponytail: two letters is the whole horizon — a tile that spells nothing
+    /// as a pair could still be the third letter of a longer word. Widening it
+    /// needs a `WordList` that can be enumerated rather than only asked, which
+    /// is the frozen engine's call and not this lane's; revisit when it grows
+    /// one.
+    func giveBack(_ snapshot: Snapshot) -> Tile? {
+        guard !snapshot.hand.isEmpty else { return nil }
+        let dictionary = Self.effectiveDictionary(
+            base: baseDictionary,
+            options: snapshot.options
+        )
+        var counts: [Character: Int] = [:]
+        for tile in snapshot.hand { counts[tile.letter, default: 0] += 1 }
+        // Sorted: `counts` is a dictionary, and every walk over one in this file
+        // is sorted or the bot stops being the same bot twice.
+        let letters = counts.keys.sorted()
+        var usable: Set<Character> = []
+        for first in letters {
+            // A letter can pair with itself only if the rack holds two of it.
+            for second in letters where second != first || counts[first, default: 0] > 1 {
+                guard dictionary.contains(String([first, second])) else { continue }
+                usable.insert(first)
+                usable.insert(second)
+            }
+        }
+        return snapshot.hand.min { Self.usefulness($0, usable) < Self.usefulness($1, usable) }
+    }
+
+    /// The total order rung 3 picks its tile from — smallest is least useful.
+    /// Tile id is last and breaks every remaining tie, so no two tiles compare
+    /// equal.
+    private static func usefulness(
+        _ tile: Tile,
+        _ usable: Set<Character>
+    ) -> (Int, Int, Character, String) {
+        (
+            usable.contains(tile.letter) ? 1 : 0,
+            frequency(tile.letter),
+            tile.letter,
+            tile.id.uuidString
+        )
+    }
+
+    /// How often a letter turns up in English text, per mille. Rarer is less
+    /// useful; an unknown letter is the least useful thing there is.
+    static func frequency(_ letter: Character) -> Int {
+        englishFrequency[letter] ?? 0
+    }
+
+    static let englishFrequency: [Character: Int] = [
+        "E": 111, "A": 85, "R": 76, "I": 75, "O": 72, "T": 70, "N": 67,
+        "S": 57, "L": 55, "C": 45, "U": 36, "D": 34, "P": 32, "M": 30,
+        "H": 30, "G": 25, "B": 21, "F": 18, "Y": 18, "W": 13, "K": 11,
+        "V": 10, "X": 3, "Z": 3, "J": 2, "Q": 2,
+    ]
+
     // MARK: - Budgets
 
     /// Whole-board validations one rung-1 repair may spend across every seed it
@@ -759,5 +938,15 @@ public actor BotBrain {
     struct Plan: Sendable {
         let recalls: [Coord]
         let moves: [Move]
+        /// Rung 3's whole answer: the tile to hand back. Never set alongside
+        /// recalls or moves — a swap changes no board, so it is taken before
+        /// `apply` and never sees the goodness check or the rollback.
+        let swap: Tile?
+
+        init(recalls: [Coord], moves: [Move], swap: Tile? = nil) {
+            self.recalls = recalls
+            self.moves = moves
+            self.swap = swap
+        }
     }
 }

@@ -20,9 +20,10 @@ public struct BotDifficulty: Sendable, Equatable {
 
     /// The deepest ladder rung this bot may attempt.
     ///
-    /// `0` extend · `1` repair · `2` rebuild · `3` swap. Rungs 0–2 exist;
-    /// rung 3 arrives in a later item and is a no-op until then, so a preset
-    /// naming depth 3 plays exactly like depth 2 rather than misbehaving.
+    /// `0` extend · `1` repair · `2` rebuild · `3` swap. All four exist. Rung
+    /// 3 is the only one that speaks to the host rather than moving tiles, and
+    /// it is reached from this number alone — the stall floor below cannot
+    /// grant it, so a bot at depth 2 or less never asks to swap.
     public var ladderDepth: Int
 
     /// The pause between placements. The bot is not slow — it is *paced*, so a
@@ -33,9 +34,9 @@ public struct BotDifficulty: Sendable, Equatable {
     public var thinkDelay: Duration
 
     /// How many consecutive ticks the brain may place nothing before the stall
-    /// floor fires — granting it one attempt at one rung above ``ladderDepth``
-    /// where such a rung exists, after which the count resets. A bot already at
-    /// the topmost rung gains nothing from the floor until swap lands.
+    /// floor fires — granting it one attempt at one rung above ``ladderDepth``,
+    /// clamped to rung 2, after which the count resets. A bot already at rung 2
+    /// gains nothing from the floor: rung 3 is deliberately out of its reach.
     ///
     /// This is the floor under every difficulty: an easy bot is allowed to be
     /// bad, not to sit on an unplayable rack for the rest of the match, which
@@ -63,6 +64,7 @@ public struct BotDifficulty: Sendable, Equatable {
     )
 
     /// The whole ladder, swap included, and quick to give up on a bad rack.
+    /// The only preset that ever hands a tile back.
     public static let hard = BotDifficulty(
         ladderDepth: 3,
         thinkDelay: .milliseconds(250),
