@@ -150,6 +150,31 @@ public final class MatchHUDModel {
         return true
     }
 
+    // MARK: - Win
+
+    public var winLabel: String { Terminology.winCall }
+
+    /// Exactly the states Draw is disabled in, read through the property that
+    /// already decides them. Restating the rule here is how the two answers
+    /// start to disagree.
+    public var isWinEnabled: Bool { isDrawEnabled }
+
+    /// Calls the match, and moves the shell to the results it just produced —
+    /// the same ending ``confirmResign()`` makes, from the other side.
+    ///
+    /// A refusal — from the gate or from the session — is counted in
+    /// ``completionAttempts`` and changes no route: a refused claim is not an
+    /// outcome, so the player stays in the match they are still playing.
+    ///
+    /// - Returns: whether the match was won.
+    @discardableResult
+    public func claimWin() -> Bool {
+        resignArmed = false
+        guard isWinEnabled, session.claimWin() else { return refuse() }
+        shell.matchEnded(winner: session.winner)
+        return true
+    }
+
     // MARK: - Swap
 
     public var swapLabel: String { Terminology.swap }

@@ -260,6 +260,62 @@ struct MatchHUDTests {
         session.leave()
     }
 
+    // MARK: - The win claim
+
+    /// The claim is gated on exactly what Draw is gated on, refuses through the
+    /// same counter, and — refused — leaves the player in the match.
+    @Test("A refused claim flashes the board and ends nothing")
+    func refusedClaimChangesNoRoute() async throws {
+        let (solo, _, shell, hud) = try await Self.hud()
+
+        #expect(hud.winLabel == Terminology.winCall)
+        #expect(hud.isWinEnabled == false, "a spaced opening is claimable")
+        #expect(hud.claimWin() == false)
+        #expect(hud.completionAttempts == 1, "a refused claim explained nothing")
+        #expect(hud.claimWin() == false)
+        #expect(hud.completionAttempts == 2, "the second refusal replayed the first flash")
+        #expect(shell.route == .match(Self.setup), "a refusal is not an outcome")
+        #expect(solo.session.isMatchOver == false)
+
+        solo.leave()
+    }
+
+    @Test("An accepted claim ends the match here and routes to the results")
+    func acceptedClaimRoutesToResults() async throws {
+        let dictionary = EveryWordIsReal()
+        let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        wiring.viewport = MatchBoardTests.viewport
+        let shell = ShellModel(route: .match(Self.setup))
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+
+        try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
+        try await SoloMatchTests.waitUntil("the opening on the board") {
+            wiring.board.placementList.count == 2
+        }
+
+        // One word, one cluster: the same board state that unlocks Draw.
+        let loose = try #require(wiring.board.placementList.first { $0.tile.letter == "O" })
+        let joined = try #require(wiring.board.placementList.first { $0.tile.letter == "G" }).coord
+        _ = wiring.board.remove(at: loose.coord)
+        try wiring.board.place(loose.tile, at: Coord(row: joined.row, col: joined.col + 1))
+        wiring.model.seed(wiring.board, against: dictionary)
+
+        #expect(hud.isWinEnabled)
+        #expect(hud.claimWin())
+        #expect(hud.completionAttempts == 0, "an accepted claim flashed the board")
+        #expect(session.isMatchOver)
+        #expect(session.winner == session.localPlayerID)
+        #expect(shell.route == .results(winner: session.localPlayerID))
+
+        // Over is over: a second press is refused and changes nothing.
+        #expect(hud.claimWin() == false)
+        #expect(hud.completionAttempts == 1)
+        #expect(shell.route == .results(winner: session.localPlayerID))
+
+        session.leave()
+    }
+
     /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so
     /// the wire is checked against the bytes on disk.
     @Test("MatchView hands the refusal count to the board")

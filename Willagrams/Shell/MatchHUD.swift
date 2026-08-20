@@ -35,6 +35,10 @@ struct MatchHUD: View {
                 .buttonStyle(.brandQuiet)
                 .disabled(!hud.isSwapEnabled)
 
+            Button(hud.winLabel) { hud.claimWin() }
+                .buttonStyle(.brandPrimary)
+                .disabled(!hud.isWinEnabled)
+
             resign
         }
         .padding(DesignTokens.Space.m)
