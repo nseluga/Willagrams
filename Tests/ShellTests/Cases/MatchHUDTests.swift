@@ -224,23 +224,70 @@ struct MatchHUDTests {
         solo.leave()
     }
 
+    // MARK: - Refused completion claims
+
+    @Test("A refused Draw counts a completion attempt and a granted one does not")
+    func refusedDrawCountsACompletionAttempt() async throws {
+        let dictionary = EnableWordList(words: ["GO"])
+        let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        wiring.viewport = MatchBoardTests.viewport
+        let shell = ShellModel(route: .match(Self.setup))
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+
+        try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
+        try await SoloMatchTests.waitUntil("the opening on the board") {
+            wiring.board.placementList.count == 2
+        }
+
+        #expect(hud.completionAttempts == 0)
+        #expect(hud.draw() == false)
+        #expect(hud.completionAttempts == 1, "a refused Draw explained nothing")
+        // Each refusal is its own flash: the count rises again rather than
+        // being re-armed from zero.
+        #expect(hud.draw() == false)
+        #expect(hud.completionAttempts == 2)
+
+        let loose = try #require(wiring.board.placementList.first { $0.tile.letter == "O" })
+        let joined = try #require(wiring.board.placementList.first { $0.tile.letter == "G" }).coord
+        _ = wiring.board.remove(at: loose.coord)
+        try wiring.board.place(loose.tile, at: Coord(row: joined.row, col: joined.col + 1))
+        wiring.model.seed(wiring.board, against: dictionary)
+
+        #expect(hud.draw())
+        #expect(hud.completionAttempts == 2, "a granted Draw flashed the board")
+
+        session.leave()
+    }
+
+    /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so
+    /// the wire is checked against the bytes on disk.
+    @Test("MatchView hands the refusal count to the board")
+    func matchViewPassesTheCount() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchView.swift"), encoding: .utf8)
+        #expect(text.contains("completionAttempts: hud.completionAttempts"))
+    }
+
     // MARK: - The guardrail
 
     /// Checked against the bytes on disk: neither HUD file may name the peer to
     /// the player. `peerPresence` is read by the model to gate this player's own
     /// controls, so the model is allowed that one word and nothing more; the
     /// view may not name it at all.
-    @Test("Nothing in the HUD reports the opponent")
-    func hudNamesNoOpponent() throws {
-        let shellSource = URL(fileURLWithPath: #filePath)
+    /// One shell source file, as it sits on disk.
+    static func shellSource(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("ShellSrc")
             .resolvingSymlinksInPath()
+            .appendingPathComponent(name)
+    }
+
+    @Test("Nothing in the HUD reports the opponent")
+    func hudNamesNoOpponent() throws {
         for name in ["MatchHUDModel.swift", "MatchHUD.swift"] {
-            let text = try String(
-                contentsOf: shellSource.appendingPathComponent(name), encoding: .utf8
-            )
+            let text = try String(contentsOf: Self.shellSource(name), encoding: .utf8)
             for banned in ["peerTileIDs", "winningPlacements", "peerPlayerID", "opponentTiles"] {
                 #expect(!text.contains(banned), "\(name) reaches for \(banned)")
             }

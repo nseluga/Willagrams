@@ -60,6 +60,23 @@ public final class MatchHUDModel {
     /// reference here closes a cycle that leaks the whole match when the shell
     /// is dropped mid-match. The shell cannot outlive this, so there is nothing
     /// to unwrap.
+    /// How many times a completion claim has been refused this match.
+    ///
+    /// Not a mirror of anything, so it cannot go stale: it is written only by
+    /// ``refuse()``, on the same press that returns `false`, and nothing else
+    /// derives from it. The board keys its invalid flash on the value changing,
+    /// so it only ever counts up — resetting it to re-arm a flash would replay
+    /// a stale one.
+    public private(set) var completionAttempts = 0
+
+    /// The one place a refusal is recorded. Every control that can refuse a
+    /// completion claim returns through here.
+    @discardableResult
+    private func refuse() -> Bool {
+        completionAttempts += 1
+        return false
+    }
+
     @ObservationIgnored private unowned let shell: ShellModel
     @ObservationIgnored private let session: MatchSession
     @ObservationIgnored private let board: MatchBoard
@@ -121,12 +138,16 @@ public final class MatchHUDModel {
     /// Takes a round. Refuses outright when ``isDrawEnabled`` is false, so the
     /// disabled control and the ignored one cannot disagree.
     ///
+    /// A refusal — from either the gate or the session — is counted in
+    /// ``completionAttempts``, which is what tells the player why nothing
+    /// happened.
+    ///
     /// - Returns: whether the press did anything.
     @discardableResult
     public func draw() -> Bool {
         resignArmed = false
-        guard isDrawEnabled else { return false }
-        return session.draw()
+        guard isDrawEnabled, session.draw() else { return refuse() }
+        return true
     }
 
     // MARK: - Swap

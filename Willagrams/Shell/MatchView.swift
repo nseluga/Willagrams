@@ -60,7 +60,10 @@ struct MatchView: View {
                 // this is the starting value and not a two-way wire — see the
                 // engineer report.
                 camera: matchBoard.camera,
-                dictionary: dictionary
+                dictionary: dictionary,
+                // The refusal count, not a flag: `BoardView` keys its flash on
+                // the value changing, so a second refusal flashes again.
+                completionAttempts: hud.completionAttempts
             )
             .overlay { MatchHUD(hud: hud) }
             // The measured size, handed over as-is. In `.onChange`, never in
