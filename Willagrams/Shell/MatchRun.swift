@@ -74,11 +74,11 @@ public final class MatchRun {
     /// The one session. `SoloMatch` owns it; this is the short way to it.
     public var session: MatchSession { match.session }
 
-    /// Strong, and safe: `ShellModel` drops its `run` on every teardown, which
-    /// is what breaks the cycle. The end screen's closures hold this weakly for
-    /// the same reason `ResultsModel` documents — a screen outliving its match
-    /// must retain nothing.
-    private let shell: ShellModel
+    /// Weak, like ``MatchHUDModel``'s: `ShellModel` owns this run, so a strong
+    /// reference back would close a cycle that survives the shell being
+    /// dropped mid-match. Everything below copes with a gone shell by doing
+    /// nothing, which is the correct answer once nothing is left to route.
+    private weak var shell: ShellModel?
 
     /// Which `ShellModel` generation built this. See "Staleness" above.
     private let generation: Int
@@ -117,7 +117,8 @@ public final class MatchRun {
     /// Built here so Main Menu and Rematch get the same teardown rather than
     /// each call site assembling its own — and so the closures `ResultsModel`
     /// declares but cannot provide have exactly one implementation.
-    public func results(board: Board = Board()) -> ResultsModel {
+    public func results(board: Board = Board()) -> ResultsModel? {
+        guard let shell else { return nil }
         let generation = generation
         return ResultsModel(
             shell: shell,

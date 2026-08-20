@@ -219,9 +219,10 @@ struct RematchTests {
     }
 
     /// The end screen is not the only way in. A start called straight on the
-    /// owner — the menu route, a second tap — must tear the live match down
-    /// itself, or the one construction path leaks whenever the end screen is
-    /// not the caller.
+    /// owner — the menu route — must tear the live match down itself, or the
+    /// one construction path leaks whenever the end screen is not the caller.
+    /// A second tap from *inside* a live match is not that caller: it is the
+    /// stray tap the route guard refuses, and refusing builds nothing to leak.
     @Test("Starting again without the end screen still tears the previous match down")
     func aDirectRestartStillTearsTheOldMatchDown() async throws {
         let practice = Self.practice()
@@ -229,6 +230,14 @@ struct RematchTests {
         try await Self.waitForPlay(practice)
         let old = try #require(practice.run?.match)
 
+        // Refused from inside a live match, and it disturbs nothing.
+        #expect(practice.startSoloPractice() == false, "a live match was restarted from inside itself")
+        #expect(practice.run?.match === old, "the refused start replaced the live match")
+        #expect(old.session.isMatchOver == false, "the refused start ended the live match")
+
+        // Through the menu — the way the app actually gets back here — the
+        // restart goes through and takes the previous match down with it.
+        practice.returnToMenu()
         #expect(practice.startSoloPractice())
         try await Self.waitForPlay(practice)
 

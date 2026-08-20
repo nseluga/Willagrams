@@ -36,9 +36,20 @@ public final class ShellModel {
     /// check would decline the very rematch it was meant to allow.
     @ObservationIgnored private var generation = 0
 
-    /// Built once per match, not once per launch — a word list costs a few MB
-    /// and a test wants a handful of words rather than 172k.
+    /// Built once per *launch*, on the first match, and reused by every match
+    /// after it — including a rematch. The bundled list is a ~172k-entry `Set`
+    /// read off disk, and building one per rematch is a main-actor stall the
+    /// player would feel between the end screen and the next deal.
     @ObservationIgnored private let dictionary: @MainActor () -> any WordList
+    @ObservationIgnored private var cachedDictionary: (any WordList)?
+
+    private func loadedDictionary() -> any WordList {
+        if let cachedDictionary { return cachedDictionary }
+        let loaded = dictionary()
+        cachedDictionary = loaded
+        return loaded
+    }
+
     @ObservationIgnored private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
     @ObservationIgnored private let seedSource: @MainActor () -> UInt64
 
@@ -90,10 +101,15 @@ public final class ShellModel {
     /// second `MatchSession` — a rematch needs a new pair, a new session and a
     /// new pool, which is exactly what a first start builds.
     ///
-    /// It returns to the menu first rather than refusing off `.menu`: that is
-    /// what tears the previous run down *before* the replacement is
-    /// constructed, so two live sessions never overlap. `startMatch` keeps its
-    /// own guard for every other caller.
+    /// ## Who may start one
+    ///
+    /// The menu (route `.menu`), an end screen (route `.results`), and a caller
+    /// that has already torn the live run down — which is how
+    /// `ResultsModel.rematch()` arrives, on whatever route its screen was built
+    /// over. A start from inside a *live* match is the stray tap `startMatch`
+    /// has always refused, and it is still refused here. Returning to the menu
+    /// happens after that guard, so the teardown-before-construction order
+    /// holds without the guard being weakened to get it.
     ///
     /// - Parameter explicit: a seed to use instead of the injected source. It is
     ///   still put through the never-repeat rule below, so no caller can hand
@@ -101,6 +117,18 @@ public final class ShellModel {
     /// - Returns: whether a match was started.
     @discardableResult
     public func startSoloPractice(seed explicit: UInt64? = nil) -> Bool {
+#if !DEBUG
+        // Solo practice is built on `FakeTransport`, which is DEBUG-only, so a
+        // shipping build can construct no run at all. Advancing the route
+        // anyway would park the app on a screen with no run and no way back —
+        // the menu's one button would soft-lock it. Refuse instead.
+        return false
+#else
+        switch route {
+        case .menu, .results: break
+        default: if run != nil { return false }
+        }
+
         // Down before up: the previous run's stream-iteration tasks are
         // cancelled here, not left for whenever the old objects deallocate.
         returnToMenu()
@@ -128,18 +156,17 @@ public final class ShellModel {
 
         seed = fresh
         generation &+= 1
-#if DEBUG
         let built = MatchRun(
             shell: self,
             setup: setup,
-            dictionary: dictionary(),
+            dictionary: loadedDictionary(),
             generation: generation,
             sleepFor: sleepFor
         )
         run = built
         built.start()
-#endif
         return true
+#endif
     }
 
     /// Ends the live run and drops it, leaving the route alone. A no-op when
@@ -170,6 +197,12 @@ public final class ShellModel {
     /// never shown over a session that is still pumping.
     public func returnToMenu() {
         endSoloPractice()
+        // Reaching the menu is what makes every end screen stale: the run they
+        // were built for is gone and cannot come back. The bump is here rather
+        // than in ``endSoloPractice()`` because `ResultsModel.rematch()` runs
+        // the teardown *first* and then starts — bumping there would make a
+        // live screen decline its own rematch.
+        generation &+= 1
         route = .menu
     }
 }

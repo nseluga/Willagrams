@@ -56,7 +56,7 @@ struct QAMatchRunTests {
         previous = first.session
 
         // Rematch through the real end-screen closures.
-        #expect(first.results().rematch())
+        #expect(first.results()?.rematch() == true)
         let second = try #require(shell.run)
         #expect(second.session !== first.session)
 
@@ -118,7 +118,7 @@ struct QAMatchRunTests {
         // outcome rather than a fresh one's.
         #expect(shell.run === run, "the results route rebuilt the run")
         #expect(shell.run?.session === session)
-        #expect(run.results().outcome == .peerWin)
+        #expect(run.results()?.outcome == .peerWin)
 
         shell.returnToMenu()
     }
@@ -186,7 +186,7 @@ struct QAMatchRunTests {
             old.session.state.status == .playing
         }
 
-        #expect(old.results().rematch())
+        #expect(old.results()?.rematch() == true)
         let new = try #require(shell.run)
 
         #expect(new.session !== old.session, "rematch reused the finished session")

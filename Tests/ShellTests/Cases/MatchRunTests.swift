@@ -62,17 +62,24 @@ struct MatchRunTests {
         #expect(shell.run?.session === session)
         // The end screen the results route renders is built over that session
         // too, not over a fresh one.
-        #expect(run.results().outcome == .noWinner)
+        #expect(run.results()?.outcome == .noWinner)
 
         shell.returnToMenu()
     }
 
-    @Test("A second start replaces the run rather than adding one")
+    @Test("A start from inside a live match is refused; one from the menu replaces the run")
     func aSecondStartReplacesTheRun() async throws {
         let shell = Self.shell()
         #expect(shell.startSoloPractice())
         let first = try #require(shell.run)
 
+        // The stray tap: `startMatch` has always refused it, and building a
+        // second run over a live one is exactly what this item forbids.
+        #expect(shell.startSoloPractice() == false, "a live run was restarted from inside itself")
+        #expect(shell.run === first, "the refused start replaced the live run")
+        #expect(first.session.isMatchOver == false, "the refused start ended the live run")
+
+        shell.returnToMenu()
         #expect(shell.startSoloPractice())
         let second = try #require(shell.run)
 
@@ -147,7 +154,7 @@ struct MatchRunTests {
             old.session.state.status == .playing
         }
 
-        let results = old.results()
+        let results = try #require(old.results())
         #expect(results.isRematchEnabled)
         #expect(results.rematch())
 
@@ -183,12 +190,71 @@ struct MatchRunTests {
 
         // Read at the instant the replacement is published — `run` is observed,
         // so the new value is what a screen would see.
-        #expect(old.results().rematch())
+        #expect(old.results()?.rematch() == true)
         let new = try #require(shell.run)
         #expect(new !== old)
         #expect(old.session.isMatchOver, "the new run was built over a live one")
 
         shell.returnToMenu()
+    }
+
+    // MARK: - What a rematch must not rebuild
+
+    /// The word list is a ~172k-entry `Set` read off disk. Rebuilding one per
+    /// rematch is a main-actor stall between the end screen and the next deal,
+    /// so it is loaded once per launch and reused.
+    @Test("The word list is built once per launch, not once per match")
+    func theWordListIsBuiltOnce() async throws {
+        let builds = Builds()
+        let shell = ShellModel(
+            dictionary: { builds.count += 1; return EveryWordIsReal() },
+            sleepFor: { _ in },
+            seedSource: { 700 }
+        )
+        #expect(builds.count == 0, "a word list was built before any match")
+
+        #expect(shell.startSoloPractice())
+        #expect(builds.count == 1)
+        let run = try #require(shell.run)
+        #expect(run.results()?.rematch() == true)
+        #expect(shell.run !== run, "the rematch built no new run")
+        #expect(builds.count == 1, "a rematch rebuilt the word list")
+
+        shell.returnToMenu()
+    }
+
+    /// A box, so the closure and the test share one tally.
+    final class Builds { var count = 0 }
+
+    // MARK: - No cycle back to the shell
+
+    /// A shell dropped mid-match must take itself, its run, that run's session,
+    /// board and HUD with it. A strong reference from either the run or the HUD
+    /// back to the shell closes a cycle that leaks all five.
+    @Test("A shell dropped mid-match leaks neither itself nor its run")
+    func aDroppedShellLeaksNothing() async throws {
+        weak var weakShell: ShellModel?
+        weak var weakRun: MatchRun?
+        weak var weakSession: MatchSession?
+        weak var weakHUD: MatchHUDModel?
+        try await {
+            let shell = Self.shell()
+            #expect(shell.startSoloPractice())
+            let run = try #require(shell.run)
+            try await SoloMatchTests.waitUntil("play to begin") {
+                run.session.state.status == .playing
+            }
+            weakShell = shell
+            weakRun = run
+            weakSession = run.session
+            weakHUD = run.hud
+        }()
+
+        // Nothing is torn down first: the shell is simply dropped, which is the
+        // case a cycle survives.
+        try await SoloMatchTests.waitUntil("the dropped shell and its run to be released") {
+            weakShell == nil && weakRun == nil && weakSession == nil && weakHUD == nil
+        }
     }
 
     // MARK: - The run is released, not merely unreferenced
