@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The root screen: the wordmark and the one thing the app can currently do.
+/// The root screen: the wordmark, the one thing the app can currently play, and
+/// the rules for it.
 ///
 /// No Host, Join or Settings row. There is no `GKMatchTransport` behind the
 /// first two and no settings surface behind the third, and a disabled control
@@ -26,13 +27,18 @@ struct MenuView: View {
                 .allowsTightening(true)
                 .accessibilityAddTraits(.isHeader)
                 #if DEBUG
-                // Quiet way in to the style gallery. No visible control, so the
-                // menu still offers exactly one thing.
+                // Quiet way in to the style gallery. No visible control, so it
+                // adds nothing to the menu's two actions.
                 .onLongPressGesture { showingStyleGallery = true }
                 #endif
 
-            Button(Self.soloPracticeLabel) { shell.startSoloPractice() }
-                .buttonStyle(.brandPrimary)
+            VStack(spacing: DesignTokens.Space.m) {
+                Button(Self.soloPracticeLabel) { shell.startSoloPractice() }
+                    .buttonStyle(.brandPrimary)
+
+                Button(HowToPlay.title) { shell.showHowToPlay() }
+                    .buttonStyle(.brandQuiet)
+            }
         }
         // Relative sizing only: landscape iPhone through landscape iPad, no
         // assumed viewport. The stack is intrinsically sized and centred.
@@ -52,7 +58,8 @@ struct MenuView: View {
     }
 
     /// Local copy, not `Terminology`: that file is the frozen IP fence and names
-    /// game concepts, not screens.
+    /// game concepts, not screens. The rules row's label is `HowToPlay.title`,
+    /// which is that screen's own chrome.
     private static let title = "Willagrams"
     private static let soloPracticeLabel = "Solo Practice"
 }

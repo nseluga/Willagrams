@@ -91,7 +91,15 @@ public final class ShellModel {
         route = .countdown(setup)
     }
 
-    /// What the menu's one action starts. Solo practice takes no options, so the
+    /// Menu → rules. Only from the menu, so the rules screen cannot be reached
+    /// from inside a match and cannot strand a live run behind it. ``returnToMenu()``
+    /// is the way back.
+    public func showHowToPlay() {
+        guard case .menu = route else { return }
+        route = .howToPlay
+    }
+
+    /// What the menu's first action starts. Solo practice takes no options, so the
     /// setup is fixed apart from the seed — there is no difficulty selector and
     /// no opponent to configure.
     public static let soloHandSize = 21
