@@ -174,7 +174,7 @@ frozen.
     - Across a full match run, the bot's rack plus its board accounts for exactly the tiles it was granted — no tile lost or duplicated when a grant lands mid-search
     - With the pool exhausted and the board complete the bot sends `.win` exactly once, and it sends none while the board is incomplete or the pool is not exhausted
     - When the human's `.win` arrives first, the brain issues no further moves and the bot's session names the human as winner
-  status: not started
+  status: done
 
 - task: |
     Add the two expensive rungs, and a floor so no bot can stall forever.
