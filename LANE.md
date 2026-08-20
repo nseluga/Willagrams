@@ -119,7 +119,7 @@ and `BoardView`'s init are all spent.
     - The viewport `MatchBoard` receives is the surface's measured size rather than a hard-coded one, taken outside body evaluation
     - `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build` succeeds
     - Existing passing tests remain passing
-  status: not started
+  status: done
 
 - task: Wire `ShellRootView`'s three placeholder cases to the real screens —
     `CountdownView` for `.countdown`, `MatchView` for `.match`, `ResultsView` for
