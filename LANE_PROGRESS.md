@@ -16,7 +16,7 @@ LANE.md wins for scope.
 |------|--------|
 | Own the match run across countdown, match and results (`MatchRun`) | done — Starting solo practice now builds one match that the countdown, match and results screens all share, and leaving or starting a rematch fully shuts the old one down first. |
 | Compose the match screen (`MatchView`) | done — The match screen now shows the real board with the controls over it, sized to the actual screen. |
-| Wire ShellRootView's three placeholder routes to the real screens | not started |
+| Wire ShellRootView's three placeholder routes to the real screens | done — Pressing Solo Practice now walks through the real countdown, board and results screens instead of stopping at placeholder text. |
 | Give the invalid-run flash a caller | not started |
 | Add the win claim | not started |
 | Publish the host's remaining pool count in the HUD | not started |

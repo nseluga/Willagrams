@@ -134,7 +134,7 @@ and `BoardView`'s init are all spent.
     - The existing guardrail test asserting no navigation container still passes
     - `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build` succeeds
     - Existing passing tests remain passing
-  status: not started
+  status: done
 
 - task: Give the invalid-run flash a caller. `MatchHUDModel` publishes a
     `completionAttempts` counter that `MatchView` passes into `BoardView`, and every
