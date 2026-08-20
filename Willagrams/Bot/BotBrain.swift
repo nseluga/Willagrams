@@ -222,10 +222,19 @@ public actor BotBrain {
             stalledTicks += 1
             return
         }
-        barren = nil
         if await apply(plan, from: snapshot) {
+            barren = nil
             stalledTicks = 0
         } else {
+            // A plan that was found and then refused is the expensive case: the
+            // full ladder ran, the session said no, and every rolled-back
+            // failure path leaves this exact rack and this exact board behind.
+            // Without marking it the brain re-runs the same search, finds the
+            // same plan and is refused again on every tick until the stall
+            // floor fires. A refusal that *did* move the state — a grant
+            // landing mid-search — moves the fingerprint too, so the next tick
+            // searches anyway.
+            barren = fingerprint
             stalledTicks += 1
         }
     }
@@ -275,15 +284,17 @@ public actor BotBrain {
         guard session.state.board == board else {
             return .placementFailed("the board moved under the plan")
         }
-        let before = board.placementList
         do {
             for coord in plan.recalls { try session.recall(from: coord) }
             for move in plan.moves { try session.place(tileID: move.tileID, at: move.coord) }
         } catch {
-            restore(session, to: before)
-            return error
+            return restore(session, to: board) ? error : .placementFailed(rollbackFailed)
         }
-        guard !plan.recalls.isEmpty else { return nil }
+        // A lone placement onto an untouched board is rung 0, already validated
+        // as a whole board by the search that chose it. Anything else — any
+        // recall, or more than one tile down — is a rung-1/2 attempt and must
+        // clear the bar before it is allowed to stand.
+        guard !plan.recalls.isEmpty || plan.moves.count > 1 else { return nil }
 
         let now = session.state.board
         let check = now.validate(against: dictionary)
@@ -291,28 +302,43 @@ public actor BotBrain {
               check.invalidWords.isEmpty,
               check.clusterCount <= 1
         else {
-            restore(session, to: before)
-            return .placementFailed("the attempt left the board no better")
+            return restore(session, to: board)
+                ? .placementFailed("the attempt left the board no better")
+                : .placementFailed(rollbackFailed)
         }
         return nil
     }
 
-    /// Puts the board back exactly as `placements` had it — the same tiles at
-    /// the same coordinates.
+    /// Puts the board back exactly as `board` had it — the same tiles at the
+    /// same coordinates — and says whether it got there.
     ///
     /// Every recall returns its tile to the rack and frees its cell, so by the
     /// time the re-placements run each tile is in hand and each cell is empty:
-    /// nothing here can be refused. The `try?`s are the belt on that reasoning,
-    /// not a shrug at it.
+    /// under ``commit(_:_:from:dictionary:)``'s synchrony nothing here can be
+    /// refused. The `try?`s are the belt on that reasoning and the returned
+    /// `Bool` is the alarm on it — a `try?` that swallowed a real refusal shows
+    /// up as a board that does not match, which the caller turns into a
+    /// recorded ``BoardActionError`` rather than a silent half-applied plan.
+    ///
+    /// Returns early when nothing was mutated. That is not just a saving: every
+    /// recall appends to the rack, so a needless round trip would reorder the
+    /// hand of a board that never moved.
     @MainActor
-    private static func restore(_ session: MatchSession, to placements: [Placement]) {
+    private static func restore(_ session: MatchSession, to board: Board) -> Bool {
+        if session.state.board == board { return true }
         for coord in Array(session.state.board.placements.keys) {
             try? session.recall(from: coord)
         }
-        for placement in placements {
+        for placement in board.placementList {
             try? session.place(tileID: placement.tileID, at: placement.coord)
         }
+        return session.state.board == board
     }
+
+    /// Recorded when a rollback could not put the board back. Nothing above can
+    /// repair it, but a defect that reaches the results screen unannounced is
+    /// worse than one that is in `lastPlacementError` when it happens.
+    static let rollbackFailed = "the attempt failed and could not be rolled back"
 
     // MARK: - The ladder
 
@@ -321,7 +347,7 @@ public actor BotBrain {
     ///
     /// Rung 3 (swap) is a later item; adding it is adding a `case` here, not
     /// changing the tick above it.
-    private func plan(on snapshot: Snapshot, depth: Int) -> Plan? {
+    func plan(on snapshot: Snapshot, depth: Int) -> Plan? {
         for rung in 0...depth {
             switch rung {
             case 0:
@@ -675,13 +701,24 @@ public actor BotBrain {
 
     /// What a search's outcome depends on. Tile ids rather than letters: a
     /// swapped-in tile with the same letters is still a different rack.
+    ///
+    /// The whole board, not its tile count: two different boards of the same
+    /// size are two different searches, and a count would call the second one
+    /// barren on the first one's evidence.
+    ///
+    /// The rack is *sorted*, because a rollback puts recalled tiles back on the
+    /// end of the hand and so returns a rack that is the same multiset in a
+    /// different order. Order is what the search walks, but "no move exists" is
+    /// a fact about the multiset — if no tile fits anywhere, no permutation of
+    /// them does either. Unsorted, every rolled-back attempt would look like
+    /// fresh state and be searched again immediately.
     private struct Fingerprint: Equatable {
-        let boardCount: Int
+        let board: Board
         let rack: [UUID]
 
         init(_ snapshot: Snapshot) {
-            boardCount = snapshot.board.placements.count
-            rack = snapshot.hand.map(\.id)
+            board = snapshot.board
+            rack = snapshot.hand.map(\.id).sorted()
         }
     }
 
@@ -695,13 +732,13 @@ public actor BotBrain {
     /// Everything the search needs, read in one hop so the parts cannot
     /// disagree with each other. Value types throughout: nothing here is a
     /// window onto the session, and none of it outlives the tick.
-    private struct Snapshot: Sendable {
+    struct Snapshot: Sendable {
         let hand: [Tile]
         let board: Board
         let options: MatchOptions
     }
 
-    private struct Move: Sendable {
+    struct Move: Sendable {
         let tileID: UUID
         let coord: Coord
     }
@@ -712,7 +749,7 @@ public actor BotBrain {
     /// A plan is inert. It names coordinates and tile ids and nothing else, so
     /// it can be carried from the search actor to the main one and applied, or
     /// dropped, without either side holding the other's state.
-    private struct Plan: Sendable {
+    struct Plan: Sendable {
         let recalls: [Coord]
         let moves: [Move]
     }
