@@ -128,7 +128,7 @@ frozen.
     - `HostPool.host(of:)` over the two ids names the human, proven by running the election rather than by asserting an ordering
     - After `leave()`, a send from the human endpoint throws `peerDisconnected` and the bot session's inbound iteration has ended
     - Existing passing tests remain passing
-  status: not started
+  status: done
 
 - task: |
     Give the bot a difficulty model and a brain that plays the simplest way.

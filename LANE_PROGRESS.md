@@ -5,8 +5,8 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** round 2 in progress — 1 of 6 items done.
-- **Next:** item 2 — the bot\'s end of the wire.
+- **Status:** round 2 in progress — 2 of 6 items done.
+- **Next:** item 3 — the bot brain (flagged for extra scrutiny).
 - **Blockers:** none.
 - **Last updated:** 2026-08-19
 
@@ -15,7 +15,7 @@ LANE.md wins for scope.
 | Item | Status |
 |------|--------|
 | Build the shipping in-memory transport and its test package | done — The bot now has a real in-memory connection to the player that works in a shipping build, not just in debug. |
-| Build the bot's end of the wire — connected, dealt to, playing nothing | not started |
+| Build the bot's end of the wire — connected, dealt to, playing nothing | done — The bot now joins a match as a second player and receives its opening tiles; it does not play them yet. |
 | Give the bot a difficulty model and a brain that plays the simplest way | not started |
 | Add the two expensive rungs, and a stall floor | not started |
 | Add the last rung: give a tile back | not started |
