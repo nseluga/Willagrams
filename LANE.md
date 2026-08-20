@@ -213,7 +213,7 @@ frozen.
     - A rebuild that finds nothing better leaves the board identical to the one before it ran, tile for tile and coordinate for coordinate
     - A bot at `ladderDepth` 0 given a stalling rack still places a tile within the stall-floor threshold, and the counter resets once it does
     - Rung 2 terminates and returns a board on a full 21-tile rack, within the budget it declares
-  status: not started
+  status: done
 
 - task: |
     Add the last rung: give a tile back.
