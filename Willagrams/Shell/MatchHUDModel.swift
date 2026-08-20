@@ -56,7 +56,28 @@ public final class MatchHUDModel {
     /// resigns.
     public private(set) var resignArmed = false
 
-    @ObservationIgnored private let shell: ShellModel
+    /// `unowned`: `ShellModel` owns the run that owns this, so a strong
+    /// reference here closes a cycle that leaks the whole match when the shell
+    /// is dropped mid-match. The shell cannot outlive this, so there is nothing
+    /// to unwrap.
+    /// How many times a completion claim has been refused this match.
+    ///
+    /// Not a mirror of anything, so it cannot go stale: it is written only by
+    /// ``refuse()``, on the same press that returns `false`, and nothing else
+    /// derives from it. The board keys its invalid flash on the value changing,
+    /// so it only ever counts up — resetting it to re-arm a flash would replay
+    /// a stale one.
+    public private(set) var completionAttempts = 0
+
+    /// The one place a refusal is recorded. Every control that can refuse a
+    /// completion claim returns through here.
+    @discardableResult
+    private func refuse() -> Bool {
+        completionAttempts += 1
+        return false
+    }
+
+    @ObservationIgnored private unowned let shell: ShellModel
     @ObservationIgnored private let session: MatchSession
     @ObservationIgnored private let board: MatchBoard
 
@@ -70,17 +91,14 @@ public final class MatchHUDModel {
 
     /// How many tiles are left to take, or `nil` when the session cannot say.
     ///
-    /// Today it is always `nil`. `MatchSession.state.pool` is a documented
-    /// placeholder — permanently empty on host and guest alike — and the real
-    /// supply lives behind `MatchSession.hostPool`, which is private, inside an
-    /// actor, and in a lane this one may not edit. **Amendment needed:
-    /// `Willagrams/Match/MatchSession.swift` must publish a remaining count;
-    /// this property then returns it and nothing else here changes.**
+    /// Straight from `MatchSession.poolRemaining`, which reads the host's real
+    /// pool back after every movement of it. `nil` on a device that runs no
+    /// pool — a guest cannot know this number.
     ///
-    /// It is `nil` rather than a number counted here on purpose: a shell-side
-    /// ledger of grants is a second source of truth that can silently disagree
-    /// with the pool it claims to describe.
-    public var poolRemaining: Int? { nil }
+    /// Nothing is counted here on purpose: a shell-side ledger of grants is a
+    /// second source of truth that can silently disagree with the pool it
+    /// claims to describe.
+    public var poolRemaining: Int? { session.poolRemaining }
 
     /// The frozen name for the supply.
     public var poolLabel: String { Terminology.pool }
@@ -117,12 +135,41 @@ public final class MatchHUDModel {
     /// Takes a round. Refuses outright when ``isDrawEnabled`` is false, so the
     /// disabled control and the ignored one cannot disagree.
     ///
+    /// A refusal — from either the gate or the session — is counted in
+    /// ``completionAttempts``, which is what tells the player why nothing
+    /// happened.
+    ///
     /// - Returns: whether the press did anything.
     @discardableResult
     public func draw() -> Bool {
         resignArmed = false
-        guard isDrawEnabled else { return false }
-        return session.draw()
+        guard isDrawEnabled, session.draw() else { return refuse() }
+        return true
+    }
+
+    // MARK: - Win
+
+    public var winLabel: String { Terminology.winCall }
+
+    /// Exactly the states Draw is disabled in, read through the property that
+    /// already decides them. Restating the rule here is how the two answers
+    /// start to disagree.
+    public var isWinEnabled: Bool { isDrawEnabled }
+
+    /// Calls the match, and moves the shell to the results it just produced —
+    /// the same ending ``confirmResign()`` makes, from the other side.
+    ///
+    /// A refusal — from the gate or from the session — is counted in
+    /// ``completionAttempts`` and changes no route: a refused claim is not an
+    /// outcome, so the player stays in the match they are still playing.
+    ///
+    /// - Returns: whether the match was won.
+    @discardableResult
+    public func claimWin() -> Bool {
+        resignArmed = false
+        guard isWinEnabled, session.claimWin() else { return refuse() }
+        shell.matchEnded(winner: session.winner)
+        return true
     }
 
     // MARK: - Swap

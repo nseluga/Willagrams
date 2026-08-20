@@ -41,27 +41,50 @@ struct MatchHUDTests {
 
     // MARK: - Criterion 1
 
-    /// The count cannot be reached from this lane: `MatchSession.state.pool` is
-    /// a documented placeholder and the real supply is private inside an actor.
-    /// What is provable is that the HUD says so rather than inventing a number
-    /// or counting grants into a second ledger of its own.
-    @Test("The pool count is absent, not guessed")
-    func poolCountIsAbsentRatherThanInvented() async throws {
+    /// The HUD shows the host's real remaining count, and it tracks the pool
+    /// rather than a snapshot taken once at match start.
+    @Test("The pool count is the real one and falls as tiles are drawn")
+    func poolCountIsRealAndFalls() async throws {
         let (solo, _, _, hud) = try await Self.hud()
 
-        #expect(hud.poolRemaining == nil)
-        #expect(hud.poolValue == MatchHUDModel.unknownValue)
         #expect(hud.poolLabel == Terminology.pool)
+        // The opening deal took one hand per player out of a full pool.
+        let afterDeal = try #require(hud.poolRemaining)
+        #expect(afterDeal == LetterDistribution.totalTiles - Self.setup.startingHandSize * 2)
+        #expect(hud.poolValue == String(afterDeal))
 
-        // A draw changes what is left, and the HUD still refuses to name it.
+        // A draw event costs one tile per player, and the HUD follows it down.
         #expect(solo.session.draw())
         try await SoloMatchTests.waitUntil("the drawn tile") {
             solo.session.state.board.placementList.count == Self.setup.startingHandSize + 1
         }
-        #expect(hud.poolRemaining == nil)
-        #expect(hud.poolValue == MatchHUDModel.unknownValue)
+        try await SoloMatchTests.waitUntil("the count to fall") {
+            hud.poolRemaining == afterDeal - 2
+        }
+        #expect(hud.poolValue == String(afterDeal - 2))
 
         solo.leave()
+    }
+
+    /// A device that runs no pool cannot know the number, and says so rather
+    /// than guessing one.
+    @Test("A session with no pool of its own shows the placeholder")
+    func poolCountIsAbsentWithoutAPool() async throws {
+        // Before the match opens there is no pool anywhere yet.
+        let solo = SoloMatch(setup: Self.setup, dictionary: EveryWordIsReal(), sleepFor: { _ in })
+        #expect(solo.session.poolRemaining == nil)
+        solo.leave()
+
+        // And a guest never has one at all.
+        let (_, session) = try await MatchBoardTests.guest(
+            handSize: 3, dictionary: EveryWordIsReal()
+        )
+        let shell = ShellModel(route: .match(Self.setup))
+        let board = MatchBoard(session: session, dictionary: EveryWordIsReal())
+        let hud = MatchHUDModel(shell: shell, session: session, board: board)
+        #expect(hud.poolRemaining == nil)
+        #expect(hud.poolValue == MatchHUDModel.unknownValue)
+        session.leave()
     }
 
     // MARK: - Criterion 2
@@ -224,23 +247,126 @@ struct MatchHUDTests {
         solo.leave()
     }
 
+    // MARK: - Refused completion claims
+
+    @Test("A refused Draw counts a completion attempt and a granted one does not")
+    func refusedDrawCountsACompletionAttempt() async throws {
+        let dictionary = EnableWordList(words: ["GO"])
+        let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        wiring.viewport = MatchBoardTests.viewport
+        let shell = ShellModel(route: .match(Self.setup))
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+
+        try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
+        try await SoloMatchTests.waitUntil("the opening on the board") {
+            wiring.board.placementList.count == 2
+        }
+
+        #expect(hud.completionAttempts == 0)
+        #expect(hud.draw() == false)
+        #expect(hud.completionAttempts == 1, "a refused Draw explained nothing")
+        // Each refusal is its own flash: the count rises again rather than
+        // being re-armed from zero.
+        #expect(hud.draw() == false)
+        #expect(hud.completionAttempts == 2)
+
+        let loose = try #require(wiring.board.placementList.first { $0.tile.letter == "O" })
+        let joined = try #require(wiring.board.placementList.first { $0.tile.letter == "G" }).coord
+        _ = wiring.board.remove(at: loose.coord)
+        try wiring.board.place(loose.tile, at: Coord(row: joined.row, col: joined.col + 1))
+        wiring.model.seed(wiring.board, against: dictionary)
+
+        #expect(hud.draw())
+        #expect(hud.completionAttempts == 2, "a granted Draw flashed the board")
+
+        session.leave()
+    }
+
+    // MARK: - The win claim
+
+    /// The claim is gated on exactly what Draw is gated on, refuses through the
+    /// same counter, and — refused — leaves the player in the match.
+    @Test("A refused claim flashes the board and ends nothing")
+    func refusedClaimChangesNoRoute() async throws {
+        let (solo, _, shell, hud) = try await Self.hud()
+
+        #expect(hud.winLabel == Terminology.winCall)
+        #expect(hud.isWinEnabled == false, "a spaced opening is claimable")
+        #expect(hud.claimWin() == false)
+        #expect(hud.completionAttempts == 1, "a refused claim explained nothing")
+        #expect(hud.claimWin() == false)
+        #expect(hud.completionAttempts == 2, "the second refusal replayed the first flash")
+        #expect(shell.route == .match(Self.setup), "a refusal is not an outcome")
+        #expect(solo.session.isMatchOver == false)
+
+        solo.leave()
+    }
+
+    @Test("An accepted claim ends the match here and routes to the results")
+    func acceptedClaimRoutesToResults() async throws {
+        let dictionary = EveryWordIsReal()
+        let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        wiring.viewport = MatchBoardTests.viewport
+        let shell = ShellModel(route: .match(Self.setup))
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+
+        try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
+        try await SoloMatchTests.waitUntil("the opening on the board") {
+            wiring.board.placementList.count == 2
+        }
+
+        // One word, one cluster: the same board state that unlocks Draw.
+        let loose = try #require(wiring.board.placementList.first { $0.tile.letter == "O" })
+        let joined = try #require(wiring.board.placementList.first { $0.tile.letter == "G" }).coord
+        _ = wiring.board.remove(at: loose.coord)
+        try wiring.board.place(loose.tile, at: Coord(row: joined.row, col: joined.col + 1))
+        wiring.model.seed(wiring.board, against: dictionary)
+
+        #expect(hud.isWinEnabled)
+        #expect(hud.claimWin())
+        #expect(hud.completionAttempts == 0, "an accepted claim flashed the board")
+        #expect(session.isMatchOver)
+        #expect(session.winner == session.localPlayerID)
+        #expect(shell.route == .results(winner: session.localPlayerID))
+
+        // Over is over: a second press is refused and changes nothing.
+        #expect(hud.claimWin() == false)
+        #expect(hud.completionAttempts == 1)
+        #expect(shell.route == .results(winner: session.localPlayerID))
+
+        session.leave()
+    }
+
+    /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so
+    /// the wire is checked against the bytes on disk.
+    @Test("MatchView hands the refusal count to the board")
+    func matchViewPassesTheCount() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchView.swift"), encoding: .utf8)
+        #expect(text.contains("completionAttempts: hud.completionAttempts"))
+    }
+
     // MARK: - The guardrail
 
     /// Checked against the bytes on disk: neither HUD file may name the peer to
     /// the player. `peerPresence` is read by the model to gate this player's own
     /// controls, so the model is allowed that one word and nothing more; the
     /// view may not name it at all.
-    @Test("Nothing in the HUD reports the opponent")
-    func hudNamesNoOpponent() throws {
-        let shellSource = URL(fileURLWithPath: #filePath)
+    /// One shell source file, as it sits on disk.
+    static func shellSource(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("ShellSrc")
             .resolvingSymlinksInPath()
+            .appendingPathComponent(name)
+    }
+
+    @Test("Nothing in the HUD reports the opponent")
+    func hudNamesNoOpponent() throws {
         for name in ["MatchHUDModel.swift", "MatchHUD.swift"] {
-            let text = try String(
-                contentsOf: shellSource.appendingPathComponent(name), encoding: .utf8
-            )
+            let text = try String(contentsOf: Self.shellSource(name), encoding: .utf8)
             for banned in ["peerTileIDs", "winningPlacements", "peerPlayerID", "opponentTiles"] {
                 #expect(!text.contains(banned), "\(name) reaches for \(banned)")
             }

@@ -184,6 +184,35 @@ public final class MatchSession {
     // Before adding observed state here, re-run `swift test --package-path
     // Tests/MatchTests`. A green engine suite does not cover this.
 
+    /// The last count read back from ``HostPool/pool``, or `nil` on a device
+    /// that runs no pool. `@ObservationIgnored` for the reason above; observers
+    /// are driven through ``poolRemaining`` and ``setPoolRemaining(_:)``, which
+    /// register and fire on that computed key path directly rather than
+    /// borrowing another property's code path.
+    @ObservationIgnored private var storedPoolRemaining: Int?
+
+    /// How many tiles the host's pool still holds, or `nil` on a device that
+    /// does not run one — a guest cannot know this number, and no guess is made
+    /// for it.
+    ///
+    /// Never a tally of grants: the value is read back from ``HostPool/pool``
+    /// itself after every movement of it, so it cannot drift from the pool it
+    /// describes.
+    public var poolRemaining: Int? {
+        access(keyPath: \.poolRemaining)
+        return storedPoolRemaining
+    }
+
+    private func setPoolRemaining(_ count: Int?) {
+        withMutation(keyPath: \.poolRemaining) { storedPoolRemaining = count }
+    }
+
+    /// Re-reads the count from the pool. Called after every `HostPool` call
+    /// that can move it, from the main actor, inside the same enqueued step.
+    private func refreshPoolRemaining(from hostPool: HostPool) async {
+        setPoolRemaining(await hostPool.pool.count)
+    }
+
     @ObservationIgnored private var storedOptions: MatchOptions = .standard
 
     /// The rules this match is playing under, validated on arrival.
@@ -938,13 +967,17 @@ public final class MatchSession {
         self.awaitingOpeningDeal = self.startingHandSize > 0
 
         if start.host == localPlayerID {
+            let pool = Pool.standard(seed: start.seed)
             hostPool = HostPool(
                 players: roster,
-                pool: Pool.standard(seed: start.seed),
+                pool: pool,
                 seed: start.seed,
                 transport: transport,
                 swapEnabled: options.swapEnabled
             )
+            // The opening count, from the very pool just handed over — the HUD
+            // shows a full pool before the deal rather than a placeholder.
+            setPoolRemaining(pool.count)
         }
         // Clamped at both ends: one `.start` carrying a huge value off the wire
         // would otherwise park this session in `.countdown` for the rest of the
@@ -1014,6 +1047,7 @@ public final class MatchSession {
                 return
             }
             let produced = await hostPool.deal(handSize: handSize)
+            await self.refreshPoolRemaining(from: hostPool)
             for case let .grant(player, tiles) in produced where player == self.localPlayerID {
                 // The grant addressed to the host never travels — this is where
                 // the host's own opening hand lands, as `applyProduced` does for
@@ -1207,6 +1241,7 @@ public final class MatchSession {
             guard let self, !self.blockedByLock(message) else { return }
             guard let hostPool = self.hostPool else { return }
             let produced = await hostPool.handle(message)
+            await self.refreshPoolRemaining(from: hostPool)
             self.applyProduced(produced, answering: message)
         }
     }

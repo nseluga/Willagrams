@@ -44,7 +44,8 @@ let package = Package(
             // fails if this list and the files that import SwiftUI disagree.
             exclude: [
                 "ShellRootView.swift", "MenuView.swift", "CountdownView.swift",
-                "MatchHUD.swift", "ResultsView.swift",
+                "MatchHUD.swift", "MatchView.swift", "ResultsView.swift",
+                "HowToPlayView.swift",
             ]
         ),
         .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style", "BoardKit"], path: "Cases"),
