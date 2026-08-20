@@ -78,12 +78,23 @@ public struct BoardView: View {
     /// it, it only hands it to `BoardModel.commit`, which opens it.
     private let dictionary: any WordList
 
+    /// How many times the owner has claimed the board is finished — a Draw or a
+    /// win call. The count, not a flag: two refused presses in a row must flash
+    /// twice, and a `Bool` the owner has to set back down could only flash once
+    /// and would leave the reset to whoever remembered it.
+    ///
+    /// What the press MEANS is the owner's business. This view only answers the
+    /// one question it can: whether the board reads finished, and which runs
+    /// are why not.
+    private let completionAttempts: Int
+
     public init(
         board: Binding<Board>,
         model: Binding<BoardModel>,
         camera: BoardCamera,
         dictionary: any WordList,
-        inputLocked: Bool = false
+        inputLocked: Bool = false,
+        completionAttempts: Int = 0
     ) {
         _board = board
         // The owner builds the model with the CHEAP init, not the seeding one:
@@ -96,6 +107,7 @@ public struct BoardView: View {
         _camera = State(initialValue: camera)
         self.dictionary = dictionary
         self.inputLocked = inputLocked
+        self.completionAttempts = completionAttempts
     }
 
     public var body: some View {
@@ -108,7 +120,7 @@ public struct BoardView: View {
                 rect: rect,
                 selected: model.selected,
                 dragTranslation: model.dragTranslation,
-                invalid: model.invalidCoords,
+                invalid: model.flashedInvalid,
                 offsets: model.tileOffsets
             )
                 // The surface is a color and a Canvas, both of which are
@@ -182,6 +194,18 @@ public struct BoardView: View {
                 // there is no async hop to schedule. Once per appearance, never
                 // per body evaluation and never per gesture frame.
                 .onAppear { model.seed(board, against: dictionary) }
+                // The flash, and the only place tint is turned on. `.task(id:)`
+                // rather than a stored timer: a second press cancels the first
+                // flash's sleep and starts a fresh one, so repeated refusals
+                // read as repeated flashes instead of one long red. The guard
+                // keeps the first appearance — id 0 — from flashing a board
+                // nobody has claimed anything about yet.
+                .task(id: completionAttempts) {
+                    guard completionAttempts > 0 else { return }
+                    withAnimation(DesignTokens.Motion.snap) { model.attemptedCompletion() }
+                    try? await Task.sleep(for: .seconds(Self.flashHold))
+                    withAnimation(.easeOut(duration: Self.flashFade)) { model.clearFlash() }
+                }
         }
     }
 
@@ -333,6 +357,13 @@ public struct BoardView: View {
     /// Not a `Terminology` constant: that file is the fence around the game's
     /// vocabulary and is frozen, and recentering a camera is a control, not a
     /// game concept. Named here so there is still exactly one copy of it.
+    /// How long the red sits before it fades, and how long the fade takes.
+    /// Named here rather than in `DesignTokens`, which is frozen — same
+    /// precedent as `recenterLabel` below. Long enough to be seen at arm's
+    /// length, short enough that the board is never left reading refused.
+    private static let flashHold: Double = 0.45
+    private static let flashFade: Double = 0.35
+
     private static let recenterLabel = "Recenter"
     private static let recenterSymbol = "scope"
 }
@@ -482,9 +513,13 @@ private struct BoardPreviewHost: View {
     @State private var fixture = previewBoard()
     @State private var model = BoardModel()
     let dictionary: any WordList
+    var completionAttempts: Int = 0
 
     var body: some View {
-        BoardView(board: $fixture, model: $model, camera: previewCamera, dictionary: dictionary)
+        BoardView(
+            board: $fixture, model: $model, camera: previewCamera,
+            dictionary: dictionary, completionAttempts: completionAttempts
+        )
     }
 }
 
@@ -495,8 +530,9 @@ private struct BoardPreviewHost: View {
     BoardPreviewHost(dictionary: previewDictionary)
         .preferredColorScheme(.dark)
 }
-/// The same board against a list that does not hold WILL, so the danger tint is
-/// on screen next to an untinted loose tile.
+/// The same board against a list that does not hold WILL, with one completion
+/// claim already made — so the flash runs on appear and the danger tint is on
+/// screen next to an untinted loose tile for as long as a flash lasts.
 #Preview("Refused") {
-    BoardPreviewHost(dictionary: EnableWordList(words: []))
+    BoardPreviewHost(dictionary: EnableWordList(words: []), completionAttempts: 1)
 }

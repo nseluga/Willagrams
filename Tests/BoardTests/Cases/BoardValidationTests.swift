@@ -262,6 +262,73 @@ final class BoardValidationTests: XCTestCase {
         )
     }
 
+    // MARK: - Criterion: red is a flash on a claim, never a standing tint
+
+    /// Putting a refused run down tints nothing; claiming the board is finished
+    /// tints exactly that run; and the next move takes the tint away again.
+    func testTheTintAppearsOnlyOnACompletionClaimAndDiesOnTheNextMove() throws {
+        let dictionary = CountingWordList(["CAT"])
+        let start = Self.fixture(loose: "Z")
+        var model = BoardModel(board: start.board, against: dictionary)
+
+        // CATZ lands. The board knows it is refused...
+        let bad = move(
+            from: start.loose, to: Coord(row: 0, col: 3),
+            on: start.board, against: dictionary, model: &model
+        )
+        XCTAssertEqual(model.validation.invalidWords.map(\.text), ["CATZ"])
+        // ...and shows the player nothing.
+        XCTAssertTrue(model.flashedInvalid.isEmpty, "a refused run went red on the drop")
+
+        // The claim is what asks.
+        XCTAssertFalse(model.attemptedCompletion(), "a refused board accepted a completion claim")
+        XCTAssertEqual(
+            model.flashedInvalid, Set((0...3).map { Coord(row: 0, col: $0) }),
+            "the claim did not flash the run that refused it"
+        )
+
+        // And the flash is over the moment the board moves under it.
+        _ = move(
+            from: Coord(row: 0, col: 3), to: Coord(row: 5, col: 5),
+            on: bad, against: dictionary, model: &model
+        )
+        XCTAssertTrue(model.flashedInvalid.isEmpty, "the flash outlived the board it answered about")
+    }
+
+    /// A claim on a board that IS finished stands, and lights nothing.
+    func testACompletionClaimOnAFinishedBoardFlashesNothing() throws {
+        let dictionary = CountingWordList(["CATS"])
+        let start = Self.fixture(loose: "S")
+        var model = BoardModel(board: start.board, against: dictionary)
+        _ = move(
+            from: start.loose, to: Coord(row: 0, col: 3),
+            on: start.board, against: dictionary, model: &model
+        )
+
+        XCTAssertTrue(model.canDraw)
+        XCTAssertTrue(model.attemptedCompletion(), "a finished board refused a completion claim")
+        XCTAssertTrue(model.flashedInvalid.isEmpty, "a finished board flashed red")
+    }
+
+    /// `clearFlash` is the end of a flash and nothing more: the standing answer
+    /// about the board, and the gate, are untouched by it.
+    func testClearingAFlashLeavesTheValidationAndTheGateAlone() throws {
+        let dictionary = CountingWordList([])
+        var board = Board()
+        try? board.place(Tile(letter: "Q"), at: Coord(row: 0, col: 0))
+        try? board.place(Tile(letter: "X"), at: Coord(row: 0, col: 1))
+        var model = BoardModel(board: board, against: dictionary)
+
+        model.attemptedCompletion()
+        XCTAssertFalse(model.flashedInvalid.isEmpty)
+        model.clearFlash()
+
+        XCTAssertTrue(model.flashedInvalid.isEmpty)
+        XCTAssertEqual(model.validation.invalidWords.map(\.text), ["QX"], "clearing the flash dropped the answer")
+        XCTAssertEqual(model.invalidCoords, [Coord(row: 0, col: 0), Coord(row: 0, col: 1)])
+        XCTAssertFalse(model.canDraw, "clearing the flash opened the gate")
+    }
+
     // MARK: - Criterion: canDraw IS the frozen isComplete
 
     /// Every published `canDraw` agrees with the frozen method called directly

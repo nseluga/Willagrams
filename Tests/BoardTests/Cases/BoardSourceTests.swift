@@ -707,8 +707,16 @@ final class BoardSourceTests: XCTestCase {
         let text = try view()
         XCTAssertTrue(text.contains("Palette.danger"), "BoardView does not tint a refused run at all")
         XCTAssertTrue(
+            text.contains("invalid: model.flashedInvalid"),
+            "BoardView does not hand the flashed set to the draw list"
+        )
+        XCTAssertFalse(
             text.contains("invalid: model.invalidCoords"),
-            "BoardView does not hand the published invalid set to the draw list"
+            "BoardView tints the standing invalid set, so a refused run goes red on the drop"
+        )
+        XCTAssertTrue(
+            text.contains("model.attemptedCompletion()") && text.contains("model.clearFlash()"),
+            "BoardView does not run the flash — the tint would never appear, or never leave"
         )
         XCTAssertTrue(
             text.contains("cell.isInvalid"),
