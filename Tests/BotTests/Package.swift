@@ -25,7 +25,7 @@ let package = Package(
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Bot` must be listed here — a new one that is not
             // stops this package building. `BotDifficultyView.swift` goes here.
-            exclude: [String]()
+            exclude: ["BotDifficultyView.swift"]
         ),
         .testTarget(name: "BotTests", dependencies: ["Bot", "Match"], path: "Cases"),
     ]
