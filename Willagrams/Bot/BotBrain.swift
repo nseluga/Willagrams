@@ -213,8 +213,11 @@ public actor BotBrain {
             return
         }
         // Clamped once, here: the grant may lift the depth by one rung and no
-        // further, and never past the last rung that exists.
-        let depth = min(3, max(0, difficulty.ladderDepth) + (granted ? 1 : 0))
+        // further, and never past the last rung that exists — which is 2 until
+        // swap lands. A bot already at rung 2 therefore gains nothing from the
+        // floor; raise this to 3 with rung 3, not before, or the grant re-runs
+        // the identical search that just came back empty.
+        let depth = min(2, max(0, difficulty.ladderDepth) + (granted ? 1 : 0))
         if granted { stalledTicks = 0 }
 
         guard let plan = plan(on: snapshot, depth: depth) else {
@@ -326,7 +329,11 @@ public actor BotBrain {
     @MainActor
     private static func restore(_ session: MatchSession, to board: Board) -> Bool {
         if session.state.board == board { return true }
-        for coord in Array(session.state.board.placements.keys) {
+        // Sorted: `placements` is a dictionary, every recall appends to the
+        // rack, and the next tick's tile-major `step` reads that rack in order.
+        // Unsorted here, the same rack after a rollback would not build the
+        // same board twice.
+        for coord in session.state.board.placements.keys.sorted(by: byCoord) {
             try? session.recall(from: coord)
         }
         for placement in board.placementList {

@@ -33,8 +33,9 @@ public struct BotDifficulty: Sendable, Equatable {
     public var thinkDelay: Duration
 
     /// How many consecutive ticks the brain may place nothing before the stall
-    /// floor fires — granting it one attempt at one rung above ``ladderDepth``,
-    /// after which the count resets.
+    /// floor fires — granting it one attempt at one rung above ``ladderDepth``
+    /// where such a rung exists, after which the count resets. A bot already at
+    /// the topmost rung gains nothing from the floor until swap lands.
     ///
     /// This is the floor under every difficulty: an easy bot is allowed to be
     /// bad, not to sit on an unplayable rack for the rest of the match, which
