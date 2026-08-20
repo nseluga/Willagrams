@@ -172,6 +172,42 @@ Likewise granted: `shell` may change the `init` signature of
 `Willagrams/Board/BoardView.swift` to expose the board state its owner needs.
 No other file under `Willagrams/Board/**` is opened by this.
 
+**Both are spent.** The opening deal and the board-commit bridge landed in round
+1 as `Willagrams/Shell/MatchBoard.swift`, and `BoardView`'s init became
+binding-based in `bad1bb2`. A round-2 item wanting a `match` or `board` path is
+a fresh amendment, not covered by either.
+
+**Also landed under the second grant, 2026-08-19 (`8cdbcae`):** the invalid-run
+flash — `BoardModel.flashedInvalid` / `attemptedCompletion()` / `clearFlash()`
+and `BoardView(completionAttempts:)`. Written 2026-08-17, stranded uncommitted,
+replayed onto `integration`. Recorded here because it crossed into
+`Willagrams/Board/**` and the glob check cannot see a crossing after the fact.
+Detail in `progress/board.md`.
+
+## Granted amendment — the host's remaining pool count, in `shell`
+
+`MatchHUDModel.poolRemaining` is hardcoded `nil`, so the HUD's Pool reads `—`
+for the whole match. The count exists — `HostPool.pool` is already
+`public private(set)` — but `MatchSession.hostPool` is `private`, and that file
+is `match`'s.
+
+**Granted:** the `shell` lane may add a published remaining-pool count to
+`Willagrams/Match/MatchSession.swift`, and only that. Its agents do not stop at
+the fence for it. Every other path in `match`'s `owns:` remains closed.
+
+Scope, stated because the two halves are not the same problem:
+
+  - **The host's own count is in scope.** The local player holds the `hostPool`
+    and can read it. Solo practice elects the local player host, so this is the
+    whole of what round 2 needs.
+  - **A guest's count is not.** A guest has `hostPool == nil` and cannot know the
+    number. Broadcasting it needs a new field on `MatchMessage`, which is
+    `protected:` — a wire break to v4 and a `/foundation` amendment. No guest
+    exists until the `online` lane lands, so it is not a round-2 question.
+
+Rationale: the same one the grants above carry — every lane has one assignee,
+`match` is merged, and a whole lane round for one published integer is ceremony.
+
 ## Deferred out of this round — decided, not forgotten
 
 Named during the round-zero interview and deliberately cut. No lane owns them;
@@ -220,7 +256,7 @@ lands in the lane that owns the file.
   depends on: match (MatchOptions on the wire — contract Sources/WillagramsRules/MatchOptions.swift), style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift)
 
 - lane: shell
-  area: App shell — launch, opening animation, the home page and its actions (start a match, how to play), the countdown/match/results routes and the navigation between them, in-match HUD, results and rematch. Round 2 also owns the board-commit bridge and replacing the placeholder routes with the real screens. Feature lanes own their own screens; shell navigates into them.
+  area: App shell — launch, opening animation, the home page and its actions (start a match, how to play), the countdown/match/results routes and the navigation between them, in-match HUD, results and rematch. Round 2 replaces the placeholder routes with the real screens and composes them into a playable match; the board-commit bridge landed in round 1 as `Willagrams/Shell/MatchBoard.swift`. Feature lanes own their own screens; shell navigates into them.
   owns: [ Willagrams/Shell/**, Willagrams/App/**, Tests/ShellTests/** ]
   assignee: nate
   depends on: style (tokens + Terminology strings — contract Willagrams/Style/DesignTokens.swift), board (BoardView init signature — contract Willagrams/Board/BoardView.swift), match (MatchSession + MatchTransport — contracts Willagrams/Match/MatchTransport.swift), settings (options screen entry point — contract Willagrams/Settings/Views/MatchOptionsView.swift), online (match creation and invite — sequenced), account (sign-in and profile screen entry points — sequenced), friends (friends screen entry point — sequenced), audio (playback seam — sequenced)
