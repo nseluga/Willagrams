@@ -149,7 +149,7 @@ and `BoardView`'s init are all spent.
     - A Draw press that `MatchHUDModel.draw()` refuses increments the published counter; a press that succeeds does not
     - `MatchView` passes that counter into `BoardView`'s `completionAttempts` parameter
     - Existing passing tests remain passing
-  status: not started
+  status: done
 
 - task: Add the win claim. `MatchSession.claimWin()` exists, is covered by the match
     suite, and has no caller anywhere in the shell — so a solo match cannot be won.
