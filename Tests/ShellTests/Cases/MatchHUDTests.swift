@@ -41,27 +41,50 @@ struct MatchHUDTests {
 
     // MARK: - Criterion 1
 
-    /// The count cannot be reached from this lane: `MatchSession.state.pool` is
-    /// a documented placeholder and the real supply is private inside an actor.
-    /// What is provable is that the HUD says so rather than inventing a number
-    /// or counting grants into a second ledger of its own.
-    @Test("The pool count is absent, not guessed")
-    func poolCountIsAbsentRatherThanInvented() async throws {
+    /// The HUD shows the host's real remaining count, and it tracks the pool
+    /// rather than a snapshot taken once at match start.
+    @Test("The pool count is the real one and falls as tiles are drawn")
+    func poolCountIsRealAndFalls() async throws {
         let (solo, _, _, hud) = try await Self.hud()
 
-        #expect(hud.poolRemaining == nil)
-        #expect(hud.poolValue == MatchHUDModel.unknownValue)
         #expect(hud.poolLabel == Terminology.pool)
+        // The opening deal took one hand per player out of a full pool.
+        let afterDeal = try #require(hud.poolRemaining)
+        #expect(afterDeal == LetterDistribution.totalTiles - Self.setup.startingHandSize * 2)
+        #expect(hud.poolValue == String(afterDeal))
 
-        // A draw changes what is left, and the HUD still refuses to name it.
+        // A draw event costs one tile per player, and the HUD follows it down.
         #expect(solo.session.draw())
         try await SoloMatchTests.waitUntil("the drawn tile") {
             solo.session.state.board.placementList.count == Self.setup.startingHandSize + 1
         }
-        #expect(hud.poolRemaining == nil)
-        #expect(hud.poolValue == MatchHUDModel.unknownValue)
+        try await SoloMatchTests.waitUntil("the count to fall") {
+            hud.poolRemaining == afterDeal - 2
+        }
+        #expect(hud.poolValue == String(afterDeal - 2))
 
         solo.leave()
+    }
+
+    /// A device that runs no pool cannot know the number, and says so rather
+    /// than guessing one.
+    @Test("A session with no pool of its own shows the placeholder")
+    func poolCountIsAbsentWithoutAPool() async throws {
+        // Before the match opens there is no pool anywhere yet.
+        let solo = SoloMatch(setup: Self.setup, dictionary: EveryWordIsReal(), sleepFor: { _ in })
+        #expect(solo.session.poolRemaining == nil)
+        solo.leave()
+
+        // And a guest never has one at all.
+        let (_, session) = try await MatchBoardTests.guest(
+            handSize: 3, dictionary: EveryWordIsReal()
+        )
+        let shell = ShellModel(route: .match(Self.setup))
+        let board = MatchBoard(session: session, dictionary: EveryWordIsReal())
+        let hud = MatchHUDModel(shell: shell, session: session, board: board)
+        #expect(hud.poolRemaining == nil)
+        #expect(hud.poolValue == MatchHUDModel.unknownValue)
+        session.leave()
     }
 
     // MARK: - Criterion 2
