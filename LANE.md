@@ -205,6 +205,68 @@ and `BoardView`'s init are all spent.
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
 
+> The two items below are the bot wiring. They sit after the stop marker on
+> purpose: `BotMatch` does not exist until `lane/bot` merges, so an unattended
+> run must halt above this line. Resume this lane once bot is on `integration`.
+
+- task: |
+    Play against the bot instead of against silence.
+
+    `Willagrams/Shell/MatchRun.swift` (item 1) owns the match across the three
+    routes by building a `SoloMatch`, which is `#if DEBUG` because
+    `FakeTransport` is — so the match screen this round composes cannot ship in a
+    Release build. Replace that opponent with `Willagrams/Bot/BotMatch.swift`,
+    which is the same shape without the fence: it owns the in-memory link, hands
+    back the human-side transport to build this device's `MatchSession` on, and
+    runs the bot's own guest session behind it.
+
+    `MatchRun` takes a `BotDifficulty` and passes it through. Teardown and
+    rematch keep the order item 1 established — the old opponent down before the
+    new one is built — and `ResultsModel`'s `teardown`/`startRematch` closures
+    now capture the `BotMatch`. Delete the `#if DEBUG` fence from `MatchRun` and
+    everything it forced; `SoloMatch.swift` itself stays where it is, still
+    fenced, still covered by `SoloMatchTests`.
+
+    `Tests/ShellTests/Package.swift` needs a symlinked `Bot` target so the macOS
+    suite can see `BotDifficulty` and `BotMatch`; follow the `MatchSrc` pattern
+    already there, and exclude the bot's SwiftUI files.
+  guardrails:
+    - No shell file may carry `#if DEBUG` around the live match path once this lands — that fence is what this item exists to remove
+    - `Willagrams/Bot/**` is another lane's `owns:` — consume it, never edit it
+    - Teardown before rebuild, unchanged: repeated rematches must not leave live sessions or pumps stacked up
+    - The human end stays host; nothing here may change the election `BotMatch` runs
+  done when:
+    - A match built through `MatchRun` runs start to finish against the bot, and the results screen names a winner that is not always the local player
+    - No file under `Willagrams/Shell/**` or `Willagrams/App/**` references `SoloMatch` on the live match path, and none fences that path behind `#if DEBUG`
+    - Rematching three times in a row leaves exactly one live match, proven the way `RematchTests` already proves it for `SoloMatch`
+    - `swift test --package-path Tests/ShellTests` and the iOS `xcodebuild` build both pass
+  status: not started
+
+- task: |
+    Give the difficulty screen a route.
+
+    `Willagrams/Bot/BotDifficultyView.swift` is a standalone screen that reports
+    a `BotDifficulty` through a closure and starts nothing. Shell owns the
+    navigation into it: add an `AppRoute` case for it, a `ShellModel` transition
+    from the menu, a menu action that reaches it, and a `ShellRootView` branch
+    that renders it — supplying the closure that carries the chosen difficulty
+    into the countdown and on into `MatchRun`.
+
+    The route case carries the difficulty forward, so the countdown and match
+    routes need it too. Keep `AppRoute` a value where an unrepresentable state
+    stays unrepresentable: a difficulty reaches the match route only by having
+    been chosen.
+  guardrails:
+    - The difficulty screen is reachable only from the menu and returns there; it cannot be reached from inside a match
+    - Shell renders the bot's screen and never reimplements it — no second difficulty control anywhere under `Willagrams/Shell/**`
+    - Add any new View to the `Shell` target's `exclude:` list in `Tests/ShellTests/Package.swift`
+  done when:
+    - The menu offers an action that moves the route to the difficulty case, and choosing a preset moves the route to the countdown carrying that preset
+    - A match started after choosing `.easy` and one started after choosing `.hard` reach `MatchRun` with different `BotDifficulty` values
+    - The difficulty route is unreachable from the match and results routes
+    - Existing passing tests remain passing
+  status: not started
+
 ## Not yet specified
 
 - Whether the opening animation MAP names as shell's belongs to the launch screen, the menu, or the countdown — revisit after item 3, when the real routes are on screen and there is something to animate between.
