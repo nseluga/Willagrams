@@ -265,7 +265,31 @@ each is a later round, not an oversight.
     `Sources/WillagramsRules` is pure Swift with no platform dependency, so this
     is a port question, not a rewrite question.
 
-## Open — the Release fence, and who takes it down
+## Decided — the Release fence comes down onto `BotMatch`, 2026-08-21
+
+**Nate's call, and it settles a framing error this file carried.** There is no
+practice mode with no opponent. **Solo *is* the bot match** — one real player,
+one `BotMatch` opponent, no second product and no separate no-opponent path.
+The menu's "Solo Practice" button is the v1 feature, not a debug affordance
+standing in for one.
+
+So the fence does not need a feature behind it before it can come down; it needs
+the shell pointed at the opponent that already ships. What follows is still an
+accurate description of the fence and still the work.
+
+### Fixed on the way — the match never started, 2026-08-21
+
+Not the fence, which is open in Debug. `MatchSession` runs its own countdown and
+flips `state.status` to `.playing` when the last second lands, and **nothing
+carried that to `ShellModel.route`**: `countdownFinished()` had nine call sites
+and all nine were tests. The app dealt a rack, the card went away, and the route
+sat on `.countdown` for good — a board with no HUD and no way to play. Fixed in
+`ShellRootView` (`7331611`), with a source guardrail so the wire cannot go
+missing again.
+
+**The lesson for every lane still to run:** a green suite proves the model
+transitions, not that anything in the app calls them. A transition whose only
+callers are tests is not wired.
 
 **Verified still true 2026-08-20. This is the largest thing between the repo and
 a build a stranger can play.**
