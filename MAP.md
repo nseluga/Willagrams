@@ -124,9 +124,16 @@ The spec is `docs/amendment-wire-v2.md`.
   - The host chooses and sends the options in `start`. The guest accepts or
     leaves; there is no negotiation handshake.
 
-## Pending amendment — wire v3, up to 6 players
+## Landed amendment — wire v3, up to 6 players
 
-**Not a lane item. `/foundation` runs this before `match` reopens.**
+**Landed 2026-08-19 in `83e300c` (`/foundation` round 2). Not a lane item.**
+
+`WireFormat.current` is `3`, `MatchMessage.start` carries `roster: [PlayerID]`
+sorted ascending, and `HostPool.host(of:)` picks `roster[0]` on every device, so
+there is still no negotiation message. The `match` lane is unblocked.
+
+What follows is the amendment as written, kept because it is the record of why
+the break was confined where it was.
 
 Two players is baked into the contracts, not an incidental limit:
 
@@ -208,6 +215,42 @@ Scope, stated because the two halves are not the same problem:
 Rationale: the same one the grants above carry — every lane has one assignee,
 `match` is merged, and a whole lane round for one published integer is ceremony.
 
+## Recorded crossing — the design-comp visual pass, 2026-08-20
+
+**Not a lane. Run directly on `design/visual-pass-r1`, cut from `main`.**
+
+A Claude Design comp of eleven screens arrived after `style`, `shell` and
+`settings` had all closed. Rerunning three closed lanes to repaint them would
+have cost more than the repaint, so the visual pass ran in one session across
+all three trees at once. Recorded here because it crossed `Willagrams/Style/**`,
+`Willagrams/Shell/**`, `Willagrams/Settings/**` and `Tests/StyleTests/**`, and
+the glob check cannot see a crossing after the fact — same reason as the
+`8cdbcae` entry above.
+
+**Hard rule the pass held to: no functional change.** Layout, type, colour,
+spacing, card and shadow treatment, and the wordmark. No new data on any screen,
+no new action, no new state. Every test count is unchanged at 653 across the
+seven packages, which is the evidence: a functional change would have moved one.
+
+Landed:
+
+  - `Willagrams/Style/` gains four shared primitives — `BrandLabel` (the mono
+    metadata modifier), `WordmarkTiles` (the crossword mark), `ScreenHeader`,
+    `StatRow`. All four joined `StyleSourceTests.views`, so the no-literals and
+    no-system-colour guardrails cover them.
+  - `MenuView` is two-column landscape with the wordmark; same two actions.
+  - `HowToPlayView` is a two-column card grid under a `ScreenHeader`.
+  - `CountdownView` and `ResultsView` open their cards with a mono kicker.
+  - `MatchOptionsView` and `RulesInForceView` take the kicker header and a
+    bounded panel width.
+
+**No `MAP_PROGRESS.md` row was added. No lane ran** — recording one would make
+the progress file claim a round that did not happen.
+
+What the comp shows and this repo deliberately does not build is written up in
+`docs/design/README.md`, screen by screen, with the reason for each. A lane
+picking up one of those screens should read that file first.
+
 ## Deferred out of this round — decided, not forgotten
 
 Named during the round-zero interview and deliberately cut. No lane owns them;
@@ -221,6 +264,28 @@ each is a later round, not an oversight.
   - **Android and web.** Launch is iOS-only. The engine in
     `Sources/WillagramsRules` is pure Swift with no platform dependency, so this
     is a port question, not a rewrite question.
+
+## Open — the Release fence, and who takes it down
+
+**Verified still true 2026-08-20. This is the largest thing between the repo and
+a build a stranger can play.**
+
+`Willagrams/Bot/BotMatch.swift` opens with "the whole point of this lane: no
+`#if DEBUG` fence. This ships." That is true of `BotMatch` itself and false of
+the app around it:
+
+  - `ShellModel.run` is `#if DEBUG`, because `MatchRun` owns a `SoloMatch`,
+    which owns a `FakeTransport`, which must not ship.
+  - `ShellModel.startSoloPractice()` opens with `#if !DEBUG return false`, and
+    refuses on purpose — advancing the route with no run would soft-lock the
+    menu's one button.
+  - `ShellRootView` fences `.countdown`, `.match` and `.results` the same way.
+
+So a Release build today is a menu and a rules screen. The fix is not a new
+feature: it is switching the shell from `SoloMatch`/`FakeTransport` to
+`BotMatch` over a local link, which already ships unfenced with 63 tests behind
+it. It crosses `Willagrams/Shell/**` and `Willagrams/Bot/**`, so it is an
+amendment or a round-2 `shell` item, not something a visual pass may touch.
 
 ## Tuning — the last step before launch
 
@@ -247,7 +312,7 @@ lands in the lane that owns the file.
   area: The match session — message codec, host-authoritative pool, draw/swap/grow broadcast, win claim, disconnect freeze and reconnect. Transport-agnostic: it owns the MatchTransport protocol and never imports a networking framework. Reopens this round for wire v3 (up to 6 players).
   owns: [ Willagrams/Match/**, Tests/MatchTests/** ]
   assignee: nate
-  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v3.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. Blocked on the wire v3 amendment landing.
+  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v3.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. The wire v3 amendment landed 2026-08-19 in `83e300c`, so this lane is unblocked.
 
 - lane: settings
   area: Match configuration and rule variants — the host's pre-match options screen, local persistence of chosen defaults, and showing both players which rules are in force. Ships the disable-swap, minimum-word-length, and selectable-dictionary controls.
@@ -271,13 +336,13 @@ lands in the lane that owns the file.
   area: Identity screens — Sign in with Apple, the profile page and its stats. Reads the session and the user record from `online`; owns no client and no schema. No phone sign-in: Supabase sends no SMS itself and every supported provider is paid, so Sign in with Apple is the only route this release.
   owns: [ Willagrams/Account/**, Tests/AccountTests/** ]
   assignee: nate
-  depends on: online (auth session + user record — sequenced, the schema is not designed yet), style (tokens — contract Willagrams/Style/DesignTokens.swift)
+  depends on: online (auth session + user record — the schema landed 2026-08-19 in `83e300c`: `docs/schema.md`, `supabase/migrations/0001_init.sql`, and the `BackendClient` seam with a complete `FakeBackend` behind it, so this lane can be built and tested with no server), style (tokens — contract Willagrams/Style/DesignTokens.swift)
 
 - lane: friends
   area: The friends page — friends list, friend requests and accept/block, and invites by share link and short friend code. No chat this release, and no phone-number invites: that would need a paid SMS provider, so a friend code carried over any messenger the player already has replaces it.
   owns: [ Willagrams/Friends/**, Tests/FriendsTests/** ]
   assignee: nate
-  depends on: online (client + friend tables — sequenced, the schema is not designed yet), account (the current user — sequenced), style (tokens — contract Willagrams/Style/DesignTokens.swift)
+  depends on: online (client + friend tables — landed 2026-08-19 in `83e300c`; `Friendship`/`FriendshipStatus` and the friend calls are on `BackendClient`, faked end to end), account (the current user — sequenced), style (tokens — contract Willagrams/Style/DesignTokens.swift)
 
 - lane: bot
   area: The CPU opponent for solo play — a heuristic grid solver that holds tiles, builds a valid connected board from them, draws when its board is complete, and races the player. Owns its difficulty model and the UI for choosing a difficulty. Sits behind the transport seam exactly as a remote peer does, which is what lets solo play ship in Release.
