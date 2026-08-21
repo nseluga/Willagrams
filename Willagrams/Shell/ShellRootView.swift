@@ -64,6 +64,16 @@ struct ShellRootView: View {
                 model: $matchBoard.model,
                 dictionary: run.dictionary
             )
+            // `MatchSession` runs the countdown and flips its own status to
+            // `.playing` when the last second lands. Nothing was carrying that
+            // fact to the route, so the app sat on `.countdown` forever: the
+            // card vanished, the board stayed, and the HUD never arrived.
+            // Still no decision here — `CountdownOverlay` answers whether the
+            // count is over, exactly as it answers whether the card shows, and
+            // `ShellModel.countdownFinished` owns the transition.
+            .onChange(of: CountdownOverlay(session: run.session) == nil, initial: true) { _, isOver in
+                if isOver { shell.countdownFinished() }
+            }
         }
     }
 
