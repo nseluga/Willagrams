@@ -23,20 +23,28 @@ struct MenuView: View {
     #endif
 
     var body: some View {
-        HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
-            identity
+        GeometryReader { proxy in
+            let layout = Layout(width: proxy.size.width)
 
-            Spacer(minLength: DesignTokens.Space.xl)
+            HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
+                identity(layout)
 
-            actions
-                // The action column is fixed rather than proportional: these
-                // are two buttons with short labels, and a column that grows
-                // with the iPad's width would strand them mid-air.
-                .frame(width: Self.actionColumnWidth)
+                Spacer(minLength: DesignTokens.Space.xl)
+
+                actions
+                    // The action column is fixed in proportion, not in points:
+                    // two buttons with short labels, sized off the same measure
+                    // as the rest so they neither strand mid-air on a 13-inch
+                    // iPad nor crowd the mark on a phone.
+                    .frame(width: layout.actionColumnWidth)
+            }
+            // Capped and centred rather than pinned to the screen edges. Past
+            // the cap a wider device gets margin, not a wider dead band between
+            // the two columns.
+            .frame(maxWidth: layout.contentWidth)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(DesignTokens.Space.xl)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(.leading, DesignTokens.Space.xl + DesignTokens.Space.l)
-        .padding([.top, .trailing, .bottom], DesignTokens.Space.xl)
         .background {
             LinearGradient(
                 colors: [DesignTokens.Palette.canvasTop, DesignTokens.Palette.canvasBottom],
@@ -50,11 +58,40 @@ struct MenuView: View {
         #endif
     }
 
-    private var identity: some View {
+    /// Every measure on this screen, derived from the width it actually got.
+    ///
+    /// One layout for every device rather than an iPad file and an iPhone file:
+    /// there is no two-way split to make. iPad Pro 13-inch, iPad 11-inch, an
+    /// iPhone in landscape and an iPad in Split View — which reports `.pad`
+    /// while handing the app a phone-width window — are four different widths,
+    /// and a size class answers none of them. The comp was drawn at
+    /// ``compWidth``; everything here is that drawing read at the width to hand.
+    private struct Layout {
+
+        let contentWidth: CGFloat
+
+        init(width: CGFloat) {
+            contentWidth = min(width, MenuView.contentMaxWidth)
+        }
+
+        /// Clamped at both ends: the mark is the screen, so it may not shrink
+        /// to a stamp on a phone or swell past the tagline on a 13-inch iPad.
+        var wordmarkCell: CGFloat {
+            min(max((contentWidth * 0.052).rounded(), 26), 64)
+        }
+
+        var taglineWidth: CGFloat { (contentWidth * 0.32).rounded() }
+
+        var actionColumnWidth: CGFloat {
+            min(max((contentWidth * 0.30).rounded(), 220), 340)
+        }
+    }
+
+    private func identity(_ layout: Layout) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             Spacer(minLength: 0)
 
-            WordmarkTiles(cell: Self.wordmarkCell)
+            WordmarkTiles(cell: layout.wordmarkCell)
                 #if DEBUG
                 // Quiet way in to the style gallery. No visible control, so it
                 // adds nothing to the menu's two actions.
@@ -65,7 +102,7 @@ struct MenuView: View {
                 .font(DesignTokens.Typography.body)
                 .foregroundStyle(DesignTokens.Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: Self.taglineWidth, alignment: .leading)
+                .frame(maxWidth: layout.taglineWidth, alignment: .leading)
 
             Spacer(minLength: 0)
         }
@@ -103,9 +140,10 @@ struct MenuView: View {
     private static let tagline =
         "One shared \(Terminology.pool). One connected grid. First empty rack wins."
 
-    private static let wordmarkCell: CGFloat = 30
-    private static let taglineWidth: CGFloat = 320
-    private static let actionColumnWidth: CGFloat = 300
+    /// The width the design comp was drawn at. Nothing is pinned to it — it is
+    /// the ceiling the content stops growing at, so a wider screen adds margin
+    /// rather than stretching a two-column menu across a metre of glass.
+    private static let contentMaxWidth: CGFloat = 980
 }
 
 private extension View {
