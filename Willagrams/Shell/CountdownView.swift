@@ -49,9 +49,12 @@ struct CountdownView: View {
     /// scrim over the tiles.
     private func card(_ overlay: CountdownOverlay) -> some View {
         VStack(spacing: DesignTokens.Space.s) {
+            // Uppercased for display only. The words are `Terminology`'s and
+            // stay its words; the case is the mono label's, like every other
+            // kicker on the app's screens.
             Text(overlay.title)
-                .font(DesignTokens.Typography.title)
-                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .monoLabel()
+                .textCase(.uppercase)
             Text(String(overlay.secondsRemaining))
                 .font(DesignTokens.Typography.display)
                 .foregroundStyle(DesignTokens.Palette.textPrimary)
