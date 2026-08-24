@@ -33,12 +33,28 @@ public struct BotDifficulty: Sendable, Equatable {
     /// floor swaps it away.
     public var ladderDepth: Int
 
-    /// The pause between placements. The bot is not slow — it is *paced*, so a
-    /// human can watch tiles land instead of a board appearing at once.
+    /// The pause between placements, before pacing stretches or squeezes it.
+    /// The bot is not slow — it is *paced*, so a human can watch tiles land
+    /// instead of a board appearing at once.
+    ///
+    /// Read it as the *middle* of the bot's rhythm rather than its speed: the
+    /// brain multiplies this by a factor drawn from ``pacing`` on every tick,
+    /// so what a player actually sees swings either side of it.
     ///
     /// Also the tick interval when the brain finds nothing to do. A test drives
-    /// the brain with `.zero` here; nothing else in the lane sleeps.
+    /// the brain with `.zero` here; nothing else in the lane sleeps. Zero times
+    /// any factor is still zero, so pacing costs a test nothing.
     public var thinkDelay: Duration
+
+    /// How far either side of ``thinkDelay`` a single pause may land.
+    ///
+    /// A bot that pauses the same number of milliseconds every time reads as a
+    /// metronome, and a metronome reads as a machine no matter how well it
+    /// plays. The brain widens the gap when a tick found nothing and narrows it
+    /// while tiles are going down, so the variation is *earned* — the player is
+    /// watching an opponent get stuck and then get going again, not watching a
+    /// random number. This range is only the clamp on how far that can go.
+    public var pacing: ClosedRange<Double>
 
     /// How many consecutive ticks the brain may place nothing before the stall
     /// floor fires — granting it one attempt at one rung above ``ladderDepth``,
@@ -53,10 +69,16 @@ public struct BotDifficulty: Sendable, Equatable {
     /// from the player's side of the screen looks exactly like a broken bot.
     public var stallFloorTicks: Int
 
-    public init(ladderDepth: Int, thinkDelay: Duration, stallFloorTicks: Int) {
+    public init(
+        ladderDepth: Int,
+        thinkDelay: Duration,
+        stallFloorTicks: Int,
+        pacing: ClosedRange<Double> = 0.45...3.0
+    ) {
         self.ladderDepth = ladderDepth
         self.thinkDelay = thinkDelay
         self.stallFloorTicks = stallFloorTicks
+        self.pacing = pacing
     }
 
     /// Extend only, slowly, and patient about being stuck.
@@ -70,16 +92,20 @@ public struct BotDifficulty: Sendable, Equatable {
     /// words — at a conversational pace.
     public static let medium = BotDifficulty(
         ladderDepth: 2,
-        thinkDelay: .milliseconds(600),
+        thinkDelay: .milliseconds(850),
         stallFloorTicks: 6
     )
 
     /// The whole ladder, swap included, and quick to give up on a bad rack.
     /// The only preset that hands a tile back *by choice*; the others reach it
     /// only through the stall floor, and only once nothing else is left.
+    /// Quick, but never instant: at 250ms every tile landed the moment the one
+    /// before it did, which read as a script running rather than a person
+    /// playing. The ladder is what makes this bot hard; the clock only made it
+    /// inhuman.
     public static let hard = BotDifficulty(
         ladderDepth: 3,
-        thinkDelay: .milliseconds(250),
+        thinkDelay: .milliseconds(700),
         stallFloorTicks: 3
     )
 }

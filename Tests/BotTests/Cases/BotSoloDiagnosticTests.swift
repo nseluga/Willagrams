@@ -9,21 +9,30 @@ import Bot
 /// far end actually did, so "the bot isn't playing" is answered with a number
 /// rather than a guess.
 ///
-/// Pacing is collapsed to zero so a match takes milliseconds to play, but the
-/// ticks are *counted* through the brain's sleep seam and multiplied by the
-/// preset's real `thinkDelay` afterwards. That is what makes the reported
-/// duration honest without waiting half an hour for an easy bot: a tick is a
-/// tick whether it was slept through or not.
+/// The brain runs at its real pace and never actually sleeps: the sleep seam
+/// adds up what it was *asked* to wait for and returns at once. That is what
+/// makes the reported duration honest without waiting half an hour for an easy
+/// bot — and it is the only way to report one at all now that pacing varies,
+/// since ticks × `thinkDelay` stopped being the length of a match the moment a
+/// pause could be three times its base.
 ///
 ///     swift test --package-path Tests/BotTests --filter BotSoloDiagnosticTests
 @MainActor
 @Suite("Bot solo diagnostic")
 struct BotSoloDiagnosticTests {
 
-    /// Counts the brain's ticks from inside its own sleep.
+    /// Adds up the brain's own sleeps without serving any of them.
     actor Ticks {
         private(set) var count = 0
-        func bump() { count += 1 }
+        private(set) var waited = Duration.zero
+        private(set) var longest = Duration.zero
+        private(set) var shortest = Duration.seconds(3600)
+        func bump(_ pause: Duration) {
+            count += 1
+            waited += pause
+            longest = max(longest, pause)
+            shortest = min(shortest, pause)
+        }
     }
 
     /// What one match cost, separated into the two things that decide it: how
@@ -34,16 +43,18 @@ struct BotSoloDiagnosticTests {
         var ticks: Int
         var placed: Int
         var compute: Duration
-        var pace: Duration
+        var paced: Duration
+        var shortest: Duration
+        var longest: Duration
         var over: Bool
         var winner: String
         var pool: String
         var rack: String
         var firstPeel: Int
 
-        /// Ticks at the preset's real pace, plus what the search actually cost.
+        /// Every pause the bot asked for, plus what the search actually cost.
         /// This is the number a player experiences.
-        var wallClock: Duration { (pace + compute / max(ticks, 1)) * ticks }
+        var wallClock: Duration { paced + compute }
     }
 
     /// One full match. The human is passive but obedient: it takes every tile
@@ -62,14 +73,12 @@ struct BotSoloDiagnosticTests {
         defer { human.leave() }
 
         human.startMatch(seed: seed, startingHandSize: 21, countdownSeconds: 0)
-        var paced = difficulty
-        paced.thinkDelay = .zero
         let counter = Ticks()
         let brain = BotBrain(
             session: match.session,
             dictionary: dictionary,
-            difficulty: paced,
-            sleepFor: { _ in await counter.bump() }
+            difficulty: difficulty,
+            sleepFor: { await counter.bump($0) }
         )
         let started = ContinuousClock.now
         let task = Task { await brain.run() }
@@ -105,7 +114,9 @@ struct BotSoloDiagnosticTests {
             ticks: await counter.count,
             placed: placed,
             compute: compute,
-            pace: difficulty.thinkDelay,
+            paced: await counter.waited,
+            shortest: await counter.shortest,
+            longest: await counter.longest,
             over: human.isMatchOver,
             winner: human.winner.map(\.rawValue) ?? "none",
             pool: human.poolRemaining.map(String.init) ?? "—",
@@ -120,8 +131,9 @@ struct BotSoloDiagnosticTests {
             for difficulty in [BotDifficulty.easy, .medium, .hard] {
                 let run = try await Self.play(difficulty, seed: seed, ticks: 24_000)
                 print("""
-                \(run.label) seed \(run.seed) — \(run.ticks) ticks at \(run.pace) \
+                \(run.label) seed \(run.seed) — \(run.ticks) ticks \
                 → about \(run.wallClock) to watch
+                  pauses \(run.shortest) … \(run.longest)
                   board \(run.placed) tiles · first peel after \(run.firstPeel) placements \
                   · rack [\(run.rack)] · pool \(run.pool)
                   over \(run.over) · winner \(run.winner) · search cost \(run.compute)

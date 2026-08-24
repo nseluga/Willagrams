@@ -92,6 +92,12 @@ public actor BotBrain {
     /// screen is indistinguishable from a broken bot.
     private var stalledTicks = 0
 
+    /// Consecutive ticks that put a tile down, and consecutive ticks that
+    /// did not. The pacing's whole memory: one says how long the bot has
+    /// been flowing, the other how long it has been stuck.
+    private var roll = 0
+    private var stare = 0
+
     /// Consecutive stall-floor grants that changed nothing on the board.
     ///
     /// The floor firing once means the search had a bad tick. It firing over
@@ -169,9 +175,10 @@ public actor BotBrain {
     /// holds both players, and an unheard-from peer reads `.present`, so
     /// `presentPlayers.count` is 2 before the peer ever connects.
     ///
-    /// Sleeps ``BotDifficulty/thinkDelay`` after every tick, placement or not,
-    /// so a brain with nothing to do waits rather than spins. A second
-    /// concurrent call returns immediately rather than doubling every move.
+    /// Sleeps after every tick, placement or not, so a brain with nothing to do
+    /// waits rather than spins — but never for the same length twice running.
+    /// See ``pace(_:)``. A second concurrent call returns immediately rather
+    /// than doubling every move.
     public func run() async {
         guard !isRunning else { return }
         isRunning = true
@@ -185,13 +192,90 @@ public actor BotBrain {
                 return
             case let .acted(mark):
                 drawMark = mark
+                await sleepFor(pace(.drew))
             case let .search(snapshot):
                 drawMark = nil
-                await attempt(snapshot)
+                await sleepFor(pace(await attempt(snapshot)))
             }
-            await sleepFor(difficulty.thinkDelay)
         }
     }
+
+    /// What a tick amounted to, as far as the clock cares.
+    private enum Beat {
+        /// A tile went down.
+        case placed
+        /// The search ran and found nothing.
+        case stuck
+        /// The search was skipped because nothing has moved since it last came
+        /// back empty. Kept apart from ``stuck`` because it costs the player
+        /// something and shows them nothing: the board is not going to change
+        /// until the stall floor fires, so every millisecond spent here is dead
+        /// air, not an opponent visibly struggling.
+        case idle
+        /// The bot drew, claimed, or took a tile it was handed — a real action,
+        /// but not one that says anything about how well the rack is going.
+        case drew
+    }
+
+    /// How long to wait after a tick, given how the tick went.
+    ///
+    /// The complaint this answers is not that the bot was fast. It is that it
+    /// was *even* — a tile every N milliseconds forever, which no person has
+    /// ever played like and which reads as a script the moment you watch it for
+    /// half a minute. A human opponent is legible from across the table: you
+    /// can see them find a run of easy words and rattle them off, and you can
+    /// see them hit a rack that will not go anywhere and sit there turning it
+    /// over.
+    ///
+    /// So the pause is derived from the thing a watcher would derive it from.
+    /// Tiles going down shorten it, and keep shortening it while the run lasts
+    /// — that is the bot on a roll. A tick that came back with nothing
+    /// lengthens it, and each further empty tick lengthens it again — that is
+    /// the bot stuck, and it is real: the search genuinely found nothing, so
+    /// the hesitation lands exactly where a person's would. The jitter on top
+    /// keeps two identical situations from producing identical pauses, and the
+    /// occasional ponder is the pause that has no reason at all, because
+    /// people's don't either.
+    ///
+    /// ``BotDifficulty/pacing`` clamps the result so no preset can drift into
+    /// either failure mode: a bot that looks frozen, or one that empties its
+    /// rack faster than you can read it.
+    private func pace(_ beat: Beat) -> Duration {
+        switch beat {
+        case .placed: roll += 1; stare = 0
+        case .stuck: stare += 1; roll = 0
+        case .idle, .drew: break
+        }
+        // Both curves flatten out early, and the stuck one flattens low. Only a
+        // tick that ends with a tile on the board is *seen*; a pause taken
+        // while the bot has nothing to play shows the player an unchanged
+        // screen, so a long one buys no character and costs real minutes. What
+        // reads as hesitation is the gap before the next tile appears, and one
+        // stretched pause delivers that as well as five do.
+        let eased: Double
+        switch beat {
+        case .placed: eased = 1 / (1 + Double(min(roll, 6)) * 0.2)
+        case .stuck: eased = 1 + Double(min(stare, 3)) * 0.2
+        case .idle: eased = 0.6
+        case .drew: eased = 1
+        }
+        // Safe to draw randomly here: this decides how long to wait and nothing
+        // else. No board state, no move ordering, and no test outcome depends on
+        // it — the suites drive `thinkDelay` at `.zero`, and zero times any
+        // factor this returns is still zero.
+        let jitter = Double.random(in: 0.8...1.3)
+        let ponder = Double.random(in: 0..<1) < Self.ponderChance
+            ? Double.random(in: 1.7...2.6)
+            : 1
+        let span = difficulty.pacing
+        let factor = min(max(eased * jitter * ponder, span.lowerBound), span.upperBound)
+        return difficulty.thinkDelay * factor
+    }
+
+    /// How often a pause is long for no reason the board can explain. Roughly
+    /// one tick in nine — often enough to notice across a match, rare enough
+    /// that it reads as the opponent thinking rather than as the app stalling.
+    static let ponderChance = 0.11
 
     /// One tick of everything that needs the session's actor.
     ///
@@ -245,13 +329,17 @@ public actor BotBrain {
     /// becoming permanent: once ``BotDifficulty/stallFloorTicks`` ticks have
     /// passed with nothing placed, the brain searches anyway and reaches one
     /// rung above its own depth for exactly one attempt.
-    private func attempt(_ snapshot: Snapshot) async {
+    ///
+    /// Returns what the tick amounted to, which is all the pacing needs to know
+    /// about it.
+    @discardableResult
+    private func attempt(_ snapshot: Snapshot) async -> Beat {
         if pendingSwap != nil { await settleSwap() }
         let fingerprint = Fingerprint(snapshot)
         let granted = stalledTicks >= max(1, difficulty.stallFloorTicks)
         guard granted || fingerprint != barren else {
             stalledTicks += 1
-            return
+            return .idle
         }
         // Clamped once, here: the grant may lift the *search* depth by one rung
         // and no further. Rung 3 is not a search and is not reached this way —
@@ -276,7 +364,7 @@ public actor BotBrain {
         guard let plan = plan(on: snapshot, depth: depth, mayGiveBack: lastResort) else {
             barren = fingerprint
             stalledTicks += 1
-            return
+            return .stuck
         }
         if let tile = plan.swap {
             await ask(toSwap: tile)
@@ -285,12 +373,13 @@ public actor BotBrain {
             // the rack, and moving the rack moves the fingerprint.
             barren = fingerprint
             stalledTicks += 1
-            return
+            return .stuck
         }
         if await apply(plan, from: snapshot) {
             barren = nil
             stalledTicks = 0
             barrenGrants = 0
+            return .placed
         } else {
             // A plan that was found and then refused is the expensive case: the
             // full ladder ran, the session said no, and every rolled-back
@@ -302,6 +391,7 @@ public actor BotBrain {
             // searches anyway.
             barren = fingerprint
             stalledTicks += 1
+            return .stuck
         }
     }
 
