@@ -19,15 +19,20 @@ the seven packages are unchanged, which is the evidence.
 |---|---|---|---|
 | 01 | Launch | — | **Not built.** See "Launch screen" below. |
 | 02 | Menu | `Willagrams/Shell/MenuView.swift` | Built, restyled. |
-| 03 | Host / Join | — | Not built — no lane has shipped a transport. `online`. |
-| 04 | Match options | `Willagrams/Settings/Views/MatchOptionsView.swift` | Built, restyled, with two deliberate departures. |
-| 05 | Rules in force | `Willagrams/Settings/Views/RulesInForceView.swift` | Built, restyled. |
-| 06 | Countdown | `Willagrams/Shell/CountdownView.swift` | Built, restyled. |
-| 07 | Results | `Willagrams/Shell/ResultsView.swift` | Built, restyled, minus the stat table. |
-| 08 | In-match HUD | `Willagrams/Shell/MatchHUD.swift` | Built. Untouched by this pass — see below. |
+| 03 | Friends | — | Not built. `friends` lane. |
+| 04 | Match rules (host) | `Willagrams/Settings/Views/MatchOptionsView.swift` | Built, restyled, with two deliberate departures. |
+| 05 | Lobby · rules in force | `Willagrams/Settings/Views/RulesInForceView.swift` | **Partial.** Only the rules-in-force list has a repo screen; the lobby around it is `online`'s. |
+| 06 | Get ready | `Willagrams/Shell/CountdownView.swift` | Built, restyled. |
+| 07 | Result | `Willagrams/Shell/ResultsView.swift` | Built, restyled, minus the stat table. |
+| 08 | Solo practice (setup) | — | Not built as a screen — see below. |
 | 09 | How to play | `Willagrams/Shell/HowToPlayView.swift` | Built, restyled, minus the pager. |
-| 10 | Connection lost | — | Not built. The data exists; the screen does not. |
-| 11 | Account / Friends | — | Not built. `account` and `friends` lanes. |
+| 10 | Reconnecting | — | Not built. The data exists; the screen does not. |
+| 11 | Settings | `Willagrams/Settings/` | Built, restyled, minus the profile and lifetime stats. |
+
+**Not in the comp at all: the in-match screen.** `Willagrams/Shell/MatchView.swift`
+and `MatchHUD.swift` have no comp to match. The comp's own preamble says so —
+"the in-match board is out of scope" — and none of its eleven screens is a
+match in progress.
 
 ## What the comp shows that this repo deliberately does not build
 
@@ -77,13 +82,26 @@ generated launch screen with the comp's means editing
 and a SwiftUI first-frame view would live in `Willagrams/App/**`, which is the
 `shell` lane's. Neither is a style-lane change, so neither happened here.
 
-### The in-match HUD (screen 08)
+### The in-match screen — there is no comp for it
 
-Left alone on purpose. The HUD sits over a live board and reads
-`MatchHUDModel`; restyling it means judging it against motion and drag states
-this pass cannot exercise. The comp's HUD is also the screen it takes the most
-liberty with. This is the one screen where a lane should re-read the comp rather
-than trust a translation of it.
+An earlier draft of this file listed screen 08 as an "in-match HUD" and said the
+pass left it alone on purpose. That was wrong in the way that matters: screen 08
+is a **solo-practice setup** screen, and the comp contains no match-in-progress
+screen at all. Its preamble puts the in-match board out of scope explicitly.
+
+So `MatchHUD` is not un-restyled — it is unspecified. It reads
+`MatchHUDModel`, sits over a live board, and today lays out bottom-leading:
+pool, Draw, Swap, Willagrams!, Resign in one row. Anyone who wants a different
+in-match layout — the pool broken out to a top corner, say — is **designing**,
+not translating, and should say so. Ask for a comp first, or decide it here.
+
+### Solo practice setup (screen 08)
+
+Not built. `ShellModel.startSoloPractice()` goes straight into a match on the
+defaults; the comp wants a screen before it with a starting-rack picker, a
+minimum-word-length picker, and a last-session stat card. The stats do not
+exist — same counters `Results` wants. A `shell` item, gated on the same
+counting work.
 
 ## The primitives the pass added
 
