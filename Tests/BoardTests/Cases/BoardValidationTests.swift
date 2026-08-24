@@ -295,6 +295,48 @@ final class BoardValidationTests: XCTestCase {
         XCTAssertTrue(model.flashedInvalid.isEmpty, "the flash outlived the board it answered about")
     }
 
+    /// The defect that made the flash useless where it matters most: a board
+    /// refused for being in pieces had nothing to point at.
+    ///
+    /// `isComplete` is `clusterCount == 1 && invalidWords.isEmpty && tileCount
+    /// >= 2`. A freshly dealt board is loose letters — many clusters, and
+    /// `invalidWords` **empty**, because a word needs two letters. So `canDraw`
+    /// was false while the flash set was empty, and the very first Draw a
+    /// player presses tinted nothing at all.
+    func testAClaimOnABoardInPiecesFlashesTheStrandedTiles() throws {
+        let dictionary = CountingWordList(["CAT"])
+        // CAT, plus a loose Z far away: two clusters, no bad word.
+        let start = Self.fixture(loose: "Z")
+        var model = BoardModel(board: start.board, against: dictionary)
+
+        XCTAssertTrue(model.validation.invalidWords.isEmpty, "the fixture spells something bad")
+        XCTAssertTrue(model.validation.clusterCount > 1, "the fixture is not in pieces")
+        XCTAssertFalse(model.canDraw)
+
+        XCTAssertFalse(model.attemptedCompletion(), "a board in pieces accepted a claim")
+        XCTAssertEqual(
+            model.flashedInvalid, [start.loose],
+            "the claim did not flash the tile that is not joined on"
+        )
+    }
+
+    /// Loose letters and nothing else — the opening board, and the one the
+    /// player actually meets first. Every tile is its own cluster, so all but
+    /// the biggest are stranded and the flash covers all but one.
+    func testAClaimOnAnAllLooseBoardFlashesAlmostEverything() throws {
+        let dictionary = CountingWordList(["CAT"])
+        var board = Board()
+        let coords = [Coord(row: 0, col: 0), Coord(row: 4, col: 4), Coord(row: 8, col: 8)]
+        for (letter, coord) in zip("ABC", coords) {
+            try? board.place(Tile(letter: letter), at: coord)
+        }
+        var model = BoardModel(board: board, against: dictionary)
+
+        XCTAssertTrue(model.validation.invalidWords.isEmpty)
+        XCTAssertFalse(model.attemptedCompletion())
+        XCTAssertEqual(model.flashedInvalid.count, 2, "an all-loose board flashed nothing")
+    }
+
     /// A claim on a board that IS finished stands, and lights nothing.
     func testACompletionClaimOnAFinishedBoardFlashesNothing() throws {
         let dictionary = CountingWordList(["CATS"])

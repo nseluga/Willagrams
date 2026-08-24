@@ -92,6 +92,20 @@ public struct BoardModel: Sendable {
     /// tint has to be dropped a whole run at a time — see `invalidCoords`.
     private var invalidRuns: [Set<Coord>] = []
 
+    /// Every coord outside the biggest connected group, when the board is in
+    /// more than one piece. Empty otherwise.
+    ///
+    /// The other half of the refusal, and the half that was missing. A bad
+    /// *word* has coords to point at; being in pieces did not, so a board
+    /// refused for connectivity flashed nothing at all — and a freshly dealt
+    /// board is the case where that is guaranteed, because twenty-one loose
+    /// letters form no word for `invalidWords` to complain about.
+    ///
+    /// The biggest group is the one the player is building on, so what needs
+    /// moving is everything else. Ties fall to the group with the lowest coord
+    /// in reading order, never to `Set` iteration order.
+    private var strandedCoords: Set<Coord> = []
+
     /// The runs as the board reads them WITH the held tiles gone, computed once
     /// at pickup by `began(_:on:against:haptics:)`. `nil` whenever nothing is
     /// held — and also for the whole of a hold begun through the plain `began`,
@@ -115,7 +129,7 @@ public struct BoardModel: Sendable {
     /// on the `true` and ignores the `false` gets the flash for free.
     @discardableResult
     public mutating func attemptedCompletion() -> Bool {
-        flashedInvalid = canDraw ? [] : invalidCoords
+        flashedInvalid = canDraw ? [] : invalidCoords.union(strandedCoords)
         return canDraw
     }
 
@@ -381,10 +395,30 @@ public struct BoardModel: Sendable {
     private mutating func revalidate(_ board: Board, against dictionary: some WordList) {
         validation = board.validate(against: dictionary)
         invalidRuns = Self.runs(of: validation)
+        strandedCoords = Self.stranded(in: board)
         // Any commit ends a flash: it was an answer about the board as it stood
         // when the player claimed to be done, and that board no longer exists.
         flashedInvalid = []
         tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
+    }
+
+    /// Everything outside the biggest cluster, or nothing if the board is in
+    /// one piece. A single tile is one cluster and strands nothing: it is
+    /// refused on `tileCount`, not on connectivity, and lighting the only tile
+    /// on the table would say the wrong thing about why.
+    private static func stranded(in board: Board) -> Set<Coord> {
+        let clusters = board.clusters
+        guard clusters.count > 1 else { return [] }
+        // Sorted, not `max(by:)`: two clusters of the same size must resolve
+        // the same way every run, and `board.clusters` comes out of a `Set`.
+        let anchor = { (cluster: Set<Coord>) in
+            cluster.min(by: { ($0.row, $0.col) < ($1.row, $1.col) }) ?? Coord(row: 0, col: 0)
+        }
+        let biggest = clusters.max(by: {
+            ($0.count, anchor($1).row, anchor($1).col)
+                < ($1.count, anchor($0).row, anchor($0).col)
+        }) ?? []
+        return clusters.filter { $0 != biggest }.reduce(into: Set()) { $0.formUnion($1) }
     }
 
     /// One coord set per bad word. Shared by the committed tint and the tint of
