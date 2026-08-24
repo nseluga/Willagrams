@@ -52,9 +52,12 @@ struct MatchHUD: View {
                 // see `MatchHUDModel.isSwapOffered`. A control that cannot work
                 // for the whole match is not part of this game's furniture.
                 if hud.isSwapOffered {
-                    Button(hud.swapLabel) { if let tile = hud.swappableTile { hud.swap(tile) } }
+                    // Disabled on `isSwapPressable`, not `isSwapEnabled`, for
+                    // the reason Draw is: a refused press has to LAND, or the
+                    // pool running too low to swap is never shown to anyone.
+                    Button(hud.swapLabel) { hud.swapPressed() }
                         .buttonStyle(.brandQuiet)
-                        .disabled(!hud.isSwapEnabled)
+                        .disabled(!hud.isSwapPressable)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)

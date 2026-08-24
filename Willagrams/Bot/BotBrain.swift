@@ -92,6 +92,16 @@ public actor BotBrain {
     /// screen is indistinguishable from a broken bot.
     private var stalledTicks = 0
 
+    /// Consecutive stall-floor grants that changed nothing on the board.
+    ///
+    /// The floor firing once means the search had a bad tick. It firing over
+    /// and over means the rack holds something no rung this bot has will ever
+    /// place, which is the only thing the last-resort swap is for. Counting
+    /// them is what keeps an easy bot easy: hard reaches rung 3 inside its own
+    /// search and pays nothing, while a shallow bot must be demonstrably dead
+    /// first.
+    private var barrenGrants = 0
+
     /// Set the first time a swap request is answered with a refusal, and never
     /// cleared. A stored property on this actor, deliberately: derived from a
     /// snapshot it would come back false the moment the session's note moved
@@ -225,17 +235,27 @@ public actor BotBrain {
             stalledTicks += 1
             return
         }
-        // Clamped once, here: the grant may lift the depth by one rung and no
-        // further, and never past rung 2 — the last rung that *searches*. Rung 3
-        // is not a search and is not the floor's to grant: it hands a tile back
-        // to the host, which a bot the player chose as easy or medium must never
-        // do, however long it has been stuck. It is gated on the declared depth
-        // alone, below, so no path through this clamp can reach it.
+        // Clamped once, here: the grant may lift the *search* depth by one rung
+        // and no further. Rung 3 is not a search and is not reached this way —
+        // it comes in below, as a last resort, only when the whole search has
+        // already come back empty.
         let climb = min(2, max(0, difficulty.ladderDepth) + (granted ? 1 : 0))
-        let depth = mayAskToSwap(snapshot) ? 3 : climb
-        if granted { stalledTicks = 0 }
+        let eager = mayAskToSwap(snapshot)
+        let depth = eager ? 3 : climb
+        // The floor's last resort. A shallow bot cannot lay a word its search
+        // cannot see — a lone Q needs a vowel pulled off the board, and no rung
+        // below 3 will ever find one — so a bot held to rungs 0–2 sits on that
+        // tile for the rest of the match, which from the player's side of the
+        // screen is indistinguishable from a bot that stopped working. Handing
+        // the tile back is the only exit it has. Gated on the floor having
+        // fired, so it is a way out of being stuck and never a way to play.
+        let lastResort = granted
+            && barrenGrants >= Self.barrenGrantsBeforeGivingBack
+            && !eager
+            && swapIsAvailable(snapshot)
+        if granted { stalledTicks = 0; barrenGrants += 1 }
 
-        guard let plan = plan(on: snapshot, depth: depth) else {
+        guard let plan = plan(on: snapshot, depth: depth, mayGiveBack: lastResort) else {
             barren = fingerprint
             stalledTicks += 1
             return
@@ -252,6 +272,7 @@ public actor BotBrain {
         if await apply(plan, from: snapshot) {
             barren = nil
             stalledTicks = 0
+            barrenGrants = 0
         } else {
             // A plan that was found and then refused is the expensive case: the
             // full ladder ran, the session said no, and every rolled-back
@@ -273,10 +294,15 @@ public actor BotBrain {
     /// outstanding, and this match allows swapping at all. The stall floor
     /// appears nowhere here on purpose.
     private func mayAskToSwap(_ snapshot: Snapshot) -> Bool {
-        difficulty.ladderDepth >= 3
-            && !swapAnswerStands
-            && pendingSwap == nil
-            && snapshot.options.swapEnabled
+        difficulty.ladderDepth >= 3 && swapIsAvailable(snapshot)
+    }
+
+    /// Whether a swap could be asked for at all, leaving aside whether this
+    /// bot is deep enough to want one. Split out so the stall floor's last
+    /// resort answers the same three guardrails without also claiming rung 3
+    /// as part of its search.
+    private func swapIsAvailable(_ snapshot: Snapshot) -> Bool {
+        !swapAnswerStands && pendingSwap == nil && snapshot.options.swapEnabled
     }
 
     /// Asks the host for three tiles in exchange for `tile`, and records what
@@ -457,7 +483,12 @@ public actor BotBrain {
     /// Rung 3 is only ever in range when ``mayAskToSwap(_:)`` said so, and it
     /// returns a plan with no recalls and no moves — a swap is not a board
     /// change and never reaches ``commit(_:_:from:dictionary:)``.
-    func plan(on snapshot: Snapshot, depth: Int) -> Plan? {
+    ///
+    /// `mayGiveBack` is the stall floor's separate door to rung 3, taken only
+    /// after every rung in range has come back empty. It is not a depth: a bot
+    /// let through here gains the swap and none of the searching rungs above
+    /// its own, so being stuck never makes it a better player.
+    func plan(on snapshot: Snapshot, depth: Int, mayGiveBack: Bool = false) -> Plan? {
         for rung in 0...depth {
             switch rung {
             case 0:
@@ -471,6 +502,9 @@ public actor BotBrain {
             default:
                 continue
             }
+        }
+        if mayGiveBack, let tile = giveBack(snapshot) {
+            return Plan(recalls: [], moves: [], swap: tile)
         }
         return nil
     }
@@ -818,6 +852,12 @@ public actor BotBrain {
 
     /// Greedy passes a rebuild may make, each starting from a different tile.
     static let rebuildRestarts = 3
+
+    /// How many fruitless stall-floor grants a bot below depth 3 must spend
+    /// before the floor will hand a tile back for it. Tuned against
+    /// `BotPlaysTests.harderPresetsPlayBetter`: too low and the escape makes
+    /// every preset play alike, too high and an easy bot sits visibly dead.
+    static let barrenGrantsBeforeGivingBack = 8
 
     /// One fixed order for coordinates, so two runs over one board pull and
     /// place the same tiles in the same sequence.

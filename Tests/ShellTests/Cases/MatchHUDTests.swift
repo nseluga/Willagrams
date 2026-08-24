@@ -430,6 +430,25 @@ struct MatchHUDTests {
                 "the Swap button is not gated on the rules — it renders under rules that refuse it")
     }
 
+    /// The endgame gate. Below ``Pool/swapSize`` the host refuses every swap,
+    /// so the control has to go dead — but the press must still LAND, or the
+    /// player learns nothing from a button that stopped working. Same split as
+    /// Draw, and checked the same way: the view's `.disabled` against the
+    /// pressable predicate, and the model's rule against the pool's own number
+    /// rather than a second copy of the `3`.
+    @Test("Swap goes dead on a pool too small to answer it, but the press still lands")
+    func swapIsGatedOnAPoolThatCanAnswer() throws {
+        let view = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
+        #expect(view.contains(".disabled(!hud.isSwapPressable)"),
+                "Swap is disabled on the wrong predicate — a refused press never lands")
+
+        let model = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(model.contains("remaining >= Pool.swapSize"),
+                "the swap gate does not read the pool's own swap size")
+        #expect(model.contains("isSwapPressable && swappableTile != nil && poolCanServeASwap"),
+                "isSwapEnabled no longer folds the pool rule in")
+    }
+
     /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so
     /// the wire is checked against the bytes on disk.
     @Test("MatchView hands the refusal count to the board")

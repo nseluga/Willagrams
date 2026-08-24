@@ -252,16 +252,52 @@ struct BotSwapTests {
         #expect(tap.swapRequests == 0)
     }
 
-    // MARK: - Criterion 3 · rung 3 is out of a depth-2 bot's reach
+    // MARK: - Criterion 3 · rung 3 reaches a shallow bot only through the floor
 
-    /// The clamp. Same unplayable rack, same board, same relentless stall floor
-    /// — only the declared depth differs, and the floor's one-rung grant must
-    /// not carry a depth-2 bot onto a rung that speaks to the host.
+    /// A shallow bot may swap, but only as the stall floor's last resort — so
+    /// what separates it from a depth-3 bot is *when* it asks, not whether it
+    /// can. Rung 3 is a way out of being stuck, never part of its search.
+    ///
+    /// The floor is set out of reach here, so any request inside the window
+    /// would have come from the search itself.
     @Test(
-        "A bot at ladderDepth 2 or below never asks to swap, stall floor or not",
+        "A bot at ladderDepth 2 or below never swaps from its own search",
         arguments: [0, 1, 2]
     )
-    func belowDepthThreeNeverSwaps(_ depth: Int) async throws {
+    func belowDepthThreeNeverSwapsFromTheSearch(_ depth: Int) async throws {
+        let list = BotBrainTests.NoWordList()
+        let (bot, human, tap) = Self.linked(
+            list, answering: .rejected(reason: .notEnoughTilesToSwap)
+        )
+        defer { bot.leave(); human.leave() }
+        human.startMatch(seed: 21, startingHandSize: 5, countdownSeconds: 0)
+        try await BotBrainTests.waitUntil("bot dealt") { bot.state.hand.count == 5 }
+
+        let unreachableFloor = BotDifficulty(
+            ladderDepth: depth, thinkDelay: .milliseconds(2), stallFloorTicks: 100_000
+        )
+        let brain = BotBrain(session: bot, dictionary: list, difficulty: unreachableFloor)
+        let driver = Task { await brain.run() }
+        defer { driver.cancel() }
+        try await BotBrainTests.waitUntil("the one legal tile landed") {
+            bot.state.board.placements.count == 1
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        driver.cancel()
+
+        #expect(tap.swapRequests == 0, "a depth-\(depth) bot swapped from its search")
+        #expect(bot.state.hand.count == 4)
+    }
+
+    /// The other half of the same rule, and the reason it changed: a bot that
+    /// cannot swap cannot get rid of a tile no rung below 3 will ever place,
+    /// and sits on it for the rest of the match. The floor is what stops that
+    /// looking, from the player's side, like a bot that broke.
+    @Test(
+        "A stuck bot below depth 3 does swap once the stall floor fires",
+        arguments: [0, 1, 2]
+    )
+    func theStallFloorLetsAShallowBotSwap(_ depth: Int) async throws {
         let list = BotBrainTests.NoWordList()
         let (bot, human, tap) = Self.linked(
             list, answering: .rejected(reason: .notEnoughTilesToSwap)
@@ -273,16 +309,12 @@ struct BotSwapTests {
         let brain = BotBrain(session: bot, dictionary: list, difficulty: Self.always(depth))
         let driver = Task { await brain.run() }
         defer { driver.cancel() }
-        try await BotBrainTests.waitUntil("the one legal tile landed") {
-            bot.state.board.placements.count == 1
+        try await BotBrainTests.waitUntil("a depth-\(depth) bot asked to swap") {
+            tap.swapRequests > 0
         }
-        // Many stall-floor windows: at 2 ms a tick and a floor of 2, the grant
-        // fires ~100 times in here.
-        try await Task.sleep(for: .milliseconds(600))
         driver.cancel()
 
-        #expect(tap.swapRequests == 0, "a depth-\(depth) bot asked to swap")
-        #expect(bot.state.hand.count == 4)
+        #expect(tap.swapRequests > 0)
     }
 
     // MARK: - The heuristic

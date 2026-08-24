@@ -78,13 +78,18 @@ public struct Pool: Codable, Sendable, Equatable {
         return drawn
     }
 
+    /// How many tiles a swap hands back for the one it takes. Named here
+    /// because the HUD has to grey the control out on the same number the
+    /// pool refuses on, and two copies of a `3` drift.
+    public static let swapSize = 3
+
     /// Returns one tile to the pool and takes three.
     ///
     /// The three are drawn *before* the returned tile goes back, so a swap can
     /// never hand you the tile you just gave up.
     /// - Returns: nil if fewer than 3 remain, leaving the pool untouched.
     public mutating func swap(_ tile: Tile, using generator: inout SeededGenerator) -> [Tile]? {
-        guard let drawn = draw(3) else { return nil }
+        guard let drawn = draw(Self.swapSize) else { return nil }
         tiles.insert(tile, at: tiles.isEmpty ? 0 : Int.random(in: 0...tiles.count, using: &generator))
         return drawn
     }

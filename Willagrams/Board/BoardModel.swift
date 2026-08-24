@@ -124,6 +124,12 @@ public struct BoardModel: Sendable {
     /// source of truth about what is on screen.
     public mutating func clearFlash() { flashedInvalid = [] }
 
+    /// Flashes cells the player pressed against for a reason that is not on the
+    /// board — an empty pool refusing a swap, say. ``attemptedCompletion()``
+    /// cannot express that: it flashes what is wrong with the grid, and here
+    /// there is nothing wrong with the grid.
+    public mutating func flash(_ coords: Set<Coord>) { flashedInvalid = coords }
+
     /// Every coord that reads as part of a bad word right now.
     ///
     /// Not what the surface draws — `flashedInvalid` is. This is the standing

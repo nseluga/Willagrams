@@ -223,6 +223,14 @@ public final class MatchHUDModel {
     /// The tile Swap would return: the one the player has selected on the
     /// board. Nothing is chosen on the player's behalf — with no selection, or
     /// more than one, there is nothing to swap.
+    /// The Swap button's whole press: take what is selected, or refuse in a way
+    /// the player can see. The view holds no rule about which of those it is.
+    @discardableResult
+    public func swapPressed() -> Bool {
+        guard let tile = swappableTile else { resignArmed = false; return refuse() }
+        return swap(tile)
+    }
+
     public var swappableTile: Tile? {
         guard board.model.selected.count == 1,
               let coord = board.model.selected.first
@@ -240,11 +248,33 @@ public final class MatchHUDModel {
     public var isSwapOffered: Bool { session.options.swapEnabled }
 
     public var isSwapEnabled: Bool {
-        swappableTile != nil
+        isSwapPressable && swappableTile != nil && poolCanServeASwap
+    }
+
+    /// Whether a Swap press should land, as opposed to whether it should work.
+    ///
+    /// The same split Draw makes, for the same reason: a press that is refused
+    /// has to reach ``swap(_:)``, or the refusal is never shown and the player
+    /// is left pressing a dead control with no idea why. What is left out is
+    /// everything the player can fix by looking at the board — no tile picked,
+    /// a pool too small — which is exactly what the refusal explains.
+    public var isSwapPressable: Bool {
+        isSwapOffered
             && !session.isMatchOver
             && session.peerPresence == .present
             && !session.hasPendingDraw
-            && !session.poolIsExhausted
+    }
+
+    /// Whether the pool still holds enough to answer a swap.
+    ///
+    /// A swap takes ``Pool/swapSize`` and gives one back, and the host refuses
+    /// it as a unit — so below that the control cannot work, however many tiles
+    /// are left. `nil` is a guest, which cannot see the count and must not
+    /// guess one: it keeps the old, weaker test and learns the truth from the
+    /// host's refusal.
+    public var poolCanServeASwap: Bool {
+        guard let remaining = session.poolRemaining else { return !session.poolIsExhausted }
+        return remaining >= Pool.swapSize
     }
 
     /// Returns one tile and takes three.
@@ -262,7 +292,14 @@ public final class MatchHUDModel {
     @discardableResult
     public func swap(_ tile: Tile) -> Bool {
         resignArmed = false
-        guard isSwapEnabled else { return false }
+        // Flashed, not silent: the reason is off the board — the pool ran too
+        // low to answer — so nothing about the grid explains the refusal, and
+        // an unexplained dead button reads as a broken one. The tile the player
+        // picked is what flashes, because that is what they aimed at.
+        guard isSwapEnabled else {
+            if let coord = board.model.selected.first { board.model.flash([coord]) }
+            return refuse()
+        }
 
         let coord = session.state.board.placementList.first { $0.tile.id == tile.id }?.coord
         if let coord {
