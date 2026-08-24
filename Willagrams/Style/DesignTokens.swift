@@ -105,7 +105,10 @@ public enum DesignTokens {
         public static let title = Font.brand(weight: .semibold, size: 28)
         public static let body = Font.brand(weight: .regular, size: 17)
         public static let caption = Font.brand(weight: .regular, size: 13)
-        public static let button = Font.brand(weight: .semibold, size: 17)
+        /// Every control in the app reads this — the three button styles all
+        /// take their font from here, so the size of a button is one number
+        /// rather than three.
+        public static let button = Font.brand(weight: .semibold, size: 20)
         public static let tileLetter = Font.brand(weight: .semibold, size: 28)
 
         /// Fragment Mono, for uppercase metadata labels.

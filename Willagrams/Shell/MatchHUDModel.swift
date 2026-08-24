@@ -118,8 +118,15 @@ public final class MatchHUDModel {
 
     public var drawLabel: String { Terminology.draw }
 
-    /// Whether Draw does anything, which is the same question as whether it is
-    /// tappable — see ``draw()``.
+    /// Whether Draw is *tappable*. NOT the same question as whether it does
+    /// anything — see ``draw()``.
+    ///
+    /// The three states in which drawing is meaningless, and only those. An
+    /// unfinished board deliberately leaves the control live: pressing it is
+    /// how the player asks why, and the refusal flashes the runs that are the
+    /// answer. Disabling on `board.canDraw` swallowed that press, so the flash
+    /// `MatchHUDModel` counts and `BoardView` draws could never fire from the
+    /// app — only from a test calling ``draw()`` directly.
     ///
     /// The board's own published answer, AND-ed with the three states in which
     /// drawing is meaningless. The shell never checks a board or a word itself.
@@ -167,7 +174,7 @@ public final class MatchHUDModel {
     @discardableResult
     public func draw() -> Bool {
         resignArmed = false
-        guard isDrawEnabled, session.draw() else { return refuse() }
+        guard isDrawEnabled, board.canDraw, session.draw() else { return refuse() }
         return true
     }
 
@@ -204,7 +211,7 @@ public final class MatchHUDModel {
     @discardableResult
     public func claimWin() -> Bool {
         resignArmed = false
-        guard isWinEnabled, session.claimWin() else { return refuse() }
+        guard isWinEnabled, board.canDraw, session.claimWin() else { return refuse() }
         shell.matchEnded(winner: session.winner)
         return true
     }

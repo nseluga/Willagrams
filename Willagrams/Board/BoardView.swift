@@ -30,6 +30,11 @@ public struct BoardView: View {
     /// cancelled (a system edge swipe, backgrounding, the view going away).
     /// Reusing what a cancelled gesture left behind would leak both the grab
     /// decision and the pan origin into the next, unrelated touch.
+    /// Whether the opening block has been framed yet. Once per appearance: a
+    /// second framing would yank the camera out from under a player who has
+    /// panned somewhere on purpose.
+    @State private var hasFramed = false
+
     @State private var drag: BoardGesture.Drag?
 
     /// The pinch midpoint at touch-down and the camera as it stood there.
@@ -214,6 +219,30 @@ public struct BoardView: View {
                 // there is no async hop to schedule. Once per appearance, never
                 // per body evaluation and never per gesture frame.
                 .onAppear { model.seed(board, against: dictionary) }
+                // Frames the opening on the viewport it actually got.
+                //
+                // `BoardLayout.opening` lays the block from `Coord(0, 0)`, so a
+                // default camera opens on the corner of the lattice: the rack
+                // sits in the top-left with three-quarters of the screen empty
+                // and the player has to press recenter before the first move.
+                // The throwaway board root this view was written against
+                // framed the block before handing the camera over, and
+                // `ShellRootView` replaced that root without carrying the
+                // framing across, so it has been missing since `eb39f9e`.
+                //
+                // Keyed on the board, not on appearance: the tiles are dealt
+                // when the countdown ends, which is after this view is on
+                // screen and can be after the first layout. `hasFramed` is what
+                // keeps it to once — the same call the recenter control makes,
+                // so there is no second implementation of fitting the block to
+                // the viewport.
+                .task(id: board) {
+                    guard !hasFramed, rect.width > 0, board != Board() else { return }
+                    hasFramed = true
+                    withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
+                        camera = BoardGesture.recentered(camera, over: board, in: rect)
+                    }
+                }
                 // The flash, and the only place tint is turned on. `.task(id:)`
                 // rather than a stored timer: a second press cancels the first
                 // flash's sleep and starts a fresh one, so repeated refusals
@@ -387,6 +416,7 @@ public struct BoardView: View {
             }
         } label: {
             Image(systemName: Self.recenterSymbol)
+                .font(.system(size: Self.recenterSymbolSize, weight: .regular))
         }
         .buttonStyle(.brandQuiet)
         .padding(DesignTokens.Space.m)
@@ -405,6 +435,7 @@ public struct BoardView: View {
 
     private static let recenterLabel = "Recenter"
     private static let recenterSymbol = "scope"
+    private static let recenterSymbolSize: CGFloat = 24
 }
 
 /// The drawn surface, animatable as one piece.
@@ -514,33 +545,80 @@ private struct BoardSurface: View, Animatable {
                     // would cut. The colour is the only decision here, and it
                     // is read from published state, never computed.
                     .colorMultiply(cell.isInvalid ? DesignTokens.Palette.danger : .white)
-                    // 0 for every tile that is not flying, which is every tile
-                    // for all but `dealDuration` after a delivery — so this is
-                    // the identity transform in the ordinary case rather than a
-                    // branch that would rebuild the subtree as a flight ends.
-                    .scaleEffect(1 - (1 - Self.arrivalScale) * flight(cell.tile?.id))
-                    .offset(
-                        x: tilePoint.x + (Self.arrivalCorner.x - tilePoint.x) * flight(cell.tile?.id),
-                        y: tilePoint.y + (Self.arrivalCorner.y - tilePoint.y) * flight(cell.tile?.id)
-                    )
+                    .offset(x: tilePoint.x, y: tilePoint.y)
                     // `cells` arrives in `visibleCoords` row-major order, so a
                     // tile dragged down or right would otherwise draw BEHIND
                     // every tile at a greater row and the lift would read as
                     // sunk. The tile under the finger belongs on top of the
                     // ones it is passing over.
                     .zIndex(cell.state == .selected ? 1 : 0)
+                    // Tiles come out of the bag and go back into it. The
+                    // transition carries the tile from the bag corner to the
+                    // cell it landed in, so a draw reads as taking something
+                    // and a swap reads as putting one back and taking another
+                    // — the same motion in both directions, because it is the
+                    // same act.
+                    .transition(
+                        .modifier(
+                            active: FromBag(travel: 0, home: tilePoint, bag: Self.bagPoint),
+                            identity: FromBag(travel: 1, home: tilePoint, bag: Self.bagPoint)
+                        )
+                    )
                 }
             }
         }
+        // Keyed on which tiles are on the table, never on where they are. A
+        // drag changes coords and must not run this: the released tile already
+        // slides to its cell under `onEnded`'s own animation, and a second one
+        // over the top of it would fight. Only a draw, a swap or the opening
+        // deal changes this set.
+        .animation(
+            .easeOut(duration: DesignTokens.Motion.dealDuration),
+            value: Set(cells.compactMap { $0.tile?.id })
+        )
         .clipped()
     }
 
-    /// How far this tile still is from home: 1 at the bag, 0 once it has landed
-    /// or if it never flew.
-    private func flight(_ id: UUID?) -> CGFloat {
-        guard let id, arriving.contains(id) else { return 0 }
-        return 1 - arrivalProgress
+    /// Where the bag sits, in the surface's own coordinates: the HUD pins it
+    /// to the top-leading corner, so this is that corner plus the inset it
+    /// carries. Not read from the HUD — the board renders with no HUD at all in
+    /// `BoardTests` and in the previews, and a tile still has to come from
+    /// somewhere.
+    private static let bagPoint = CGPoint(x: DesignTokens.Space.xl, y: DesignTokens.Space.xl)
+}
+
+/// The flight between the bag and a cell.
+///
+/// One modifier for both directions: SwiftUI runs it forwards on insertion and
+/// backwards on removal, so a tile drawn out of the bag and a tile swapped back
+/// into it travel the same arc rather than two that were tuned apart.
+private struct FromBag: ViewModifier, Animatable {
+
+    /// 0 is in the bag, 1 is on the table.
+    var travel: CGFloat
+    let home: CGPoint
+    let bag: CGPoint
+
+    nonisolated var animatableData: CGFloat {
+        get { travel }
+        set { travel = newValue }
     }
+
+    func body(content: Content) -> some View {
+        content
+            .offset(
+                x: (bag.x - home.x) * (1 - travel),
+                y: (bag.y - home.y) * (1 - travel)
+            )
+            // Small in the bag, full size on the table. Not zero: a tile that
+            // scales from nothing reads as appearing rather than as arriving.
+            .scaleEffect(Self.inBagScale + (1 - Self.inBagScale) * travel)
+            // Faded only over the first half, so the tile is solid for most of
+            // the flight and the eye can follow it.
+            .opacity(Double(min(1, travel * 2)))
+    }
+
+    private static let inBagScale: CGFloat = 0.25
 }
 
 private extension BoardRender.TileState {

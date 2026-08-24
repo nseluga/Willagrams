@@ -176,9 +176,17 @@ public struct BoardModel: Sendable {
         let all = Set(board.placementList.map(\.coord))
         guard all.count >= 2 else { return all }
         let clusters = board.clusters
-        guard clusters.count > 1,
-              let main = clusters.max(by: { $0.count < $1.count })
-        else { return [] }
+        guard clusters.count > 1 else { return [] }
+        // Anchored, not a bare `max(by:)` on count: two clusters of the same
+        // size must resolve the same way every run, and `board.clusters` comes
+        // out of a `Set`. Ties fall to the lowest coord in reading order.
+        let anchor = { (cluster: Set<Coord>) in
+            cluster.min(by: { ($0.row, $0.col) < ($1.row, $1.col) }) ?? Coord(row: 0, col: 0)
+        }
+        let main = clusters.max(by: {
+            ($0.count, anchor($1).row, anchor($1).col)
+                < ($1.count, anchor($0).row, anchor($0).col)
+        }) ?? []
         return all.subtracting(main)
     }
 

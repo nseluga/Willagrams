@@ -14,21 +14,17 @@
 import SwiftUI
 import WillagramsRules
 
-/// The in-match controls, pinned to the four places a thumb can reach without
-/// crossing the board.
+/// The in-match controls, in three corners around the board.
 ///
-/// - The bag sits top-leading. It is where tiles come from, and
-///   ``MatchView`` flies new ones out of that corner, so the count and the
-///   source are the same object rather than two things the player has to relate.
-/// - The call sits dead centre and is *absent* until it can be pressed. It is
-///   the one control that ends the match, so it appears at the moment it becomes
-///   true and never sits greyed out inviting a press that cannot land.
-/// - Draw and Swap sit bottom-leading, Resign bottom-trailing — the ending
-///   apart from the two the player reaches for.
+/// One bar across the bottom put the pool readout — a thing you read, never
+/// press — inside the run of things you press, and left the whole top of the
+/// table empty. So the readout goes up and out of the way, and the controls
+/// split by what they cost: the two moves you make all match on the left, the
+/// one that ends it on the right, far from them.
 ///
-/// Top-trailing is left empty on purpose: `BoardView` overlays its recenter
-/// control there, and a HUD that covered it would take the player's only way
-/// back to their own tiles.
+/// The bag goes top-*leading*, opposite `BoardView`'s recenter control: two
+/// things cannot have the same corner, and the one you read belongs on the
+/// side you read from.
 struct MatchHUD: View {
 
     let hud: MatchHUDModel
@@ -40,12 +36,10 @@ struct MatchHUD: View {
 
     var body: some View {
         ZStack {
-            bag
+            pool
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-            call
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
+            // The two moves of an ordinary turn, together.
             HStack(spacing: DesignTokens.Space.m) {
                 // Disabled on `isDrawPressable`, not `isDrawEnabled`: a press
                 // that the board refuses has to LAND, or the refusal is never
@@ -60,77 +54,67 @@ struct MatchHUD: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 
+            // Centre, and only when it can be pressed — see
+            // `MatchHUDModel.isWinEnabled`. Not beside Draw: it arrives
+            // mid-match, under a thumb that has been pressing Draw in that spot
+            // all game, and ending the match is not a thing to mis-tap into.
+            if hud.isWinEnabled {
+                Button(hud.winLabel) { hud.claimWin() }
+                    .buttonStyle(.brandPrimary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+
             resign
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
         .padding(DesignTokens.Space.m)
-        // Intrinsically sized throughout: landscape iPhone through landscape
-        // iPad, no assumed viewport.
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// The supply, drawn as the thing it is. The number rides the bag rather
-    /// than sitting beside it, so one glance answers both "how many" and "from
-    /// where".
-    /// Half again the size of an ordinary glyph on this screen. A
-    /// `scaleEffect`, not a bigger font: the number rides the bag, so the two
-    /// have to grow together or the count slides off it.
-    private static let bagScale: CGFloat = 1.5
-
-    private var bag: some View {
-        Image(systemName: Self.bagSymbol)
-            .font(DesignTokens.Typography.title)
-            .foregroundStyle(DesignTokens.Palette.ink)
-            .overlay(alignment: .bottom) {
-                Text(hud.poolValue)
-                    .font(DesignTokens.Typography.monoLabel)
-                    .foregroundStyle(DesignTokens.Palette.onInk)
-                    .padding(.bottom, DesignTokens.Space.xs)
-            }
-            .scaleEffect(Self.bagScale)
-            // The scale is drawing only, so the layout still reserves the
-            // unscaled glyph. The padding is what keeps the grown bag off the
-            // edge it would otherwise bleed over.
-            .padding(DesignTokens.Space.s)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(hud.poolLabel) \(hud.poolValue)")
-    }
-
-    /// The only SF Symbol on this screen beside the recenter arrow, and named
-    /// once so there is one string to change.
-    static let bagSymbol = "bag.fill"
-
-    /// Shown only when the model says the call would be accepted — see
-    /// ``MatchHUDModel/isWinEnabled``. There is no disabled rendering of this
-    /// control, so no `.disabled` here either.
-    @ViewBuilder private var call: some View {
-        if hud.isWinEnabled {
-            Button { hud.claimWin() } label: {
-                Text(hud.winLabel)
-                    .font(DesignTokens.Typography.title)
-                    .padding(DesignTokens.Space.s)
-            }
-            .buttonStyle(.brandPrimary)
-            .scaleEffect(Self.callScale)
-            .transition(.scale.combined(with: .opacity))
+    /// The supply, as a bag with its count on it.
+    ///
+    /// The count is the readout; the bag is what makes it legible without a
+    /// word beside it. `Terminology.pool` is still the accessibility label, so
+    /// the frozen name for the supply is what VoiceOver reads — dropping the
+    /// visible word is a layout decision, not a rename.
+    private var pool: some View {
+        ZStack {
+            Image(systemName: Self.poolSymbol)
+                .font(.system(size: Self.poolSymbolSize, weight: .regular))
+                // The app's own ink, not a system grey: the bag is a piece of
+                // the table, the same colour as the Draw button beneath it.
+                .foregroundStyle(DesignTokens.Palette.ink)
+            Text(hud.poolValue)
+                .font(DesignTokens.Typography.monoLabel)
+                .foregroundStyle(DesignTokens.Palette.onInk)
+                // The bag's drawstring takes the top third of the glyph, so
+                // centring the number in the frame puts it on the neck rather
+                // than on the body.
+                .offset(y: Self.poolValueDrop)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(hud.poolLabel)
+        .accessibilityValue(hud.poolValue)
     }
+
+    private static let poolSymbol = "bag.fill"
+    private static let poolSymbolSize: CGFloat = 56
+    private static let poolValueDrop: CGFloat = 8
 
     /// Two presses, never one: arming shows the confirmation, and only the
     /// confirmation resigns. Both branches render state the model already
     /// decided.
     @ViewBuilder private var resign: some View {
-        if hud.resignArmed {
-            HStack(spacing: DesignTokens.Space.s) {
+        HStack(spacing: DesignTokens.Space.m) {
+            if hud.resignArmed {
                 Button(hud.resignCancelLabel) { hud.cancelResign() }
                     .buttonStyle(.brandText)
                 Button(hud.resignConfirmLabel) { hud.confirmResign() }
                     .buttonStyle(.brandQuiet)
                     .foregroundStyle(DesignTokens.Palette.danger)
+            } else {
+                Button(hud.resignLabel) { hud.armResign() }
+                    .buttonStyle(.brandText)
             }
-        } else {
-            Button(hud.resignLabel) { hud.armResign() }
-                .buttonStyle(.brandText)
         }
     }
 }

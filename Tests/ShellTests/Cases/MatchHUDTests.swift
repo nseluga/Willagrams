@@ -105,8 +105,13 @@ struct MatchHUDTests {
 
         // Two loose letters: two clusters, not drawable.
         #expect(wiring.canDraw == false)
+        // Live, not disabled: the press is how the player asks why, and the
+        // refusal is the answer. A disabled control swallows the press and the
+        // flash never fires. `isDrawPressable` is the gate the button reads —
+        // `isDrawEnabled` folds the board in and is false here on purpose.
+        #expect(hud.isDrawPressable)
         #expect(hud.isDrawEnabled == false)
-        // Unavailable, not ignored: the press does nothing and says so.
+        // Refused, not ignored: the press does nothing and says so.
         let before = MatchBoardTests.custody(wiring, session, "before a refused draw")
         #expect(hud.draw() == false)
         #expect(MatchBoardTests.custody(wiring, session, "after a refused draw") == before)
@@ -285,14 +290,19 @@ struct MatchHUDTests {
 
     // MARK: - The win claim
 
-    /// The claim is gated on exactly what Draw is gated on, refuses through the
-    /// same counter, and — refused — leaves the player in the match.
+    /// The claim is refused through the same counter as Draw and — refused —
+    /// leaves the player in the match.
+    ///
+    /// It is NOT gated on what Draw is gated on. Draw needs a pool; the win
+    /// call needs an empty one. On an opening board the pool is full, so
+    /// `MatchHUD` does not offer the control at all — and `claimWin()` refuses
+    /// anyway, so a direct caller cannot get round the gate the view reads.
     @Test("A refused claim flashes the board and ends nothing")
     func refusedClaimChangesNoRoute() async throws {
         let (solo, _, shell, hud) = try await Self.hud()
 
         #expect(hud.winLabel == Terminology.winCall)
-        #expect(hud.isWinEnabled == false, "a spaced opening is claimable")
+        #expect(hud.isWinEnabled == false, "the claim was offered while the pool was still full")
         #expect(hud.claimWin() == false)
         #expect(hud.completionAttempts == 1, "a refused claim explained nothing")
         #expect(hud.claimWin() == false)
@@ -343,6 +353,40 @@ struct MatchHUDTests {
         #expect(shell.route == .results(winner: session.localPlayerID))
 
         session.leave()
+    }
+
+    /// The win call must not be derived from Draw's gate again.
+    ///
+    /// `isWinEnabled` was `{ isDrawEnabled }`, which reads as tidy and is
+    /// exactly backwards: Draw is disabled once the pool is out, so the control
+    /// for ending the match was live for the whole match and dead at the one
+    /// moment it could ever have been pressed. Every model test above passed
+    /// throughout.
+    @Test("The win call is not derived from the Draw gate")
+    func theWinGateIsItsOwnQuestion() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(!text.contains("isWinEnabled: Bool { isDrawEnabled }"),
+                "the win call reads Draw's gate again — it is live when it cannot work")
+        #expect(text.contains("&& session.poolIsExhausted"),
+                "the win call no longer waits for the pool to run out")
+    }
+
+    /// The disable that made the flash unreachable. Folding `board.canDraw`
+    /// into the gate the *button* reads swallows the very press the refusal
+    /// exists to answer — and every test above still passes, because they call
+    /// the model directly. A source check, because the gate is read in a
+    /// SwiftUI file the macOS test target cannot compile.
+    ///
+    /// Two halves, because the split is what makes it safe: the view must read
+    /// `isDrawPressable`, and `isDrawPressable` must not consult the board.
+    @Test("The completion gate does not disable the control")
+    func theGateLeavesTheControlLive() throws {
+        let view = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
+        #expect(view.contains(".disabled(!hud.isDrawPressable)"),
+                "the Draw button reads the board's gate — the refusal press is swallowed")
+        let model = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(model.contains("public var isDrawPressable: Bool {\n        !session.isMatchOver"),
+                "isDrawPressable gates on the board again — the refusal press is swallowed")
     }
 
     /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so

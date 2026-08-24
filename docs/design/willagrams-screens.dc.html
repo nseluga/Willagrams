@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Fragment+Mono&display=swap" rel="stylesheet"><style>body{margin:0;background:#edecea;font-family:'Instrument Sans',-apple-system,system-ui,sans-serif}a{color:#C2841B}a:hover{color:#8F5F12}</style></helmet>
+
+<section style="padding:44px 48px 72px;display:flex;flex-direction:column;gap:32px">
+
+  <div id="1a" style="display:flex;flex-direction:column;gap:8px;max-width:720px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <h1 style="margin:0;font-size:44px;line-height:1.04;font-weight:700;letter-spacing:-.03em;color:#2C2718">Willagrams — screen layouts</h1>
+      <span style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">1A</span>
+    </div>
+    <p style="margin:0;font-size:17px;line-height:1.45;color:rgba(44,39,24,.64);text-wrap:pretty">Landscape, on the style lane's tokens. Covers the shell, friends and settings surfaces; the in-match board is out of scope. Vocabulary is Pool, Draw, Swap, Invalid, Willagrams! — the terminology fence.</p>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:44px;align-items:flex-start">
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">01 · LAUNCH</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Launch" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:26px 40px 40px 64px;color:#2C2718;display:flex;align-items:center;justify-content:center;gap:44px;position:relative">
+          <div style="display:grid;grid-template-columns:repeat(5,42px);grid-template-rows:repeat(5,42px);gap:6px">
+            <div style="grid-column:5;grid-row:1;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">G</div>
+            <div style="grid-column:5;grid-row:2;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">R</div>
+            <div style="grid-column:1;grid-row:3;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">W</div>
+            <div style="grid-column:2;grid-row:3;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">I</div>
+            <div style="grid-column:3;grid-row:3;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">L</div>
+            <div style="grid-column:4;grid-row:3;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">L</div>
+            <div style="grid-column:5;grid-row:3;background:#C2841B;color:#FFF8E8;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(0,0,0,.18),0 2px 5px rgba(44,39,24,.12);display:grid;place-items:center;font-size:24px;font-weight:600">A</div>
+            <div style="grid-column:5;grid-row:4;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">M</div>
+            <div style="grid-column:5;grid-row:5;background:#EADCB6;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:24px;font-weight:600">S</div>
+          </div>
+          <div style="position:absolute;left:64px;bottom:40px;font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">WILLAGRAMS · 1.0</div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">02 · MAIN MENU</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Main menu" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:26px 40px 40px 64px;color:#2C2718;display:flex;gap:44px;align-items:stretch">
+          <div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
+            <div style="display:grid;grid-template-columns:repeat(5,30px);grid-template-rows:repeat(5,30px);gap:4px">
+              <div style="grid-column:5;grid-row:1;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">G</div>
+              <div style="grid-column:5;grid-row:2;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">R</div>
+              <div style="grid-column:1;grid-row:3;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">W</div>
+              <div style="grid-column:2;grid-row:3;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">I</div>
+              <div style="grid-column:3;grid-row:3;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">L</div>
+              <div style="grid-column:4;grid-row:3;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">L</div>
+              <div style="grid-column:5;grid-row:3;background:#C2841B;color:#FFF8E8;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(0,0,0,.18),0 2px 5px rgba(44,39,24,.12);display:grid;place-items:center;font-size:17px;font-weight:600">A</div>
+              <div style="grid-column:5;grid-row:4;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">M</div>
+              <div style="grid-column:5;grid-row:5;background:#EADCB6;border-radius:4px;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1);display:grid;place-items:center;font-size:17px;font-weight:600">S</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="font-size:17px;line-height:1.45;color:rgba(44,39,24,.64);max-width:300px;text-wrap:pretty">One shared Pool. One connected grid. First empty rack wins.</div>
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">SIGNED IN AS {{ handleUpper }}</div>
+            </div>
+          </div>
+          <div style="width:300px;display:flex;flex-direction:column;justify-content:center;gap:12px">
+            <div style="height:52px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600;box-shadow:0 5px 14px rgba(44,39,24,.18)">Play a friend</div>
+            <div style="height:52px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">Solo practice</div>
+            <div style="height:52px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-size:17px;font-weight:600">
+              <span>Friends</span>
+              <span style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#C2841B">2 REQUESTS</span>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <div style="flex:1;text-align:center;font-size:17px;font-weight:600;color:#C2841B;padding:8px">How to play</div>
+              <div style="flex:1;text-align:center;font-size:17px;font-weight:600;color:#C2841B;padding:8px">Settings</div>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">03 · FRIENDS</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Friends" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:22px 40px 40px 64px;color:#2C2718;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:16px">
+              <div style="font-size:17px;font-weight:600;color:#C2841B">Back</div>
+              <div style="font-size:28px;font-weight:600;letter-spacing:-.01em">Friends</div>
+            </div>
+            <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">YOU ARE {{ handleUpper }}</div>
+          </div>
+          <div style="flex:1;display:flex;gap:16px;min-height:0">
+            <div style="flex:1.4;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);display:flex;flex-direction:column;overflow:hidden">
+              <div style="padding:12px 16px;font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64);border-bottom:1px solid rgba(44,39,24,.12)">ONLINE · 2</div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;min-height:44px;box-sizing:border-box">
+                <div style="width:34px;height:34px;border-radius:4px;background:#EADCB6;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14);display:grid;place-items:center;font-size:13px;font-weight:600">JM</div>
+                <div style="flex:1;display:flex;flex-direction:column">
+                  <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">{{ opponent }}</div>
+                  <div style="font-size:13px;color:rgba(44,39,24,.64)">@jordanm · 12 matches</div>
+                </div>
+                <div style="height:36px;padding:0 16px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:15px;font-weight:600">Invite</div>
+              </div>
+              <div style="height:1px;background:rgba(44,39,24,.12)"></div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;min-height:44px;box-sizing:border-box">
+                <div style="width:34px;height:34px;border-radius:4px;background:#EADCB6;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14);display:grid;place-items:center;font-size:13px;font-weight:600">RK</div>
+                <div style="flex:1;display:flex;flex-direction:column">
+                  <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">Riya K.</div>
+                  <div style="font-size:13px;color:rgba(44,39,24,.64)">@riyak · in a match</div>
+                </div>
+                <div style="height:36px;padding:0 16px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:15px;font-weight:600;color:rgba(44,39,24,.64)">Busy</div>
+              </div>
+              <div style="height:1px;background:rgba(44,39,24,.12)"></div>
+              <div style="padding:12px 16px;font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">OFFLINE · 1</div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;min-height:44px;box-sizing:border-box;opacity:.55">
+                <div style="width:34px;height:34px;border-radius:4px;background:#EADCB6;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14);display:grid;place-items:center;font-size:13px;font-weight:600">TS</div>
+                <div style="flex:1;display:flex;flex-direction:column">
+                  <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">Theo S.</div>
+                  <div style="font-size:13px;color:rgba(44,39,24,.64)">@theos · last seen 2d</div>
+                </div>
+              </div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:12px">
+              <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">ADD BY HANDLE</div>
+                <div style="height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:flex;align-items:center;padding:0 12px;font-size:17px;color:rgba(44,39,24,.64)">@</div>
+                <div style="height:44px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600">Send request</div>
+              </div>
+              <div style="flex:1;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#C2841B">REQUESTS · 2</div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div style="flex:1;font-size:17px;font-weight:600;letter-spacing:-.01em">@marisol</div>
+                  <div style="font-size:15px;font-weight:600;color:#C2841B;padding:8px 0">Accept</div>
+                  <div style="font-size:15px;font-weight:600;color:rgba(44,39,24,.64);padding:8px 0">Decline</div>
+                </div>
+                <div style="height:1px;background:rgba(44,39,24,.12)"></div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div style="flex:1;font-size:17px;font-weight:600;letter-spacing:-.01em">@dev_kp</div>
+                  <div style="font-size:15px;font-weight:600;color:#C2841B;padding:8px 0">Accept</div>
+                  <div style="font-size:15px;font-weight:600;color:rgba(44,39,24,.64);padding:8px 0">Decline</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">04 · MATCH RULES (HOST)</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Match rules" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:22px 40px 40px 64px;color:#2C2718;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:16px">
+              <div style="font-size:17px;font-weight:600;color:#C2841B">Back</div>
+              <div style="font-size:28px;font-weight:600;letter-spacing:-.01em">Set the rules</div>
+            </div>
+            <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">VS {{ opponentUpper }}</div>
+          </div>
+          <div style="flex:1;display:flex;gap:16px;min-height:0">
+            <div style="flex:1;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">MINIMUM WORD LENGTH</div>
+                <div style="display:flex;gap:8px">
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">2</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600">3</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">4</div>
+                </div>
+                <div style="font-size:13px;color:rgba(44,39,24,.64)">Shorter runs read as Invalid and hold the Draw.</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">POOL SIZE</div>
+                <div style="display:flex;gap:8px">
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">96</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600">{{ poolSize }}</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">180</div>
+                </div>
+              </div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:7px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">LETTER DISTRIBUTION</div>
+              <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);display:flex;flex-direction:column">
+                <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;min-height:44px;box-sizing:border-box">
+                  <div style="flex:1;display:flex;flex-direction:column">
+                    <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">Standard</div>
+                    <div style="font-size:13px;color:rgba(44,39,24,.64)">Tuned spread across A–Z</div>
+                  </div>
+                  <div style="width:22px;height:22px;border-radius:999px;background:#C2841B"></div>
+                </div>
+                <div style="height:1px;background:rgba(44,39,24,.12)"></div>
+                <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;min-height:44px;box-sizing:border-box">
+                  <div style="flex:1;display:flex;flex-direction:column">
+                    <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">Vowel-rich</div>
+                    <div style="font-size:13px;color:rgba(44,39,24,.64)">More A E I O U, fewer rare consonants</div>
+                  </div>
+                  <div style="width:22px;height:22px;border-radius:999px;border:1px solid rgba(44,39,24,.12);box-sizing:border-box"></div>
+                </div>
+                <div style="height:1px;background:rgba(44,39,24,.12)"></div>
+                <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;min-height:44px;box-sizing:border-box">
+                  <div style="flex:1;display:flex;flex-direction:column">
+                    <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">Consonant-heavy</div>
+                    <div style="font-size:13px;color:rgba(44,39,24,.64)">Harder boards, longer matches</div>
+                  </div>
+                  <div style="width:22px;height:22px;border-radius:999px;border:1px solid rgba(44,39,24,.12);box-sizing:border-box"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="flex:1;font-size:13px;color:rgba(44,39,24,.64);text-wrap:pretty">{{ opponent }} accepts these or leaves — there is no negotiation.</div>
+            <div style="font-size:17px;font-weight:600;color:#C2841B;padding:8px">Save as defaults</div>
+            <div style="height:48px;padding:0 28px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600;box-shadow:0 5px 14px rgba(44,39,24,.18)">Send invite</div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">05 · LOBBY · RULES IN FORCE</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Lobby" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:22px 40px 40px 64px;color:#2C2718;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:16px">
+              <div style="font-size:17px;font-weight:600;color:#C2841B">Leave</div>
+              <div style="font-size:28px;font-weight:600;letter-spacing:-.01em">Lobby</div>
+            </div>
+            <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#C2841B">WAITING FOR GUEST</div>
+          </div>
+          <div style="flex:1;display:flex;gap:16px;min-height:0">
+            <div style="flex:1;display:flex;flex-direction:column;gap:12px">
+              <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;align-items:center;gap:12px">
+                <div style="width:34px;height:34px;border-radius:4px;background:#C2841B;color:#FFF8E8;box-shadow:inset 0 -3px 0 rgba(0,0,0,.18);display:grid;place-items:center;font-size:13px;font-weight:600">YO</div>
+                <div style="flex:1;display:flex;flex-direction:column">
+                  <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">You</div>
+                  <div style="font-size:13px;color:rgba(44,39,24,.64)">Host · {{ handle }}</div>
+                </div>
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">READY</div>
+              </div>
+              <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;align-items:center;gap:12px">
+                <div style="width:34px;height:34px;border-radius:4px;background:#EADCB6;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14);display:grid;place-items:center;font-size:13px;font-weight:600">JM</div>
+                <div style="flex:1;display:flex;flex-direction:column">
+                  <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">{{ opponent }}</div>
+                  <div style="font-size:13px;color:rgba(44,39,24,.64)">Invited 8s ago</div>
+                </div>
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#C2841B">RINGING</div>
+              </div>
+            </div>
+            <div style="flex:1;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">RULES IN FORCE</div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Minimum word</span><span style="font-weight:600">3 letters</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Pool</span><span style="font-weight:600">{{ poolSize }} tiles</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Distribution</span><span style="font-weight:600">Standard</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Starting rack</span><span style="font-weight:600">21 tiles</span></div>
+              <div style="margin-top:auto;font-size:13px;color:rgba(44,39,24,.64);text-wrap:pretty">Both players see this list before the countdown.</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="flex:1;font-size:13px;color:rgba(44,39,24,.64)">Edit the rules until the guest accepts.</div>
+            <div style="font-size:17px;font-weight:600;color:#C2841B;padding:8px">Edit rules</div>
+            <div style="height:48px;padding:0 28px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600;box-shadow:0 5px 14px rgba(44,39,24,.18)">Start match</div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">06 · GET READY</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Get ready" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:26px 40px 40px 64px;color:#2C2718;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;position:relative">
+          <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">GET READY</div>
+          <div style="font-size:120px;line-height:1;font-weight:700;letter-spacing:-.03em">3</div>
+          <div style="font-size:17px;color:rgba(44,39,24,.64)">Dealing 21 tiles to each player</div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <div style="width:38px;height:42px;border-radius:5px;background:#EADCB6;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1)"></div>
+            <div style="width:38px;height:42px;border-radius:5px;background:#EADCB6;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1)"></div>
+            <div style="width:38px;height:42px;border-radius:5px;background:#EADCB6;box-shadow:inset 0 -3px 0 rgba(44,39,24,.14),0 2px 5px rgba(44,39,24,.1)"></div>
+            <div style="width:38px;height:42px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box"></div>
+            <div style="width:38px;height:42px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box"></div>
+          </div>
+          <div style="position:absolute;left:64px;bottom:40px;font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">MIN 3 · POOL {{ poolSize }} · STANDARD</div>
+          <div style="position:absolute;right:40px;bottom:40px;font-size:17px;font-weight:600;color:#C2841B">Leave</div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">07 · RESULT</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Result" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:26px 40px 40px 64px;color:#2C2718;display:flex;gap:32px;align-items:center">
+          <div style="flex:1;display:flex;flex-direction:column;gap:14px">
+            <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">MATCH OVER · 6:12</div>
+            <div style="font-size:44px;line-height:1.04;font-weight:700;letter-spacing:-.03em">Willagrams!</div>
+            <div style="font-size:17px;line-height:1.45;color:rgba(44,39,24,.64);max-width:300px;text-wrap:pretty">You emptied your rack with the Pool at zero. {{ opponent }} was holding 4 tiles.</div>
+            <div style="display:flex;gap:12px;margin-top:4px">
+              <div style="height:48px;padding:0 24px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600;box-shadow:0 5px 14px rgba(44,39,24,.18)">Rematch</div>
+              <div style="height:48px;padding:0 24px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">Menu</div>
+            </div>
+          </div>
+          <div style="flex:1;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:16px;display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)"><span>&nbsp;</span><span>YOU</span><span>{{ opponentUpper }}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Tiles placed</span><span style="font-weight:600">37</span><span style="font-weight:600;color:rgba(44,39,24,.64)">33</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Longest word</span><span style="font-weight:600">QUARTZ</span><span style="font-weight:600;color:rgba(44,39,24,.64)">RETINA</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Draws called</span><span style="font-weight:600">5</span><span style="font-weight:600;color:rgba(44,39,24,.64)">3</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Swaps</span><span style="font-weight:600">1</span><span style="font-weight:600;color:rgba(44,39,24,.64)">4</span></div>
+            <div style="height:1px;background:rgba(44,39,24,.12);margin:2px 0"></div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;color:rgba(44,39,24,.64)"><span>MIN 3 · POOL {{ poolSize }} · STANDARD</span><span>Head-to-head 7–5</span></div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">08 · SOLO PRACTICE</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Solo practice" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:22px 40px 40px 64px;color:#2C2718;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="font-size:17px;font-weight:600;color:#C2841B">Back</div>
+            <div style="font-size:28px;font-weight:600;letter-spacing:-.01em">Solo practice</div>
+          </div>
+          <div style="flex:1;display:flex;gap:16px;min-height:0">
+            <div style="flex:1;display:flex;flex-direction:column;gap:14px">
+              <div style="font-size:17px;line-height:1.45;color:rgba(44,39,24,.64);text-wrap:pretty">No opponent, no clock. The Pool, the Draw gate and the dictionary behave exactly as they do in a match.</div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">STARTING RACK</div>
+                <div style="display:flex;gap:8px">
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">14</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600">21</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">28</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">MINIMUM WORD LENGTH</div>
+                <div style="display:flex;gap:8px">
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">2</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600">3</div>
+                  <div style="flex:1;height:44px;border-radius:5px;background:rgba(44,39,24,.05);border:1px solid rgba(44,39,24,.12);box-sizing:border-box;display:grid;place-items:center;font-size:17px;font-weight:600">4</div>
+                </div>
+              </div>
+            </div>
+            <div style="flex:1;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">LAST SESSION</div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Pool cleared</span><span style="font-weight:600">In 7:41</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Longest word</span><span style="font-weight:600">JOINERY</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Swaps</span><span style="font-weight:600">2</span></div>
+              <div style="margin-top:auto;height:48px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600;box-shadow:0 5px 14px rgba(44,39,24,.18)">Start practice</div>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">09 · HOW TO PLAY</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="How to play" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:22px 40px 40px 64px;color:#2C2718;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:16px">
+              <div style="font-size:17px;font-weight:600;color:#C2841B">Back</div>
+              <div style="font-size:28px;font-weight:600;letter-spacing:-.01em">How to play</div>
+            </div>
+            <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">1 OF 2</div>
+          </div>
+          <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:14px;min-height:0">
+            <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:6px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#C2841B">POOL</div>
+              <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">One shared supply</div>
+              <div style="font-size:13px;line-height:1.45;color:rgba(44,39,24,.64);text-wrap:pretty">Both players draw from the same face-down Pool of {{ poolSize }} tiles.</div>
+            </div>
+            <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:6px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#C2841B">DRAW</div>
+              <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">Place your last tile</div>
+              <div style="font-size:13px;line-height:1.45;color:rgba(44,39,24,.64);text-wrap:pretty">Your grid must be one connected cluster with no unknown words. Then everyone takes one.</div>
+            </div>
+            <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:6px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#C2841B">SWAP</div>
+              <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">One back, three out</div>
+              <div style="font-size:13px;line-height:1.45;color:rgba(44,39,24,.64);text-wrap:pretty">Return a tile you cannot use and take three. Needs three left in the Pool.</div>
+            </div>
+            <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:6px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#B3261E">INVALID</div>
+              <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">What holds the Draw</div>
+              <div style="font-size:13px;line-height:1.45;color:rgba(44,39,24,.64);text-wrap:pretty">Loose tiles are legal to leave lying around — they just block the Draw until they join up.</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="flex:1;font-size:13px;color:rgba(44,39,24,.64)">Call <strong style="font-weight:600;color:#2C2718">Willagrams!</strong> when your rack is empty and the Pool is dry.</div>
+            <div style="height:48px;padding:0 28px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600;box-shadow:0 5px 14px rgba(44,39,24,.18)">Next</div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">10 · CONNECTION LOST</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Reconnecting" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:26px 40px 40px 64px;color:#2C2718;display:flex;align-items:center;justify-content:center">
+          <div style="width:440px;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:22px;display:flex;flex-direction:column;gap:12px">
+            <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:#B3261E">CONNECTION LOST</div>
+            <div style="font-size:28px;font-weight:600;letter-spacing:-.01em">Reconnecting to {{ opponent }}</div>
+            <div style="font-size:17px;line-height:1.45;color:rgba(44,39,24,.64);text-wrap:pretty">Your board is held exactly as you left it. If they do not come back, the match ends with no result.</div>
+            <div style="height:5px;border-radius:999px;background:rgba(44,39,24,.05);overflow:hidden"><div style="width:42%;height:100%;background:#C2841B;border-radius:999px"></div></div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="flex:1;font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">ATTEMPT 3 OF 6</div>
+              <div style="font-size:17px;font-weight:600;color:#B3261E;padding:8px">Leave match</div>
+              <div style="height:44px;padding:0 22px;border-radius:5px;background:#2C2718;color:#FAF4E2;display:grid;place-items:center;font-size:17px;font-weight:600;box-shadow:0 5px 14px rgba(44,39,24,.18)">Keep waiting</div>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">11 · SETTINGS</div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" landscape="{{ true }}" hint-size="874px,402px">
+        <div data-screen-label="Settings" style="height:100%;box-sizing:border-box;background:linear-gradient(180deg,#FAF4E2 0%,#F3EAD2 100%);padding:22px 40px 40px 64px;color:#2C2718;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="font-size:17px;font-weight:600;color:#C2841B">Back</div>
+            <div style="font-size:28px;font-weight:600;letter-spacing:-.01em">Settings</div>
+          </div>
+          <div style="flex:1;display:flex;gap:16px;min-height:0">
+            <div style="flex:1;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+              <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">PROFILE</div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <div style="width:44px;height:44px;border-radius:5px;background:#C2841B;color:#FFF8E8;box-shadow:inset 0 -3px 0 rgba(0,0,0,.18);display:grid;place-items:center;font-size:17px;font-weight:600">YO</div>
+                <div style="flex:1;display:flex;flex-direction:column">
+                  <div style="font-size:17px;font-weight:600;letter-spacing:-.01em">You</div>
+                  <div style="font-size:13px;color:rgba(44,39,24,.64)">{{ handle }} · joined Aug 2026</div>
+                </div>
+                <div style="font-size:17px;font-weight:600;color:#C2841B">Edit</div>
+              </div>
+              <div style="height:1px;background:rgba(44,39,24,.12)"></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Matches played</span><span style="font-weight:600">41</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Won</span><span style="font-weight:600">24</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Friends</span><span style="font-weight:600">6</span></div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:12px">
+              <div style="background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+                <div style="font-family:'Fragment Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.067em;color:rgba(44,39,24,.64)">MY DEFAULT RULES</div>
+                <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Minimum word</span><span style="font-weight:600">3 letters</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Pool</span><span style="font-weight:600">{{ poolSize }} tiles</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:17px"><span style="color:rgba(44,39,24,.64)">Distribution</span><span style="font-weight:600">Standard</span></div>
+              </div>
+              <div style="flex:1;background:#FEFAEF;border:1px solid rgba(44,39,24,.12);border-radius:5px;box-shadow:4px 5px 0 rgba(44,39,24,.06);padding:14px 16px;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="flex:1;font-size:17px;font-weight:600;letter-spacing:-.01em">Haptics</div>
+                  <div style="width:51px;height:31px;border-radius:999px;background:#C2841B;display:flex;align-items:center;justify-content:flex-end;padding:0 3px;box-sizing:border-box"><div style="width:25px;height:25px;border-radius:999px;background:#FFF8E8"></div></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="flex:1;font-size:17px;font-weight:600;letter-spacing:-.01em">Sound</div>
+                  <div style="width:51px;height:31px;border-radius:999px;background:rgba(44,39,24,.12);display:flex;align-items:center;padding:0 3px;box-sizing:border-box"><div style="width:25px;height:25px;border-radius:999px;background:#FEFAEF"></div></div>
+                </div>
+                <div style="margin-top:auto;font-size:17px;font-weight:600;color:#B3261E">Sign out</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:2000,&quot;height&quot;:1600},&quot;handle&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;@nate&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;opponent&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Jordan M.&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;poolSize&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:144,&quot;min&quot;:96,&quot;max&quot;:180,&quot;tsType&quot;:&quot;number&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const handle = this.props.handle ?? '@nate';
+    const opponent = this.props.opponent ?? 'Jordan M.';
+    return {
+      handle,
+      handleUpper: handle.toUpperCase(),
+      opponent,
+      opponentUpper: opponent.toUpperCase(),
+      poolSize: this.props.poolSize ?? 144,
+    };
+  }
+}
+</script>
+</body>
+</html>
