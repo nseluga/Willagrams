@@ -307,6 +307,36 @@ transitions, not that anything in the app calls them. A transition whose only
 callers are tests is not wired — and a control that is `.disabled()` in the
 state its own refusal path describes is the same bug wearing a different hat.
 
+### Fixed on the way — the opening block opened on the lattice corner, 2026-08-24
+
+Third instance of the same shape, found by the same question. `BoardLayout.opening`
+lays the block from `Coord(0, 0)`, so a default camera opens on the corner of the
+lattice: the rack in the top-left, three quarters of the screen empty, recenter
+required before the first move. The board lane's throwaway app root framed the
+block before handing the camera over; `ShellRootView` replaced that root in
+`eb39f9e` and did not carry the framing across. `BoardLayout.framing` has had
+**zero production callers** since — only `BoardLayoutTests`. Fixed in `27d3a40`
+by framing through `BoardGesture.recentered` on `.task(id: board)`, guarded by
+`hasFramed`. Source guardrail in `BoardSourceTests`. Verified on the simulator.
+
+### Still broken, and it needs a foundation round — the flash has nothing to tint
+
+`ee6c73b` made the refused press *arrive*. It still tints nothing on an opening
+board, and that is a second, deeper defect.
+
+`BoardAnalysis.isComplete` is `clusterCount == 1 && invalidWords.isEmpty &&
+tileCount >= 2`. A freshly dealt board is 21 isolated tiles: `clusterCount == 21`,
+so `canDraw` is false — but `invalidWords` is **empty**, because a word needs two
+letters. `BoardModel.attemptedCompletion()` derives `flashedInvalid` from
+`invalidWords` alone, so it sets an empty set and nothing tints.
+
+The flash was only ever designed to mark bad *words*. It has nothing to say when
+the refusal is about **connectivity**, which is the most common refusal and the
+only one possible on an opening board. Fixing it needs `BoardValidation` to
+expose the cluster coords it currently keeps private, and
+`Sources/WillagramsRules/` is frozen — so this is a `/foundation` amendment, not
+a local patch. **Nate's call.**
+
 **Verified still true 2026-08-20. This is the largest thing between the repo and
 a build a stranger can play.**
 
