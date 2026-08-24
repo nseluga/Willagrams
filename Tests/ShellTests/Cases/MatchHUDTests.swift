@@ -105,8 +105,11 @@ struct MatchHUDTests {
 
         // Two loose letters: two clusters, not drawable.
         #expect(wiring.canDraw == false)
-        #expect(hud.isDrawEnabled == false)
-        // Unavailable, not ignored: the press does nothing and says so.
+        // Live, not disabled: the press is how the player asks why, and the
+        // refusal is the answer. A disabled control swallows the press and the
+        // flash never fires.
+        #expect(hud.isDrawEnabled)
+        // Refused, not ignored: the press does nothing and says so.
         let before = MatchBoardTests.custody(wiring, session, "before a refused draw")
         #expect(hud.draw() == false)
         #expect(MatchBoardTests.custody(wiring, session, "after a refused draw") == before)
@@ -292,7 +295,7 @@ struct MatchHUDTests {
         let (solo, _, shell, hud) = try await Self.hud()
 
         #expect(hud.winLabel == Terminology.winCall)
-        #expect(hud.isWinEnabled == false, "a spaced opening is claimable")
+        #expect(hud.isWinEnabled, "a spaced opening left the claim disabled")
         #expect(hud.claimWin() == false)
         #expect(hud.completionAttempts == 1, "a refused claim explained nothing")
         #expect(hud.claimWin() == false)
@@ -337,6 +340,18 @@ struct MatchHUDTests {
         #expect(shell.route == .results(winner: session.localPlayerID))
 
         session.leave()
+    }
+
+    /// The disable that made the flash unreachable. `MatchHUD` gates both
+    /// buttons on `isDrawEnabled`/`isWinEnabled`, so folding `board.canDraw`
+    /// back into either one swallows the very press the refusal exists to
+    /// answer — and every test above still passes, because they call the model
+    /// directly. A source check, because the gate is read in a SwiftUI file.
+    @Test("The completion gate does not disable the control")
+    func theGateLeavesTheControlLive() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(text.contains("public var isDrawEnabled: Bool {\n        !session.isMatchOver"),
+                "isDrawEnabled gates on the board again — the refusal press is swallowed")
     }
 
     /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so

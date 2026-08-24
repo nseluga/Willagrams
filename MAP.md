@@ -287,9 +287,25 @@ sat on `.countdown` for good — a board with no HUD and no way to play. Fixed i
 `ShellRootView` (`7331611`), with a source guardrail so the wire cannot go
 missing again.
 
+### Fixed on the way — the invalid-board flash was unreachable, 2026-08-24
+
+The same shape, one screen over, and also not the design pass: `MatchHUD.swift`
+has not been touched since `a4c453e`. `MatchHUDModel.refuse()` counts a refused
+Draw or win claim, and `BoardView` keys its red flash on that count — but
+`isDrawEnabled` folded in `board.canDraw`, and `MatchHUD` gates both buttons on
+it with `.disabled()`. So the control was dead in exactly the state the flash
+exists to explain: the press never arrived, the count never rose, no run ever
+tinted. The suite was green because every test calls `hud.draw()` directly.
+
+Tappability and drawability are now two questions. `isDrawEnabled` gates only
+the three states where drawing is meaningless (match over, peer absent, pool
+exhausted); `draw()` and `claimWin()` check `board.canDraw` themselves and
+refuse through the counter. Source guardrail on the gate.
+
 **The lesson for every lane still to run:** a green suite proves the model
 transitions, not that anything in the app calls them. A transition whose only
-callers are tests is not wired.
+callers are tests is not wired — and a control that is `.disabled()` in the
+state its own refusal path describes is the same bug wearing a different hat.
 
 **Verified still true 2026-08-20. This is the largest thing between the repo and
 a build a stranger can play.**
