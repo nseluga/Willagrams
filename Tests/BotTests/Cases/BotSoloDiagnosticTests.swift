@@ -46,6 +46,15 @@ struct BotSoloDiagnosticTests {
         var paced: Duration
         var shortest: Duration
         var longest: Duration
+        /// Paced gaps between the pool falling — the only thing about the bot's
+        /// speed a player can actually see, since the opponent's board is not on
+        /// screen. Every other number here is about work they never watch.
+        var peelGaps: [Duration]
+
+        var meanPeelGap: Duration {
+            guard !peelGaps.isEmpty else { return .zero }
+            return peelGaps.reduce(.zero, +) / peelGaps.count
+        }
         var over: Bool
         var winner: String
         var pool: String
@@ -87,6 +96,8 @@ struct BotSoloDiagnosticTests {
         var placed = 0
         var pool: [Int] = []
         var firstPeel = -1
+        var peelGaps: [Duration] = []
+        var lastPeelAt = Duration.zero
         // Give up only after the *bot* has taken a run of ticks that changed
         // nothing. Counting wall-clock polls instead would call a slow preset
         // deadlocked purely for being slow: a depth-2 tick runs a 20,000
@@ -103,6 +114,9 @@ struct BotSoloDiagnosticTests {
             if let remaining = human.poolRemaining, pool.last != remaining {
                 if pool.count == 1 { firstPeel = placed }
                 pool.append(remaining)
+                let now = await counter.waited
+                if pool.count > 2 { peelGaps.append(now - lastPeelAt) }
+                lastPeelAt = now
             }
             if human.isMatchOver || ticked - idleSince > 900 { break }
         }
@@ -117,6 +131,7 @@ struct BotSoloDiagnosticTests {
             paced: await counter.waited,
             shortest: await counter.shortest,
             longest: await counter.longest,
+            peelGaps: peelGaps,
             over: human.isMatchOver,
             winner: human.winner.map(\.rawValue) ?? "none",
             pool: human.poolRemaining.map(String.init) ?? "—",
@@ -134,6 +149,8 @@ struct BotSoloDiagnosticTests {
                 \(run.label) seed \(run.seed) — \(run.ticks) ticks \
                 → about \(run.wallClock) to watch
                   pauses \(run.shortest) … \(run.longest)
+                  pool falls every \(run.meanPeelGap) on average \
+                  (\(run.peelGaps.min() ?? .zero) … \(run.peelGaps.max() ?? .zero))
                   board \(run.placed) tiles · first peel after \(run.firstPeel) placements \
                   · rack [\(run.rack)] · pool \(run.pool)
                   over \(run.over) · winner \(run.winner) · search cost \(run.compute)

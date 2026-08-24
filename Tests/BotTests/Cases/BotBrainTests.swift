@@ -109,7 +109,7 @@ struct BotBrainTests {
         #expect(BotDifficulty.hard.thinkDelay < BotDifficulty.easy.thinkDelay)
         #expect(BotDifficulty.hard.stallFloorTicks < BotDifficulty.easy.stallFloorTicks)
         #expect(BotDifficulty.easy == BotDifficulty(
-            ladderDepth: 0, thinkDelay: .milliseconds(1200), stallFloorTicks: 12
+            ladderDepth: 0, thinkDelay: .milliseconds(2600), stallFloorTicks: 12
         ))
     }
 

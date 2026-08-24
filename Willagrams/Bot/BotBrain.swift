@@ -214,8 +214,13 @@ public actor BotBrain {
         /// until the stall floor fires, so every millisecond spent here is dead
         /// air, not an opponent visibly struggling.
         case idle
-        /// The bot drew, claimed, or took a tile it was handed — a real action,
-        /// but not one that says anything about how well the rack is going.
+        /// The bot drew, claimed, or took a tile it was handed.
+        ///
+        /// Paced exactly like a placement, because from the other side of the
+        /// screen this is the *more* visible of the two: the opponent's board is
+        /// not on screen, so what a player actually watches the bot do is take
+        /// tiles out of the pool. A draw that was not paced made the pool fall
+        /// at a steady rate no matter what mood the bot was in.
         case drew
     }
 
@@ -244,12 +249,12 @@ public actor BotBrain {
     /// rack faster than you can read it.
     private func pace(_ beat: Beat) -> Duration {
         switch beat {
-        case .placed:
+        case .placed, .drew:
             stare = 0
             moodTilesLeft -= 1
             if moodTilesLeft <= 0 { pickMood() }
         case .stuck: stare += 1
-        case .idle, .drew: break
+        case .idle: break
         }
         // Only a tick that ends with a tile on the board is *seen*. A pause
         // taken while the bot has nothing to play shows the player an unchanged
@@ -259,10 +264,9 @@ public actor BotBrain {
         // what stretches those.
         let eased: Double
         switch beat {
-        case .placed: eased = mood.factor
+        case .placed, .drew: eased = mood.factor
         case .stuck: eased = 1 + Double(min(stare, 3)) * 0.2
         case .idle: eased = 0.6
-        case .drew: eased = 1
         }
         // Safe to draw randomly here: this decides how long to wait and nothing
         // else. No board state, no move ordering, and no test outcome depends on

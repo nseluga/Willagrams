@@ -82,9 +82,16 @@ public struct BotDifficulty: Sendable, Equatable {
     }
 
     /// Extend only, slowly, and patient about being stuck.
+    ///
+    /// The slowest clock of the three, and the length of a whole easy match is
+    /// not the reason. Easy is long because it reaches rung 0 only and spends
+    /// most of its ticks finding nothing; the clock is here so the row a player
+    /// picks to go easy on themselves also *looks* unhurried tile by tile.
+    /// Nobody plays an easy match to the last tile anyway — the player claims
+    /// the win first, which ends it.
     public static let easy = BotDifficulty(
         ladderDepth: 0,
-        thinkDelay: .milliseconds(1200),
+        thinkDelay: .milliseconds(2600),
         stallFloorTicks: 12
     )
 
@@ -92,20 +99,21 @@ public struct BotDifficulty: Sendable, Equatable {
     /// words — at a conversational pace.
     public static let medium = BotDifficulty(
         ladderDepth: 2,
-        thinkDelay: .milliseconds(1100),
+        thinkDelay: .milliseconds(1900),
         stallFloorTicks: 6
     )
 
     /// The whole ladder, swap included, and quick to give up on a bad rack.
     /// The only preset that hands a tile back *by choice*; the others reach it
     /// only through the stall floor, and only once nothing else is left.
-    /// Quick, but never instant: at 250ms every tile landed the moment the one
-    /// before it did, which read as a script running rather than a person
-    /// playing. The ladder is what makes this bot hard; the clock only made it
-    /// inhuman.
+    /// Quick, but never instant. This number is tuned against the length of a
+    /// whole match, not against one pause: at 900ms hard cleared a 72-tile board
+    /// in five minutes, which no person does, and the pool fell so steadily that
+    /// the far end read as a script. The ladder is what makes this bot hard; the
+    /// clock only made it inhuman.
     public static let hard = BotDifficulty(
         ladderDepth: 3,
-        thinkDelay: .milliseconds(900),
+        thinkDelay: .milliseconds(1800),
         stallFloorTicks: 3
     )
 }

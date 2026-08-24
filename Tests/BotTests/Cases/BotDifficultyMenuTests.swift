@@ -54,8 +54,8 @@ struct BotDifficultyMenuTests {
     }
 
     /// The presets have to be *distinguishable* — three rows that play the same
-    /// are three rows that lie — and easy has to be the one that reaches least
-    /// and waits longest.
+    /// are three rows that lie — and easy has to be the one that reaches least and waits longest.
+    ///
     @Test("The three presets differ in depth and pace, and easy is the shallowest and slowest")
     func presetsDiffer() {
         let presets: [BotDifficulty] = [.easy, .medium, .hard]
