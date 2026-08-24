@@ -35,9 +35,18 @@ let package = Package(
             dependencies: [.product(name: "WillagramsRules", package: "Willagrams")],
             path: "BoardSrc"
         ),
+        // The bot is the far end of every solo match now, so `SoloMatch` names
+        // `BotMatch`, `BotBrain` and `BotDifficulty`. Same symlink pattern and
+        // same exclude as `Tests/BotTests`: `BotDifficultyView` is SwiftUI.
+        .target(
+            name: "Bot",
+            dependencies: ["Match", .product(name: "WillagramsRules", package: "Willagrams")],
+            path: "BotSrc",
+            exclude: ["BotDifficultyView.swift"]
+        ),
         .target(
             name: "Shell",
-            dependencies: ["Match", "Style", "BoardKit", .product(name: "WillagramsRules", package: "Willagrams")],
+            dependencies: ["Match", "Style", "BoardKit", "Bot", .product(name: "WillagramsRules", package: "Willagrams")],
             path: "ShellSrc",
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
@@ -45,9 +54,9 @@ let package = Package(
             exclude: [
                 "ShellRootView.swift", "MenuView.swift", "CountdownView.swift",
                 "MatchHUD.swift", "MatchView.swift", "ResultsView.swift",
-                "HowToPlayView.swift",
+                "HowToPlayView.swift", "SoloSetupView.swift", "WordmarkView.swift",
             ]
         ),
-        .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style", "BoardKit"], path: "Cases"),
+        .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style", "BoardKit", "Bot"], path: "Cases"),
     ]
 )

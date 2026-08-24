@@ -46,14 +46,20 @@ struct MatchRunTests {
         #expect(session.state.board.placementList.count == ShellModel.soloHandSize)
 
         // Countdown → match → results, and the run is the same object at each.
-        #expect(shell.route == .countdown(
-            MatchSetup(
-                seed: run.seed,
-                startingHandSize: ShellModel.soloHandSize,
-                countdownSeconds: ShellModel.soloCountdownSeconds
+        //
+        // Nothing calls `countdownFinished()` here: the shell advances itself
+        // when the count runs out. It used to need the push, and that is exactly
+        // why the app dealt a hand and then sat on a locked board forever — the
+        // only callers were tests like this one.
+        try await SoloMatchTests.waitUntil("the shell to advance itself") {
+            shell.route == .match(
+                MatchSetup(
+                    seed: run.seed,
+                    startingHandSize: ShellModel.soloHandSize,
+                    countdownSeconds: ShellModel.soloCountdownSeconds
+                )
             )
-        ))
-        shell.countdownFinished()
+        }
         #expect(shell.run === run, "the match route rebuilt the run")
         #expect(shell.run?.session === session)
 

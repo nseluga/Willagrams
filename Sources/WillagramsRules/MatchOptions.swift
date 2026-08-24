@@ -12,7 +12,7 @@ import Foundation
 /// The word list travels as an identity plus a content hash, never as a list:
 /// ENABLE is 172k words and 1.7 MB. The id says which list; the hash catches a
 /// build skew where two devices resolve the same id to different content.
-public struct MatchOptions: Codable, Sendable, Equatable {
+public struct MatchOptions: Codable, Sendable, Hashable {
     /// Shortest word the dictionary will accept.
     public var minimumWordLength: Int
 

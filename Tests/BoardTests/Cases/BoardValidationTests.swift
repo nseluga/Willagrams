@@ -295,6 +295,44 @@ final class BoardValidationTests: XCTestCase {
         XCTAssertTrue(model.flashedInvalid.isEmpty, "the flash outlived the board it answered about")
     }
 
+    /// The opening deal's refusal, which spells nothing wrong and still cannot
+    /// draw: a tile off on its own is a second cluster, and it is what the
+    /// player has to fix. Flashing only bad *words* would light nothing at all
+    /// and read as a dead button.
+    func testAClaimOnAScatteredBoardFlashesTheStrandedTiles() throws {
+        let dictionary = CountingWordList(["CATS"])
+        var board = Board()
+        for (index, letter) in "CATS".enumerated() {
+            try board.place(Tile(letter: letter), at: Coord(row: 0, col: index))
+        }
+        let stranded = Coord(row: 5, col: 5)
+        try board.place(Tile(letter: "Z"), at: stranded)
+        var model = BoardModel(board: board, against: dictionary)
+
+        // Nothing on this board is a bad word — there is nothing for the old
+        // flash to find.
+        XCTAssertTrue(model.validation.invalidWords.isEmpty)
+        XCTAssertTrue(model.invalidCoords.isEmpty)
+        XCTAssertFalse(model.canDraw, "a two-cluster board accepted a draw")
+
+        XCTAssertFalse(model.attemptedCompletion())
+        XCTAssertEqual(model.flashedInvalid, [stranded], "the loose tile did not flash")
+    }
+
+    /// The other half of the `tileCount` floor: one tile is one cluster with no
+    /// bad word, and the whole board is what is wrong with it.
+    func testAClaimOnASingleTileFlashesThatTile() throws {
+        let dictionary = CountingWordList([])
+        var board = Board()
+        let only = Coord(row: 2, col: 2)
+        try board.place(Tile(letter: "Q"), at: only)
+        var model = BoardModel(board: board, against: dictionary)
+
+        XCTAssertFalse(model.canDraw)
+        XCTAssertFalse(model.attemptedCompletion())
+        XCTAssertEqual(model.flashedInvalid, [only])
+    }
+
     /// A claim on a board that IS finished stands, and lights nothing.
     func testACompletionClaimOnAFinishedBoardFlashesNothing() throws {
         let dictionary = CountingWordList(["CATS"])

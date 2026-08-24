@@ -166,4 +166,32 @@ struct SoloMatchTests {
         }
         solo.leave()
     }
+
+    // MARK: - Criterion 4
+
+    @Test("A difficulty makes the far end actually play")
+    func aDifficultyPutsTilesOnTheFarEndsBoard() async throws {
+        let solo = SoloMatch(
+            setup: Self.setup,
+            dictionary: EveryWordIsReal(),
+            difficulty: ShellModel.soloDifficulty,
+            sleepFor: { _ in }
+        )
+        solo.start()
+        // Placements on the *bot's* board, not messages on the wire: a solo
+        // player's opponent is a second real session playing its own tiles, and
+        // the only proof of that is the tiles moving out of its rack.
+        try await Self.waitUntil("the far end to place a tile") {
+            solo.bot.session.state.board.placementList.isEmpty == false
+        }
+        solo.leave()
+    }
+
+    @Test("No difficulty leaves the far end silent")
+    func noDifficultyLeavesTheFarEndSilent() async throws {
+        let solo = try await Self.started()
+        #expect(solo.difficulty == nil)
+        #expect(solo.bot.session.state.board.placementList.isEmpty)
+        solo.leave()
+    }
 }

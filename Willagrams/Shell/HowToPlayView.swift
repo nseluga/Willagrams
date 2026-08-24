@@ -16,16 +16,21 @@ struct HowToPlayView: View {
     let shell: ShellModel
 
     var body: some View {
-        VStack(spacing: DesignTokens.Space.l) {
+        VStack(spacing: DesignTokens.Space.m) {
             Text(HowToPlay.title)
                 .font(DesignTokens.Typography.title)
                 .foregroundStyle(DesignTokens.Palette.textPrimary)
                 .accessibilityAddTraits(.isHeader)
 
-            // Scrolls rather than shrinks: landscape iPhone through landscape
-            // iPad, no assumed viewport, and the copy stays at body size.
+            // Columns rather than one narrow strip down the middle: the rules
+            // are short blocks, and a wide screen fits two or three of them
+            // side by side instead of leaving half the width empty.
+            //
+            // Inside a `ScrollView` regardless, because a phone in portrait
+            // fits one column and still overflows. `LazyVGrid` is the whole
+            // adaptation — no size class is read and no branch is taken here.
             ScrollView {
-                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                LazyVGrid(columns: Self.columns, alignment: .leading, spacing: DesignTokens.Space.l) {
                     ForEach(HowToPlay.rules) { rule in
                         VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
                             Text(rule.title)
@@ -36,16 +41,17 @@ struct HowToPlayView: View {
                                 .foregroundStyle(DesignTokens.Palette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .frame(maxWidth: 520, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .padding(.bottom, DesignTokens.Space.m)
             }
+            .scrollIndicators(.visible)
 
             Button(HowToPlay.backLabel) { shell.returnToMenu() }
                 .buttonStyle(.brandPrimary)
         }
-        .padding(DesignTokens.Space.xl)
+        .padding(DesignTokens.Space.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             LinearGradient(
@@ -56,4 +62,10 @@ struct HowToPlayView: View {
             .ignoresSafeArea()
         }
     }
+
+    /// As many columns as fit at a readable width, which is one on a phone in
+    /// portrait and two or three on anything wider.
+    private static let columns = [
+        GridItem(.adaptive(minimum: 320), spacing: DesignTokens.Space.l, alignment: .topLeading)
+    ]
 }

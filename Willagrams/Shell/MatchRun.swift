@@ -13,17 +13,19 @@
 //  This file must never import GameKit.
 //
 
-// `SoloMatch` is `#if DEBUG` because `FakeTransport` is, and this type owns
-// one — so it carries the same fence rather than smuggling it past. See the
-// finding in the engineer report: solo practice is a debug-only feature today,
-// and `ShellModel.run` carries the same fence for the same reason.
-#if DEBUG
+// `SoloMatch` used to be `#if DEBUG`, because the `FakeTransport` it owned was,
+// and this type carried the same fence. That far end is a shipping `BotMatch`
+// now, so neither this type nor `ShellModel.run` is fenced any more.
 
-// The app compiles `Willagrams/Match` and `Willagrams/Shell` into one module,
-// where there is nothing to import. `Tests/ShellTests` compiles them as two, so
-// the import is real there and only there — the shim `SoloMatch.swift` uses.
+// The app compiles `Willagrams/Match`, `Willagrams/Bot` and `Willagrams/Shell`
+// into one module, where there is nothing to import. `Tests/ShellTests`
+// compiles them as separate ones, so the imports are real there and only there
+// — the same shim `SoloMatch.swift` uses.
 #if canImport(Match)
 import Match
+#endif
+#if canImport(Bot)
+import Bot
 #endif
 
 import Foundation
@@ -96,6 +98,7 @@ public final class MatchRun {
         setup: MatchSetup,
         dictionary: any WordList,
         generation: Int,
+        difficulty: BotDifficulty? = nil,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         }
@@ -104,7 +107,9 @@ public final class MatchRun {
         self.generation = generation
         self.seed = setup.seed
         self.dictionary = dictionary
-        let match = SoloMatch(setup: setup, dictionary: dictionary, sleepFor: sleepFor)
+        let match = SoloMatch(
+            setup: setup, dictionary: dictionary, difficulty: difficulty, sleepFor: sleepFor
+        )
         let board = MatchBoard(session: match.session, dictionary: dictionary)
         self.match = match
         self.board = board
@@ -146,5 +151,3 @@ public final class MatchRun {
         )
     }
 }
-
-#endif

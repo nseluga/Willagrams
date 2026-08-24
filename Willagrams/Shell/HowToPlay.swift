@@ -49,43 +49,52 @@ public enum HowToPlay {
 
     public static let rules: [Rule] = [
         Rule(
-            title: Terminology.pool,
+            title: "Build your board",
             body: """
-                The \(Terminology.pool) is the shared face-down supply. \
-                Every tile you play comes out of it.
-                """
-        ),
-        Rule(
-            title: Terminology.draw,
-            body: """
-                \(Terminology.draw) takes one more tile from the \
-                \(Terminology.pool) for every player at once. You may only \
-                \(Terminology.draw) when every tile you hold is on the board.
+                You start with a hand of tiles. Drag one to move it. Drop it \
+                beside another to build a word. Double tap to move a group. \
+                Only you see your board.
                 """
         ),
         Rule(
             title: "One connected group",
             body: """
-                Every tile on your board must join one connected group, reading \
-                across and down as real words. While any word is \
-                \(Terminology.invalid), or a tile stands apart from the rest, \
-                \(Terminology.draw) stays locked.
+                Every tile you hold must sit in one connected group. Every run \
+                of two or more tiles must read as a real word across and down. \
+                A run that is not a word flashes \(Terminology.invalid).
+                """
+        ),
+        Rule(
+            title: Terminology.draw,
+            body: """
+                \(Terminology.draw) is unlocked once your board is finished. It \
+                takes one tile from the \(Terminology.pool) for every player, so \
+                your opponent pays too. Your new tile usually breaks the grid \
+                you just built. Rebuild and \(Terminology.draw) again.
+                """
+        ),
+        Rule(
+            title: Terminology.pool,
+            body: """
+                The \(Terminology.pool) is the shared supply, counted on the bag \
+                in the corner. Every tile came out of it. At zero there is \
+                nothing left to take.
                 """
         ),
         Rule(
             title: Terminology.swap,
             body: """
-                A letter you cannot use goes back: \(Terminology.swap) returns \
-                one tile to the \(Terminology.pool) and gives you three in its \
-                place.
+                Select a letter you cannot place. \(Terminology.swap) puts it \
+                back and deals you three in its place. One bad letter costs you \
+                two extra ones.
                 """
         ),
         Rule(
             title: Terminology.winCall,
             body: """
-                When the \(Terminology.pool) is empty and you lay your last \
-                tile into a valid board, \(Terminology.winCall) ends the match \
-                and you have won.
+                The \(Terminology.winCall) button appears only when it would \
+                work: the \(Terminology.pool) is empty and every tile you hold \
+                sits in one finished board. Press it and you have won.
                 """
         ),
     ]
