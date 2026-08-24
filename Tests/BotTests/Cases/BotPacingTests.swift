@@ -61,7 +61,7 @@ struct BotPacingTests {
     func theRhythmVaries() async throws {
         let base = Duration.milliseconds(500)
         let difficulty = BotDifficulty(
-            ladderDepth: 2, thinkDelay: base, stallFloorTicks: 6, pacing: 0.45...3.0
+            ladderDepth: 2, thinkDelay: base, stallFloorTicks: 6, pacing: 0.45...4.0
         )
         let pauses = try await Self.pauses(of: difficulty, atLeast: 60)
         try #require(pauses.count >= 60, "the brain did not tick enough to judge its rhythm")
@@ -76,9 +76,16 @@ struct BotPacingTests {
         #expect(pauses.contains { $0 < base }, "the bot never once got going")
         #expect(pauses.contains { $0 > base }, "the bot never once hesitated")
 
+        // And the swing is wide enough to read as an opponent having an easier
+        // or a harder time of it. Jitter alone would clear the checks above and
+        // still look like a clock with a slight wobble; only the moods put a
+        // multiple between the bot's best stretch and its worst.
+        let widest = try #require(pauses.max()), narrowest = try #require(pauses.min())
+        #expect(widest > narrowest * 3, "the rhythm wobbles but never changes gear")
+
         // And inside the clamp, so no preset can drift into looking frozen or
         // into emptying its rack faster than a player can read it.
-        #expect(pauses.allSatisfy { $0 >= base * 0.45 && $0 <= base * 3.0 })
+        #expect(pauses.allSatisfy { $0 >= base * 0.45 && $0 <= base * 4.0 })
     }
 
     @Test("A preset with no room to vary still plays at its own pace")

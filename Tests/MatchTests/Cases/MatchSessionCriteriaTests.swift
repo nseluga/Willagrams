@@ -134,8 +134,11 @@ struct MatchSessionCriteriaTests {
         try guest.place(tileID: placed.id, at: Coord(row: 0, col: 0))
         #expect(guest.state.hand.map(\.id) == [held.id])
 
-        // The host owes two tiles from the guest's rounds; one press takes them.
+        // The host owes two tiles from the guest's rounds, and a press takes
+        // one, so it owes a press each.
         try await waitUntil("the host to owe its tiles") { host.pendingDrawTiles.count == 2 }
+        host.draw()
+        #expect(host.pendingDrawTiles.count == 1)
         host.draw()
         #expect(host.hasPendingDraw == false)
 

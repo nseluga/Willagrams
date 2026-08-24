@@ -702,9 +702,16 @@ public final class MatchSession {
 
     /// The Draw button.
     ///
-    /// With a tile waiting this *takes* it and nothing goes on the wire —
+    /// With a tile waiting this *takes one* and nothing goes on the wire —
     /// accepting the obligation is not a new request. Otherwise it asks for a
     /// round.
+    ///
+    /// One tile per press, always, however many are waiting. A player who fell
+    /// six tiles behind presses six times. The button is the only place a tile
+    /// enters a hand, so letting one press empty a queue of six would drop six
+    /// letters into the rack at once with no way to take them one at a time and
+    /// play between them — and it would hide how far behind they are behind a
+    /// single tap.
     ///
     /// Not gated on ``canDraw``: that predicate is the button's enabled state,
     /// and gating here would be a second, weaker copy of a check the shell
@@ -715,8 +722,7 @@ public final class MatchSession {
     public func draw() -> Bool {
         guard !isLocked else { return false }
         if !pendingDrawTiles.isEmpty {
-            state.hand.append(contentsOf: pendingDrawTiles)
-            pendingDrawTiles = []
+            state.hand.append(pendingDrawTiles.removeFirst())
             return true
         }
         // An empty pool can only answer with the same broadcast again, and each

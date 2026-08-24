@@ -389,9 +389,9 @@ struct MatchSessionHardeningTests {
         }
         #expect(await hostWire.exhaustions == 1)
 
-        // Taking the pile is still allowed; asking for more is not, and no
-        // second broadcast goes out.
-        #expect(host.draw())
+        // Taking the pile is still allowed — a press at a time, all the way
+        // down — but asking for more is not, and no second broadcast goes out.
+        for _ in 0..<rounds { #expect(host.draw()) }
         #expect(host.state.hand.count == rounds)
         #expect(host.pendingDrawTiles.isEmpty)
         #expect(host.draw() == false)
@@ -630,7 +630,9 @@ struct MatchSessionHardeningTests {
         }
         #expect(guest.pendingDrawTiles.map(\.id) == [tile.id, second.id])
 
-        // The same tile, redelivered once it is in the rack.
+        // The same tile, redelivered once it is in the rack. Two waiting is two
+        // presses.
+        #expect(guest.draw())
         #expect(guest.draw())
         #expect(guest.state.hand.count == 2)
         wire.deliver(.grant(player: Self.bob, tiles: [tile]))
@@ -650,6 +652,32 @@ struct MatchSessionHardeningTests {
         #expect(guest.pendingDrawTiles.map(\.id) == [fourth.id])
         #expect(guest.state.hand.map(\.id) == [second.id, third.id])
         #expect(guest.state.board.placementList.count == 1)
+    }
+
+    // MARK: - Minor: the Draw button is one tile per press
+
+    @Test("Draw takes one waiting tile per press, however far behind you fell")
+    func drawTakesOneTilePerPress() async throws {
+        let (guest, wire) = try await Self.playingGuest()
+        let waiting = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
+        for tile in waiting { wire.deliver(.grant(player: Self.bob, tiles: [tile])) }
+        try await Self.waitUntil("three waiting") { guest.pendingDrawTiles.count == 3 }
+
+        // Falling three rounds behind costs three presses, and the rack grows by
+        // exactly one each time. Emptying the queue on the first press would put
+        // three letters in hand at once with no chance to play between them, and
+        // would hide how far behind this device is behind a single tap.
+        for expected in 1...3 {
+            #expect(guest.draw())
+            #expect(guest.state.hand.count == expected)
+            #expect(guest.pendingDrawTiles.count == 3 - expected)
+        }
+        #expect(guest.state.hand.map(\.id) == waiting.map(\.id), "and in the order they arrived")
+
+        // The board stays shut for the whole queue, not just the first tile: it
+        // reopens on the press that takes the last one.
+        #expect(guest.hasPendingDraw == false)
+        try guest.place(tileID: waiting[0].id, at: Coord(row: 0, col: 0))
     }
 
     // MARK: - Minor: who may open a match, and when the board stops moving
@@ -675,6 +703,7 @@ struct MatchSessionHardeningTests {
         let pair = [Tile(letter: "X"), Tile(letter: "Y")]
         otherWire.deliver(.grant(player: Self.bob, tiles: pair))
         try await Self.waitUntil("two tiles") { other.pendingDrawTiles.count == 2 }
+        #expect(other.draw())
         #expect(other.draw())
         try other.place(tileID: pair[0].id, at: Coord(row: 0, col: 0))
 

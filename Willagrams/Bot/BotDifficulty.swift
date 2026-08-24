@@ -73,7 +73,7 @@ public struct BotDifficulty: Sendable, Equatable {
         ladderDepth: Int,
         thinkDelay: Duration,
         stallFloorTicks: Int,
-        pacing: ClosedRange<Double> = 0.45...3.0
+        pacing: ClosedRange<Double> = 0.45...4.0
     ) {
         self.ladderDepth = ladderDepth
         self.thinkDelay = thinkDelay
@@ -92,7 +92,7 @@ public struct BotDifficulty: Sendable, Equatable {
     /// words — at a conversational pace.
     public static let medium = BotDifficulty(
         ladderDepth: 2,
-        thinkDelay: .milliseconds(850),
+        thinkDelay: .milliseconds(1100),
         stallFloorTicks: 6
     )
 
@@ -105,7 +105,7 @@ public struct BotDifficulty: Sendable, Equatable {
     /// inhuman.
     public static let hard = BotDifficulty(
         ladderDepth: 3,
-        thinkDelay: .milliseconds(700),
+        thinkDelay: .milliseconds(900),
         stallFloorTicks: 3
     )
 }

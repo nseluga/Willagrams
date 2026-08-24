@@ -92,11 +92,13 @@ public actor BotBrain {
     /// screen is indistinguishable from a broken bot.
     private var stalledTicks = 0
 
-    /// Consecutive ticks that put a tile down, and consecutive ticks that
-    /// did not. The pacing's whole memory: one says how long the bot has
-    /// been flowing, the other how long it has been stuck.
-    private var roll = 0
+    /// Consecutive ticks that searched and found nothing. Half the pacing's
+    /// memory; ``mood`` is the other half.
     private var stare = 0
+
+    /// The stretch the bot is currently in, and how many more tiles it lasts.
+    private var mood: Mood = .steady
+    private var moodTilesLeft = 0
 
     /// Consecutive stall-floor grants that changed nothing on the board.
     ///
@@ -242,19 +244,22 @@ public actor BotBrain {
     /// rack faster than you can read it.
     private func pace(_ beat: Beat) -> Duration {
         switch beat {
-        case .placed: roll += 1; stare = 0
-        case .stuck: stare += 1; roll = 0
+        case .placed:
+            stare = 0
+            moodTilesLeft -= 1
+            if moodTilesLeft <= 0 { pickMood() }
+        case .stuck: stare += 1
         case .idle, .drew: break
         }
-        // Both curves flatten out early, and the stuck one flattens low. Only a
-        // tick that ends with a tile on the board is *seen*; a pause taken
-        // while the bot has nothing to play shows the player an unchanged
-        // screen, so a long one buys no character and costs real minutes. What
-        // reads as hesitation is the gap before the next tile appears, and one
-        // stretched pause delivers that as well as five do.
+        // Only a tick that ends with a tile on the board is *seen*. A pause
+        // taken while the bot has nothing to play shows the player an unchanged
+        // screen, so a long one buys no character and costs real minutes — the
+        // stuck and idle branches stay short for that reason alone. What reads
+        // as hesitation is the gap before the next tile appears, and ``mood`` is
+        // what stretches those.
         let eased: Double
         switch beat {
-        case .placed: eased = 1 / (1 + Double(min(roll, 6)) * 0.2)
+        case .placed: eased = mood.factor
         case .stuck: eased = 1 + Double(min(stare, 3)) * 0.2
         case .idle: eased = 0.6
         case .drew: eased = 1
@@ -270,6 +275,45 @@ public actor BotBrain {
         let span = difficulty.pacing
         let factor = min(max(eased * jitter * ponder, span.lowerBound), span.upperBound)
         return difficulty.thinkDelay * factor
+    }
+
+    /// The stretch the bot is in, which is the thing that actually reads as an
+    /// opponent rather than a clock.
+    ///
+    /// Deriving the pause from the bot's own state alone was not enough, and it
+    /// failed in an instructive direction: the brain places most tiles easily
+    /// and then idles, so the *earned* rhythm was a fast burst and then nothing,
+    /// and the burst got faster the longer it ran. A person is not like that.
+    /// A person hits a patch where the words come and rattles off four or five,
+    /// then hits one where they do not and sits on the next tile for seconds,
+    /// and neither stretch has anything to do with how hard that particular
+    /// tile was.
+    ///
+    /// So the stretch is chosen, and it lasts several *tiles* rather than
+    /// several ticks — a mood spent while idling would be over before the
+    /// player saw any of it.
+    private enum Mood {
+        case flowing, steady, grinding
+
+        var factor: Double {
+            switch self {
+            case .flowing: 0.55
+            case .steady: 1
+            case .grinding: 2.6
+            }
+        }
+    }
+
+    /// Picks the next stretch. Weighted toward steady, because a bot that were
+    /// always at one extreme or the other would read as erratic rather than as
+    /// a person having an easier or harder time of it.
+    private func pickMood() {
+        let draw = Double.random(in: 0..<1)
+        switch draw {
+        case ..<0.30: mood = .flowing; moodTilesLeft = Int.random(in: 3...7)
+        case ..<0.75: mood = .steady; moodTilesLeft = Int.random(in: 3...8)
+        default: mood = .grinding; moodTilesLeft = Int.random(in: 2...5)
+        }
     }
 
     /// How often a pause is long for no reason the board can explain. Roughly
