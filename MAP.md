@@ -319,23 +319,25 @@ block before handing the camera over; `ShellRootView` replaced that root in
 by framing through `BoardGesture.recentered` on `.task(id: board)`, guarded by
 `hasFramed`. Source guardrail in `BoardSourceTests`. Verified on the simulator.
 
-### Still broken, and it needs a foundation round — the flash has nothing to tint
+### Fixed on the way — the flash had nothing to tint, 2026-08-24
 
-`ee6c73b` made the refused press *arrive*. It still tints nothing on an opening
-board, and that is a second, deeper defect.
+`ee6c73b` made the refused press *arrive*. It still tinted nothing, and that was
+a second, deeper defect. `BoardAnalysis.isComplete` is `clusterCount == 1 &&
+invalidWords.isEmpty && tileCount >= 2`, and `attemptedCompletion` built its
+flash set from `invalidWords` alone — so a board refused for being **in pieces**
+had nothing to point at. That is not an edge case: it is the first Draw every
+player presses. A freshly dealt board is loose letters, so `invalidWords` is
+empty, because a word needs two letters to exist.
 
-`BoardAnalysis.isComplete` is `clusterCount == 1 && invalidWords.isEmpty &&
-tileCount >= 2`. A freshly dealt board is 21 isolated tiles: `clusterCount == 21`,
-so `canDraw` is false — but `invalidWords` is **empty**, because a word needs two
-letters. `BoardModel.attemptedCompletion()` derives `flashedInvalid` from
-`invalidWords` alone, so it sets an empty set and nothing tints.
+Fixed in `850db17`. `BoardModel` now keeps the coords outside the biggest
+cluster alongside the bad runs — written in the same one place published
+validation is — and the flash is the union of the two. The biggest cluster is
+what the player is building on, so what needs moving is everything else; ties
+fall to the lowest coord in reading order, never to `Set` iteration order.
 
-The flash was only ever designed to mark bad *words*. It has nothing to say when
-the refusal is about **connectivity**, which is the most common refusal and the
-only one possible on an opening board. Fixing it needs `BoardValidation` to
-expose the cluster coords it currently keeps private, and
-`Sources/WillagramsRules/` is frozen — so this is a `/foundation` amendment, not
-a local patch. **Nate's call.**
+**No foundation round was needed.** `Board.clusters` was already public — only
+`BoardValidation` withholds the coords, and nothing had to read them from there.
+Verified on the simulator: twenty of twenty-one opening tiles go red.
 
 **Verified still true 2026-08-20. This is the largest thing between the repo and
 a build a stranger can play.**
