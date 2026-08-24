@@ -155,11 +155,29 @@ public final class MatchHUDModel {
 
     public var winLabel: String { Terminology.winCall }
 
-    /// Exactly the states Draw is disabled in, read through the property that
-    /// already decides them. Restating the rule here is how the two answers
-    /// start to disagree. Like Draw, an unfinished board does not disable it —
-    /// ``claimWin()`` refuses and flashes instead.
-    public var isWinEnabled: Bool { isDrawEnabled }
+    /// Whether the win call is offered at all — `MatchHUD` shows the control
+    /// only when this is true, rather than showing a dead one.
+    ///
+    /// Not "the states Draw is disabled in". Calling the match is the opposite
+    /// question from taking a round: **Draw needs a pool, the win call needs an
+    /// empty one.** A player cannot be finished while there are still tiles to
+    /// come, so the two gates disagree on `poolIsExhausted` on purpose, and
+    /// deriving this from ``isDrawEnabled`` had it exactly backwards — the
+    /// control was live for the whole match and dead at the only moment it
+    /// could ever have been pressed.
+    ///
+    /// The board condition is here and not only in ``claimWin()`` because this
+    /// one is about *appearing*. Unlike Draw, there is no refusal worth
+    /// flashing: a player with an unfinished board and an empty pool is being
+    /// told to keep building, which the board already says by not being
+    /// finished. ``claimWin()`` still checks, so the gate and the action cannot
+    /// disagree if something calls it directly.
+    public var isWinEnabled: Bool {
+        !session.isMatchOver
+            && session.peerPresence == .present
+            && session.poolIsExhausted
+            && board.canDraw
+    }
 
     /// Calls the match, and moves the shell to the results it just produced —
     /// the same ending ``confirmResign()`` makes, from the other side.

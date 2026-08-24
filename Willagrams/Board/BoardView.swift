@@ -377,6 +377,7 @@ public struct BoardView: View {
             }
         } label: {
             Image(systemName: Self.recenterSymbol)
+                .font(.system(size: Self.recenterSymbolSize, weight: .regular))
         }
         .buttonStyle(.brandQuiet)
         .padding(DesignTokens.Space.m)
@@ -395,6 +396,7 @@ public struct BoardView: View {
 
     private static let recenterLabel = "Recenter"
     private static let recenterSymbol = "scope"
+    private static let recenterSymbolSize: CGFloat = 24
 }
 
 /// The drawn surface, animatable as one piece.
@@ -494,11 +496,73 @@ private struct BoardSurface: View, Animatable {
                     // sunk. The tile under the finger belongs on top of the
                     // ones it is passing over.
                     .zIndex(cell.state == .selected ? 1 : 0)
+                    // Tiles come out of the bag and go back into it. The
+                    // transition carries the tile from the bag corner to the
+                    // cell it landed in, so a draw reads as taking something
+                    // and a swap reads as putting one back and taking another
+                    // — the same motion in both directions, because it is the
+                    // same act.
+                    .transition(
+                        .modifier(
+                            active: FromBag(travel: 0, home: tilePoint, bag: Self.bagPoint),
+                            identity: FromBag(travel: 1, home: tilePoint, bag: Self.bagPoint)
+                        )
+                    )
                 }
             }
         }
+        // Keyed on which tiles are on the table, never on where they are. A
+        // drag changes coords and must not run this: the released tile already
+        // slides to its cell under `onEnded`'s own animation, and a second one
+        // over the top of it would fight. Only a draw, a swap or the opening
+        // deal changes this set.
+        .animation(
+            .easeOut(duration: DesignTokens.Motion.dealDuration),
+            value: Set(cells.compactMap { $0.tile?.id })
+        )
         .clipped()
     }
+
+    /// Where the bag sits, in the surface's own coordinates: the HUD pins it
+    /// to the top-leading corner, so this is that corner plus the inset it
+    /// carries. Not read from the HUD — the board renders with no HUD at all in
+    /// `BoardTests` and in the previews, and a tile still has to come from
+    /// somewhere.
+    private static let bagPoint = CGPoint(x: DesignTokens.Space.xl, y: DesignTokens.Space.xl)
+}
+
+/// The flight between the bag and a cell.
+///
+/// One modifier for both directions: SwiftUI runs it forwards on insertion and
+/// backwards on removal, so a tile drawn out of the bag and a tile swapped back
+/// into it travel the same arc rather than two that were tuned apart.
+private struct FromBag: ViewModifier, Animatable {
+
+    /// 0 is in the bag, 1 is on the table.
+    var travel: CGFloat
+    let home: CGPoint
+    let bag: CGPoint
+
+    nonisolated var animatableData: CGFloat {
+        get { travel }
+        set { travel = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .offset(
+                x: (bag.x - home.x) * (1 - travel),
+                y: (bag.y - home.y) * (1 - travel)
+            )
+            // Small in the bag, full size on the table. Not zero: a tile that
+            // scales from nothing reads as appearing rather than as arriving.
+            .scaleEffect(Self.inBagScale + (1 - Self.inBagScale) * travel)
+            // Faded only over the first half, so the tile is solid for most of
+            // the flight and the eye can follow it.
+            .opacity(Double(min(1, travel * 2)))
+    }
+
+    private static let inBagScale: CGFloat = 0.25
 }
 
 private extension BoardRender.TileState {

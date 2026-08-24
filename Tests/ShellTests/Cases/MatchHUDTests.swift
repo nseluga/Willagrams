@@ -288,14 +288,19 @@ struct MatchHUDTests {
 
     // MARK: - The win claim
 
-    /// The claim is gated on exactly what Draw is gated on, refuses through the
-    /// same counter, and — refused — leaves the player in the match.
+    /// The claim is refused through the same counter as Draw and — refused —
+    /// leaves the player in the match.
+    ///
+    /// It is NOT gated on what Draw is gated on. Draw needs a pool; the win
+    /// call needs an empty one. On an opening board the pool is full, so
+    /// `MatchHUD` does not offer the control at all — and `claimWin()` refuses
+    /// anyway, so a direct caller cannot get round the gate the view reads.
     @Test("A refused claim flashes the board and ends nothing")
     func refusedClaimChangesNoRoute() async throws {
         let (solo, _, shell, hud) = try await Self.hud()
 
         #expect(hud.winLabel == Terminology.winCall)
-        #expect(hud.isWinEnabled, "a spaced opening left the claim disabled")
+        #expect(hud.isWinEnabled == false, "the claim was offered while the pool was still full")
         #expect(hud.claimWin() == false)
         #expect(hud.completionAttempts == 1, "a refused claim explained nothing")
         #expect(hud.claimWin() == false)
@@ -327,6 +332,12 @@ struct MatchHUDTests {
         try wiring.board.place(loose.tile, at: Coord(row: joined.row, col: joined.col + 1))
         wiring.model.seed(wiring.board, against: dictionary)
 
+        // A finished board is only half of it: nobody is done while there are
+        // still tiles to come. The host says the pool is out.
+        #expect(hud.isWinEnabled == false, "the claim was offered with tiles still in the pool")
+        try await host.send(.poolExhausted, delivery: .reliable)
+        try await SoloMatchTests.waitUntil("the pool to read as out") { session.poolIsExhausted }
+
         #expect(hud.isWinEnabled)
         #expect(hud.claimWin())
         #expect(hud.completionAttempts == 0, "an accepted claim flashed the board")
@@ -340,6 +351,22 @@ struct MatchHUDTests {
         #expect(shell.route == .results(winner: session.localPlayerID))
 
         session.leave()
+    }
+
+    /// The win call must not be derived from Draw's gate again.
+    ///
+    /// `isWinEnabled` was `{ isDrawEnabled }`, which reads as tidy and is
+    /// exactly backwards: Draw is disabled once the pool is out, so the control
+    /// for ending the match was live for the whole match and dead at the one
+    /// moment it could ever have been pressed. Every model test above passed
+    /// throughout.
+    @Test("The win call is not derived from the Draw gate")
+    func theWinGateIsItsOwnQuestion() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(!text.contains("isWinEnabled: Bool { isDrawEnabled }"),
+                "the win call reads Draw's gate again — it is live when it cannot work")
+        #expect(text.contains("&& session.poolIsExhausted"),
+                "the win call no longer waits for the pool to run out")
     }
 
     /// The disable that made the flash unreachable. `MatchHUD` gates both
