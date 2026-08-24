@@ -389,6 +389,47 @@ struct MatchHUDTests {
                 "isDrawPressable gates on the board again — the refusal press is swallowed")
     }
 
+    /// A rule the host refuses for the whole match is not a disabled control.
+    ///
+    /// `swapEnabled: false` means every swap request is refused from the deal
+    /// to the last tile, so a Swap button gated on ``isSwapEnabled`` alone would
+    /// sit greyed out the entire game, inviting a press that can never land.
+    @Test("Swap is not offered at all when the rules turn it off")
+    func swapIsAbsentWhenTheRulesSayNoSwap() async throws {
+        let dictionary = EnableWordList(words: ["GO"])
+        var noSwap = MatchOptions.standard
+        noSwap.swapEnabled = false
+
+        let (_, off) = try await MatchBoardTests.guest(
+            handSize: 2, dictionary: dictionary, options: noSwap
+        )
+        let shell = ShellModel(route: .match(Self.setup))
+        let hidden = MatchHUDModel(
+            shell: shell, session: off, board: MatchBoard(session: off, dictionary: dictionary)
+        )
+        #expect(hidden.isSwapOffered == false, "the control is offered under rules that refuse it")
+
+        // The standard rules still have a swap in them, so this is a rule being
+        // read and not a control that went away.
+        let (_, on) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let shown = MatchHUDModel(
+            shell: ShellModel(route: .match(Self.setup)),
+            session: on, board: MatchBoard(session: on, dictionary: dictionary)
+        )
+        #expect(shown.isSwapOffered, "the standard rules lost their swap")
+    }
+
+    /// The gate is read in a SwiftUI file the macOS test target cannot compile,
+    /// so the button's absence is checked against the bytes on disk. `if`, not
+    /// `.disabled`: a greyed-out control for a rule that never changes is the
+    /// thing this exists to prevent.
+    @Test("The HUD omits the Swap button rather than disabling it")
+    func theHUDOmitsSwapUnderNoSwapRules() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
+        #expect(text.contains("if hud.isSwapOffered {"),
+                "the Swap button is not gated on the rules — it renders under rules that refuse it")
+    }
+
     /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so
     /// the wire is checked against the bytes on disk.
     @Test("MatchView hands the refusal count to the board")

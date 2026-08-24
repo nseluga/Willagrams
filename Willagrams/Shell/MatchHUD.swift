@@ -48,9 +48,14 @@ struct MatchHUD: View {
                     .buttonStyle(.brandPrimary)
                     .disabled(!hud.isDrawPressable)
 
-                Button(hud.swapLabel) { if let tile = hud.swappableTile { hud.swap(tile) } }
-                    .buttonStyle(.brandQuiet)
-                    .disabled(!hud.isSwapEnabled)
+                // Absent, not disabled, when the rules have no swap in them —
+                // see `MatchHUDModel.isSwapOffered`. A control that cannot work
+                // for the whole match is not part of this game's furniture.
+                if hud.isSwapOffered {
+                    Button(hud.swapLabel) { if let tile = hud.swappableTile { hud.swap(tile) } }
+                        .buttonStyle(.brandQuiet)
+                        .disabled(!hud.isSwapEnabled)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 
@@ -78,27 +83,37 @@ struct MatchHUD: View {
     /// visible word is a layout decision, not a rename.
     private var pool: some View {
         ZStack {
-            Image(systemName: Self.poolSymbol)
-                .font(.system(size: Self.poolSymbolSize, weight: .regular))
+            PoolBag()
                 // The app's own ink, not a system grey: the bag is a piece of
                 // the table, the same colour as the Draw button beneath it.
-                .foregroundStyle(DesignTokens.Palette.ink)
+                .fill(DesignTokens.Palette.ink)
+
+            // The drawstring, in the cream the tiles are. Drawn rather than
+            // cut out of the sack so it reads as a cord tied round the neck
+            // instead of a gap in the silhouette.
+            Capsule(style: .continuous)
+                .fill(DesignTokens.Palette.onInk)
+                .frame(width: Self.bagSize * 0.30, height: Self.bagSize * 0.055)
+                .offset(y: -Self.bagSize * 0.19)
+
+            // The count in the tile face, not in a mono label: it is a number
+            // of tiles, and every other number of tiles in this app is set in
+            // that face. Sat on the body, below the neck the drawstring takes.
             Text(hud.poolValue)
-                .font(DesignTokens.Typography.monoLabel)
+                .font(DesignTokens.Typography.tileLetter)
                 .foregroundStyle(DesignTokens.Palette.onInk)
-                // The bag's drawstring takes the top third of the glyph, so
-                // centring the number in the frame puts it on the neck rather
-                // than on the body.
                 .offset(y: Self.poolValueDrop)
         }
+        .frame(width: Self.bagSize, height: Self.bagSize)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(hud.poolLabel)
         .accessibilityValue(hud.poolValue)
     }
 
-    private static let poolSymbol = "bag.fill"
-    private static let poolSymbolSize: CGFloat = 56
-    private static let poolValueDrop: CGFloat = 8
+    /// Half again the old glyph. The bag is the only readout on the board and
+    /// it sits in a corner by itself, so it can afford the room.
+    private static let bagSize: CGFloat = 96
+    private static let poolValueDrop: CGFloat = Self.bagSize * 0.19
 
     /// Two presses, never one: arming shows the confirmation, and only the
     /// confirmation resigns. Both branches render state the model already
@@ -116,5 +131,70 @@ struct MatchHUD: View {
                     .buttonStyle(.brandText)
             }
         }
+    }
+}
+
+/// The tile bag, drawn rather than borrowed.
+///
+/// SF Symbols has no cartoon sack in it. `bag.fill` is a shopping tote with
+/// square shoulders and straight handles — a piece of another app's furniture,
+/// sitting on a table made of fat rounded cream tiles. This is the same two
+/// curves the tiles are: a cinched neck over a heavy round body, with the mouth
+/// domed open so it reads as something you reach into.
+///
+/// Normalised to its rect throughout, so the one size constant on `MatchHUD`
+/// is the only number that sets how big it draws.
+private struct PoolBag: Shape {
+
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        let cx = rect.midX
+        /// The three measures that make a sack rather than a bottle: a mouth
+        /// that flares OUT at the top because the cloth is gathered, a cinch
+        /// under it, and a belly wider than either.
+        let mouth = w * 0.26
+        let cinch = w * 0.20
+        let side = w * 0.45
+        let mouthTop = h * 0.07
+        let cinchY = h * 0.31
+        let widestY = h * 0.68
+        let bottom = h * 0.97
+
+        var path = Path()
+        path.move(to: CGPoint(x: cx - mouth, y: mouthTop))
+        // The mouth, domed rather than flat — a straight cut reads as a jar.
+        path.addQuadCurve(
+            to: CGPoint(x: cx + mouth, y: mouthTop),
+            control: CGPoint(x: cx, y: mouthTop - h * 0.055)
+        )
+        // In to the cinch, then out to the belly, round the base and back up.
+        // The belly controls sit outside the curve so the sides bulge instead
+        // of running straight down to the bottom.
+        path.addQuadCurve(
+            to: CGPoint(x: cx + cinch, y: cinchY),
+            control: CGPoint(x: cx + mouth * 0.92, y: cinchY - h * 0.06)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx + side, y: widestY),
+            control: CGPoint(x: cx + side * 1.02, y: cinchY + (widestY - cinchY) * 0.30)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx, y: bottom),
+            control: CGPoint(x: cx + side * 0.95, y: bottom)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx - side, y: widestY),
+            control: CGPoint(x: cx - side * 0.95, y: bottom)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx - cinch, y: cinchY),
+            control: CGPoint(x: cx - side * 1.02, y: cinchY + (widestY - cinchY) * 0.30)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx - mouth, y: mouthTop),
+            control: CGPoint(x: cx - mouth * 0.92, y: cinchY - h * 0.06)
+        )
+        path.closeSubpath()
+        return path
     }
 }

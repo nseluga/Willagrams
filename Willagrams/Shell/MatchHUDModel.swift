@@ -230,6 +230,15 @@ public final class MatchHUDModel {
         return board.board.tile(at: coord)
     }
 
+    /// Whether Swap is part of this game at all.
+    ///
+    /// Not the same question as ``isSwapEnabled``, which asks whether a press
+    /// would land right now. This asks whether the rules ever allow one: the
+    /// host refuses every swap for the whole match when `swapEnabled` is off,
+    /// so a control gated on it would sit greyed out from the deal to the last
+    /// tile, inviting a press that can never work. `MatchHUD` does not draw it.
+    public var isSwapOffered: Bool { session.options.swapEnabled }
+
     public var isSwapEnabled: Bool {
         swappableTile != nil
             && !session.isMatchOver

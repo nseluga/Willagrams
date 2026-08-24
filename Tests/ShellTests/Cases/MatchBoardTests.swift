@@ -67,7 +67,7 @@ struct MatchBoardTests {
     /// `.grant` off the wire, which is the only way a test can choose the
     /// letters and the only way to produce a tile held behind the Draw button.
     static func guest(
-        handSize: Int, dictionary: some WordList
+        handSize: Int, dictionary: some WordList, options: MatchOptions = .standard
     ) async throws -> (host: FakeTransport, session: MatchSession) {
         let hostID = PlayerID(rawValue: "aaa")
         let guestID = PlayerID(rawValue: "zzz")
@@ -85,7 +85,7 @@ struct MatchBoardTests {
                 seed: 7,
                 startingHandSize: handSize,
                 countdownSeconds: 0,
-                options: .standard
+                options: options
             , roster: [hostID, guestID].sorted { $0.rawValue < $1.rawValue }),
             delivery: .reliable
         )
