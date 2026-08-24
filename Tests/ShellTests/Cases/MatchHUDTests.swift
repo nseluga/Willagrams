@@ -510,4 +510,31 @@ struct MatchHUDTests {
         )
         solo.leave()
     }
+
+    @Test("A tile peeled to you is takeable while your own board is unfinished")
+    func anOwedTileIsTakeableWithAnUnfinishedBoard() async throws {
+        let (solo, wiring, _, hud) = try await Self.hud()
+        defer { solo.leave() }
+
+        let before = solo.session.state.hand.count
+        #expect(wiring.canDraw == false, "an opening deal is not a finished board")
+
+        // The far end presses Draw. A peel takes one tile per player at once,
+        // so this device is handed a tile it never asked for and cannot refuse.
+        #expect(solo.bot.session.draw())
+        try await SoloMatchTests.waitUntil("a tile waiting behind Draw") {
+            solo.session.hasPendingDraw
+        }
+        #expect(hud.drawLabel.contains("1"), "nothing on screen says a tile is waiting")
+
+        // The press that reopens the board. Gated on `canDraw` this was refused,
+        // and refused permanently: `place` throws `.drawPending` while a tile
+        // waits, so the board could never become finished, so the tile could
+        // never be taken. The pool went down and no letter ever arrived.
+        #expect(hud.isDrawEnabled)
+        #expect(hud.draw())
+        #expect(solo.session.hasPendingDraw == false)
+        #expect(solo.session.state.hand.count == before + 1)
+        #expect(hud.drawLabel == Terminology.draw)
+    }
 }

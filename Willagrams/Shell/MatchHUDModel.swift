@@ -116,7 +116,18 @@ public final class MatchHUDModel {
 
     // MARK: - Draw
 
-    public var drawLabel: String { Terminology.draw }
+    /// Local chrome around a protected term, the way ``unknownValue`` is: the
+    /// count is not game vocabulary, and `Terminology` is the IP fence.
+    ///
+    /// A peel takes one tile per player at once, so the opponent's press is
+    /// what puts a tile behind this button — nothing the player did. With the
+    /// label unchanged there is no sign anywhere on screen that a tile is
+    /// waiting, and the board is frozen until it is taken: the game reads as
+    /// broken at exactly the moment it is waiting on one press.
+    public var drawLabel: String {
+        guard owesATile else { return Terminology.draw }
+        return "\(Terminology.draw) (\(session.pendingDrawTiles.count))"
+    }
 
     /// Whether Draw is *tappable*. NOT the same question as whether it does
     /// anything — see ``draw()``.
@@ -174,7 +185,15 @@ public final class MatchHUDModel {
     @discardableResult
     public func draw() -> Bool {
         resignArmed = false
-        guard isDrawEnabled, board.canDraw, session.draw() else { return refuse() }
+        // No `board.canDraw` here. ``isDrawEnabled`` already carries it, and
+        // carries it in the one form that is correct: `owesATile || canDraw`.
+        // Repeating the bare clause on this line re-imposed it on the owed-tile
+        // branch too, and that branch exists precisely because the board is
+        // unfinished — `place` throws `.drawPending` while a tile waits, so the
+        // player could not finish the board, and could not take the tile that
+        // would let them. The pool went down by two, no letter arrived, and
+        // nothing could ever move again.
+        guard isDrawEnabled, session.draw() else { return refuse() }
         return true
     }
 
