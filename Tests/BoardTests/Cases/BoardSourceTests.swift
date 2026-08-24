@@ -98,6 +98,23 @@ final class BoardSourceTests: XCTestCase {
         )
     }
 
+    // MARK: - Guardrail: the opening is framed, not left in the corner
+
+    /// `BoardLayout.opening` lays the block from `Coord(0, 0)`, so a default
+    /// camera opens on the corner of the lattice. `BoardHarness` framed the
+    /// block before handing the camera over; `ShellRootView` replaced that root
+    /// and did not carry the framing across, and for four days the app opened
+    /// every match on an almost-empty table with the rack in the top-left.
+    /// Nothing failed, because no test drives a camera through a real viewport.
+    func testBoardViewFramesTheOpening() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
+        XCTAssertTrue(text.contains("hasFramed"), "BoardView no longer frames the opening block")
+        XCTAssertTrue(
+            text.contains("camera = BoardGesture.recentered(camera, over: board, in: rect)"),
+            "the framing does not go through the one recenter implementation"
+        )
+    }
+
     // MARK: - Guardrail: the draw is never driven by iterating placements
 
     func testNeitherFileIteratesPlacements() throws {

@@ -30,6 +30,11 @@ public struct BoardView: View {
     /// cancelled (a system edge swipe, backgrounding, the view going away).
     /// Reusing what a cancelled gesture left behind would leak both the grab
     /// decision and the pan origin into the next, unrelated touch.
+    /// Whether the opening block has been framed yet. Once per appearance: a
+    /// second framing would yank the camera out from under a player who has
+    /// panned somewhere on purpose.
+    @State private var hasFramed = false
+
     @State private var drag: BoardGesture.Drag?
 
     /// The pinch midpoint at touch-down and the camera as it stood there.
@@ -194,6 +199,30 @@ public struct BoardView: View {
                 // there is no async hop to schedule. Once per appearance, never
                 // per body evaluation and never per gesture frame.
                 .onAppear { model.seed(board, against: dictionary) }
+                // Frames the opening on the viewport it actually got.
+                //
+                // `BoardLayout.opening` lays the block from `Coord(0, 0)`, so a
+                // default camera opens on the corner of the lattice: the rack
+                // sits in the top-left with three-quarters of the screen empty
+                // and the player has to press recenter before the first move.
+                // The throwaway board root this view was written against
+                // framed the block before handing the camera over, and
+                // `ShellRootView` replaced that root without carrying the
+                // framing across, so it has been missing since `eb39f9e`.
+                //
+                // Keyed on the board, not on appearance: the tiles are dealt
+                // when the countdown ends, which is after this view is on
+                // screen and can be after the first layout. `hasFramed` is what
+                // keeps it to once — the same call the recenter control makes,
+                // so there is no second implementation of fitting the block to
+                // the viewport.
+                .task(id: board) {
+                    guard !hasFramed, rect.width > 0, board != Board() else { return }
+                    hasFramed = true
+                    withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
+                        camera = BoardGesture.recentered(camera, over: board, in: rect)
+                    }
+                }
                 // The flash, and the only place tint is turned on. `.task(id:)`
                 // rather than a stored timer: a second press cancels the first
                 // flash's sleep and starts a fresh one, so repeated refusals
