@@ -251,6 +251,41 @@ What the comp shows and this repo deliberately does not build is written up in
 `docs/design/README.md`, screen by screen, with the reason for each. A lane
 picking up one of those screens should read that file first.
 
+## Recorded crossing — the in-match HUD round, 2026-08-24
+
+**Not a lane. Same branch as the visual pass above, and unlike it, this one DID
+change what the app does.** Recorded here because it crossed
+`Willagrams/Shell/**`, `Willagrams/Board/**` and `Willagrams/Style/**`.
+
+The comp has no in-match screen — see `docs/design/README.md` — so this layout
+was decided in session, from what the screen was actually doing wrong.
+
+  - **The HUD is three corners, not one bar.** The bag top-leading, Draw and
+    Swap bottom-leading, Resign bottom-trailing. `BoardView`'s recenter control
+    moved to top-trailing to make room. One bar had put the pool readout inside
+    the run of pressable things and left the whole top of the table empty.
+  - **The pool is a bag with its count on it**, in `Palette.ink`.
+    `Terminology.pool` is still the accessibility label — the frozen name is
+    what VoiceOver reads, and dropping the visible word is a layout decision,
+    not a rename.
+  - **The win call waits for an empty pool.** `isWinEnabled` was
+    `{ isDrawEnabled }`, which is backwards: Draw is disabled once the pool runs
+    out, so the control for ending the match was live all game and dead at the
+    one moment it could ever have been pressed. It now needs an exhausted pool
+    AND a finished board, and `MatchHUD` shows it only then. Guardrail against
+    deriving it from Draw's gate again.
+  - **Tiles travel between the bag and the table.** One `FromBag` modifier, run
+    forwards on arrival and backwards on removal, so a draw and a swap are the
+    same motion in both directions. Keyed on which tiles are on the table, never
+    on where they are — a drag must not run it. This is the deal animation
+    `progress/board-lane-plan.md` cut as out of scope; it is in scope now that
+    there is a shell to start a real match.
+  - **`Typography.button` 17 -> 20**, the one number all three button styles
+    read, so every button in the app is bigger.
+
+Test counts moved, as they should for a functional change: ShellTests 101 ->
+102, BoardTests 249 -> 251.
+
 ## Deferred out of this round — decided, not forgotten
 
 Named during the round-zero interview and deliberately cut. No lane owns them;
