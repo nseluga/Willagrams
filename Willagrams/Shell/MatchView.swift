@@ -63,7 +63,11 @@ struct MatchView: View {
                 dictionary: dictionary,
                 // The refusal count, not a flag: `BoardView` keys its flash on
                 // the value changing, so a second refusal flashes again.
-                completionAttempts: hud.completionAttempts
+                completionAttempts: hud.completionAttempts,
+                // The delivery, handed straight through: which tiles just came
+                // out of the bag, and a token that changes each time some did.
+                arriving: matchBoard.arrivingTileIDs,
+                arrivalToken: matchBoard.arrivalToken
             )
             .overlay { MatchHUD(hud: hud) }
             // The measured size, handed over as-is. In `.onChange`, never in

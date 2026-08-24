@@ -88,13 +88,29 @@ public struct BoardView: View {
     /// are why not.
     private let completionAttempts: Int
 
+    /// The tiles that just arrived, and a token that changes with each delivery.
+    ///
+    /// Both come straight from the owner. This view decides nothing about them:
+    /// it flies exactly the ids it is given in from ``arrivalCorner``, and the
+    /// token is what restarts the flight — two deliveries of the same tiles
+    /// would compare equal and restart nothing.
+    private let arriving: Set<UUID>
+    private let arrivalToken: Int
+
+    /// How far along the flight is: 0 at the bag, 1 in the cell. Held here
+    /// because it is drawing, not state — nothing outside this view can see it
+    /// and no decision turns on it.
+    @State private var arrivalProgress: CGFloat = 1
+
     public init(
         board: Binding<Board>,
         model: Binding<BoardModel>,
         camera: BoardCamera,
         dictionary: any WordList,
         inputLocked: Bool = false,
-        completionAttempts: Int = 0
+        completionAttempts: Int = 0,
+        arriving: Set<UUID> = [],
+        arrivalToken: Int = 0
     ) {
         _board = board
         // The owner builds the model with the CHEAP init, not the seeding one:
@@ -108,6 +124,8 @@ public struct BoardView: View {
         self.dictionary = dictionary
         self.inputLocked = inputLocked
         self.completionAttempts = completionAttempts
+        self.arriving = arriving
+        self.arrivalToken = arrivalToken
     }
 
     public var body: some View {
@@ -121,7 +139,9 @@ public struct BoardView: View {
                 selected: model.selected,
                 dragTranslation: model.dragTranslation,
                 invalid: model.flashedInvalid,
-                offsets: model.tileOffsets
+                offsets: model.tileOffsets,
+                arriving: arriving,
+                arrivalProgress: arrivalProgress
             )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
@@ -206,8 +226,27 @@ public struct BoardView: View {
                     try? await Task.sleep(for: .seconds(Self.flashHold))
                     withAnimation(.easeOut(duration: Self.flashFade)) { model.clearFlash() }
                 }
+                // The flight. Same shape as the flash above and for the same
+                // reason: a second delivery landing mid-flight cancels the
+                // first and starts over rather than leaving tiles stranded.
+                //
+                // The frame between the two writes is not optional — set to 0
+                // and animated to 1 in one turn, SwiftUI sees only the final
+                // value and there is no flight to interpolate.
+                .task(id: arrivalToken) {
+                    guard arrivalToken > 0, !arriving.isEmpty else { return }
+                    arrivalProgress = 0
+                    try? await Task.sleep(for: .seconds(Self.flightPause))
+                    withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
+                        arrivalProgress = 1
+                    }
+                }
         }
     }
+
+    /// One frame at 60Hz, spent letting the tiles exist at the bag before they
+    /// are told to fly out of it.
+    private static let flightPause: Double = 1.0 / 60
 
     // MARK: - Gestures
 
@@ -392,6 +431,23 @@ private struct BoardSurface: View, Animatable {
     /// session and read straight through to `BoardRender` — this view decides
     /// no position of its own.
     let offsets: [UUID: CGSize]
+    /// The tiles still flying in from the bag, and how far along they are.
+    /// Untouched by `animatableData` below: the flight is animated by the
+    /// owner writing `arrivalProgress`, not by interpolating this view.
+    let arriving: Set<UUID>
+    let arrivalProgress: CGFloat
+
+    /// Where an arrival comes from, in the surface's own coordinates: the
+    /// corner the HUD draws the bag in. One constant rather than a plumbed
+    /// point — the bag is pinned to that corner, so a second answer here could
+    /// only ever disagree with it.
+    static let arrivalCorner = CGPoint(
+        x: DesignTokens.Space.m,
+        y: DesignTokens.Space.m
+    )
+
+    /// How small a tile is at the mouth of the bag.
+    static let arrivalScale: CGFloat = 0.3
 
     /// Pan width, pan height, zoom — the whole of what an animation between
     /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
@@ -458,7 +514,15 @@ private struct BoardSurface: View, Animatable {
                     // would cut. The colour is the only decision here, and it
                     // is read from published state, never computed.
                     .colorMultiply(cell.isInvalid ? DesignTokens.Palette.danger : .white)
-                    .offset(x: tilePoint.x, y: tilePoint.y)
+                    // 0 for every tile that is not flying, which is every tile
+                    // for all but `dealDuration` after a delivery — so this is
+                    // the identity transform in the ordinary case rather than a
+                    // branch that would rebuild the subtree as a flight ends.
+                    .scaleEffect(1 - (1 - Self.arrivalScale) * flight(cell.tile?.id))
+                    .offset(
+                        x: tilePoint.x + (Self.arrivalCorner.x - tilePoint.x) * flight(cell.tile?.id),
+                        y: tilePoint.y + (Self.arrivalCorner.y - tilePoint.y) * flight(cell.tile?.id)
+                    )
                     // `cells` arrives in `visibleCoords` row-major order, so a
                     // tile dragged down or right would otherwise draw BEHIND
                     // every tile at a greater row and the lift would read as
@@ -469,6 +533,13 @@ private struct BoardSurface: View, Animatable {
             }
         }
         .clipped()
+    }
+
+    /// How far this tile still is from home: 1 at the bag, 0 once it has landed
+    /// or if it never flew.
+    private func flight(_ id: UUID?) -> CGFloat {
+        guard let id, arriving.contains(id) else { return 0 }
+        return 1 - arrivalProgress
     }
 }
 

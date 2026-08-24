@@ -261,4 +261,34 @@ struct MatchBoardTests {
 
         session.leave()
     }
+
+    // MARK: - The player's own moves
+
+    /// A tile the PLAYER moved reaches the session's board.
+    ///
+    /// `sync()` carries arrivals one way and nothing carried a drag back, so
+    /// the session kept the layout the opening deal landed in for the whole
+    /// match — and `claimWin` broadcast that stale board as the winning grid.
+    /// Writing `board` is exactly what `BoardView`'s binding does when a drag
+    /// commits.
+    @Test("A player's own move reaches the session's board")
+    func aPlayerMoveReachesTheSession() async throws {
+        let (solo, wiring) = try await Self.wired()
+        let moving = try #require(wiring.board.placementList.first)
+        // The opening leaves a gap between tiles, so this cell is free.
+        let target = Coord(row: moving.coord.row, col: moving.coord.col + 1)
+        #expect(wiring.board.tile(at: target) == nil)
+
+        var next = wiring.board
+        _ = next.remove(at: moving.coord)
+        try next.place(moving.tile, at: target)
+        wiring.board = next
+
+        try await SoloMatchTests.waitUntil("the session to follow the finger") {
+            solo.session.state.board.tile(at: target)?.id == moving.tile.id
+        }
+        #expect(solo.session.state.board.tile(at: moving.coord) == nil)
+        _ = Self.custody(wiring, solo.session, "after a player move")
+        solo.leave()
+    }
 }

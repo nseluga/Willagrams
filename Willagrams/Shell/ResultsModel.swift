@@ -60,8 +60,8 @@ public final class ResultsModel {
     /// match (`SoloMatch`/`MatchSession`) strongly and call `leave()`, so
     /// releasing the closure releases the match.
     ///
-    /// A closure rather than the match itself: `SoloMatch` is `#if DEBUG` and
-    /// the end screen ships.
+    /// A closure rather than the match itself: this screen knows only that
+    /// something has to be torn down, never what kind of match it was.
     ///
     /// Returns whether it actually tore anything down. A stale screen's closure
     /// declines — the match it was built for has already been replaced — and
@@ -74,8 +74,8 @@ public final class ResultsModel {
     /// Starts the next match. Spent on the way out, exactly like ``teardown``,
     /// so a double tap cannot build two.
     ///
-    /// A closure for the same reason: the thing that owns and rebuilds a solo
-    /// match is `#if DEBUG` and this screen ships.
+    /// A closure for the same reason: what rebuilds a match is `ShellModel`,
+    /// and this screen holds no opinion about how it does it.
     private var startRematch: (() -> Void)?
 
     public init(

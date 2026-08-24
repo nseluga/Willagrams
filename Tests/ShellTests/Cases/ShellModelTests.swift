@@ -100,4 +100,32 @@ struct ShellModelTests {
         onResults.matchEnded(winner: PlayerID(rawValue: "late"))
         #expect(onResults.route == .results(winner: nil))
     }
+
+    /// The opponent's ending, which nothing used to handle.
+    ///
+    /// `MatchHUDModel` calls `matchEnded` on this player's own Win and Resign
+    /// only. When the bot won, the session knew and the route did not move: every
+    /// control was disabled by `isMatchOver` and Resign was refused by a locked
+    /// session, so the match screen had no way out of it at all.
+    @Test("An opponent's win ends the match on this device too")
+    func anOpponentWinReachesTheResults() async throws {
+        let shell = ShellModel(
+            dictionary: { SoloMatchTests.EveryWordIsReal() },
+            sleepFor: { _ in },
+            seedSource: { 99 }
+        )
+        #expect(shell.startSoloPractice())
+        let run = try #require(shell.run)
+        try await SoloMatchTests.waitUntil("the match route") {
+            if case .match = shell.route { return true }
+            return false
+        }
+
+        run.match.bot.session.claimWin()
+
+        try await SoloMatchTests.waitUntil("the results route") {
+            shell.route == .results(winner: SoloMatch.peerPlayerID)
+        }
+        shell.returnToMenu()
+    }
 }

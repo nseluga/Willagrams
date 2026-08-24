@@ -61,6 +61,16 @@ public final class BotMatch {
     /// this, with ``botPlayerID`` as the peer.
     public let humanTransport: LocalMatchLink
 
+    /// The bot's end of the same link, the one ``session`` was built on.
+    ///
+    /// Exposed so a caller can send *as the bot* without a second link: a test
+    /// proving what the human's session does with a `.win` or a `.resign` has to
+    /// put one on the wire, and minting a fresh pair to do it would be testing a
+    /// transport this match never used. Nothing here consumes it — the session
+    /// already iterates both of its streams, and the transport permits exactly
+    /// one consumer of each.
+    public let botTransport: LocalMatchLink
+
     /// The bot's session. Dealt to and driven by the human's start, and — until
     /// the next item — silent.
     public let session: MatchSession
@@ -79,6 +89,7 @@ public final class BotMatch {
     ) {
         let (human, bot) = LocalMatchLink.pair(Self.humanPlayerID, Self.botPlayerID)
         self.humanTransport = human
+        self.botTransport = bot
         self.dictionary = dictionary
         self.session = MatchSession(
             transport: bot,

@@ -324,6 +324,12 @@ struct MatchHUDTests {
         try wiring.board.place(loose.tile, at: Coord(row: joined.row, col: joined.col + 1))
         wiring.model.seed(wiring.board, against: dictionary)
 
+        // The call is only offered once there is nothing left to take. The host
+        // says so on the wire; there is no local way to reach that latch.
+        #expect(hud.isWinEnabled == false, "the call was offered with tiles still in the pool")
+        try await host.send(.poolExhausted, delivery: .reliable)
+        try await SoloMatchTests.waitUntil("the pool to run out") { session.poolIsExhausted }
+
         #expect(hud.isWinEnabled)
         #expect(hud.claimWin())
         #expect(hud.completionAttempts == 0, "an accepted claim flashed the board")
@@ -371,5 +377,33 @@ struct MatchHUDTests {
                 #expect(!text.contains(banned), "\(name) reaches for \(banned)")
             }
         }
+    }
+
+    // MARK: - A refusal the player can see
+
+    /// Draw stays pressable while the board is merely unfinished, so the press
+    /// lands, the refusal is counted, and the board flashes what is wrong.
+    ///
+    /// Disabling it on `isDrawEnabled` made SwiftUI swallow the press: nothing
+    /// counted, nothing flashed, and the opening deal — every player's first
+    /// screen — read as a broken button.
+    @Test("Draw stays pressable on an unfinished board, and says why")
+    func drawIsPressableOnAnUnfinishedBoardAndRefusesVisibly() async throws {
+        let (solo, wiring, _, hud) = try await Self.hud()
+
+        #expect(wiring.model.canDraw == false, "the opening deal was already complete")
+        #expect(hud.isDrawPressable, "a disabled button swallows the press")
+        #expect(hud.isDrawEnabled == false)
+
+        #expect(hud.draw() == false)
+        #expect(hud.completionAttempts == 1, "the refusal was not counted")
+
+        // What `BoardView` runs when that count changes.
+        wiring.model.attemptedCompletion()
+        #expect(
+            wiring.model.flashedInvalid.isEmpty == false,
+            "a refused draw lit nothing, which is the silence this fixes"
+        )
+        solo.leave()
     }
 }

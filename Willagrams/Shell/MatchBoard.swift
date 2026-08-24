@@ -73,6 +73,19 @@ public final class MatchBoard {
     /// The surface's own state, including the validation the HUD reads.
     public var model = BoardModel()
 
+    /// The tiles the last delivery landed, and a count of deliveries.
+    ///
+    /// Published so the surface can fly an arrival in from the bag rather than
+    /// having it blink into existence. The token is what a view keys its
+    /// animation on: two deliveries can land the same *number* of tiles, and a
+    /// set that happens to compare equal would restart nothing.
+    ///
+    /// A set of ids and nothing else. Where they go is `BoardLayout`'s answer
+    /// and where they come from is the HUD's corner — neither is decided here,
+    /// and this file still computes no geometry.
+    public private(set) var arrivingTileIDs: Set<UUID> = []
+    public private(set) var arrivalToken = 0
+
     /// Where the surface is looking, and how much of it there is. Read by a
     /// delivery to land tiles the player can see; owned by the view, which is
     /// the only thing that knows either. Never used to compute a coordinate
@@ -97,6 +110,7 @@ public final class MatchBoard {
         self.dictionary = dictionary
         sync()
         track()
+        trackBoard()
     }
 
     /// Lays whatever the session has handed this device and not yet had laid.
@@ -144,6 +158,79 @@ public final class MatchBoard {
         model = next
         laidTileIDs.formUnion(arriving)
         hasOpened = true
+        arrivingTileIDs = arriving
+        arrivalToken &+= 1
+    }
+
+    /// Puts the player's own moves onto the session's board.
+    ///
+    /// ``sync()`` carries tiles one way — session to surface, on arrival — and
+    /// nothing carried them back. A drag writes `board` through the view's
+    /// binding and the session never heard about it, so `session.state.board`
+    /// kept the scattered layout the opening deal landed in for the whole
+    /// match. Everything reading the session's board read a board the player
+    /// never built: `claimWin` broadcast it and recorded it as the winning
+    /// grid, and ``MatchHUDModel/swap(_:)`` looked up a coord in it.
+    ///
+    /// Recalls come first, all of them, and only then the placements: a tile
+    /// moving into a cell that another moved tile is still leaving would be
+    /// refused if the two were applied one at a time. A refusal part way puts
+    /// every recall back, for the same reason ``sync()`` rolls its own mirror
+    /// back — half a move is a lost tile.
+    ///
+    /// The three states the session refuses writes in are the same three
+    /// ``sync()`` checks, so a move made while a tile waits behind Draw simply
+    /// stays on the surface until the press that lifts the block re-arms this.
+    public func mirror() {
+        guard !session.hasPendingDraw,
+              !session.isMatchOver,
+              session.peerPresence == .present
+        else { return }
+
+        let theirs = Dictionary(
+            session.state.board.placementList.map { ($0.tile.id, $0.coord) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let moved = board.placementList.filter { theirs[$0.tile.id] != $0.coord }
+        guard !moved.isEmpty else { return }
+
+        var recalled: [(tile: Tile, coord: Coord)] = []
+        func rollBack() {
+            for undo in recalled { try? session.place(tileID: undo.tile.id, at: undo.coord) }
+        }
+
+        for placement in moved {
+            guard let from = theirs[placement.tile.id] else { continue }
+            do {
+                try session.recall(from: from)
+                recalled.append((placement.tile, from))
+            } catch {
+                return rollBack()
+            }
+        }
+        for placement in moved {
+            do {
+                try session.place(tileID: placement.tile.id, at: placement.coord)
+            } catch {
+                return rollBack()
+            }
+        }
+    }
+
+    /// Re-runs ``mirror()`` on every change to the surface, once per change.
+    ///
+    /// Cannot loop with ``track()``: a mirror writes only the session, and the
+    /// sync it wakes finds no unlaid arrival and writes no board.
+    private func trackBoard() {
+        withObservationTracking {
+            _ = board.placements
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.mirror()
+                self.trackBoard()
+            }
+        }
     }
 
     /// Re-runs ``sync()`` on every change to the session, once per change.

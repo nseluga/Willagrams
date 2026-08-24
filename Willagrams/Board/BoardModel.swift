@@ -115,7 +115,7 @@ public struct BoardModel: Sendable {
     /// on the `true` and ignores the `false` gets the flash for free.
     @discardableResult
     public mutating func attemptedCompletion() -> Bool {
-        flashedInvalid = canDraw ? [] : invalidCoords
+        flashedInvalid = canDraw ? [] : blockedCoords
         return canDraw
     }
 
@@ -142,6 +142,44 @@ public struct BoardModel: Sendable {
     /// hole in it is not a board anyone may draw from.
     public var invalidCoords: Set<Coord> {
         (liftedRuns ?? invalidRuns).reduce(into: Set()) { $0.formUnion($1) }
+    }
+
+    /// Every tile standing between the board and a Draw.
+    ///
+    /// A bad word is not the only way to be unfinished, and on the opening deal
+    /// it is not even the common one: twenty-one tiles scattered across the
+    /// surface spell nothing wrong — they spell nothing at all. `isComplete`
+    /// refuses them on `clusterCount`, and a flash of `invalidCoords` alone
+    /// would light up nothing whatsoever, which is exactly the silence a player
+    /// reads as a broken button.
+    ///
+    /// So both reasons flash: the words that are wrong, and the tiles that are
+    /// not yet part of the one grid the rest of them form.
+    public var blockedCoords: Set<Coord> { invalidCoords.union(strandedCoords) }
+
+    /// The tiles outside the biggest cluster, as of the last commit. Stored
+    /// beside `invalidRuns` and written in the same one place, so the two halves
+    /// of ``blockedCoords`` can never answer about different boards.
+    private var strandedCoords: Set<Coord> = []
+
+    /// Which tiles are not part of the main grid.
+    ///
+    /// The biggest cluster is taken to be the board the player is building and
+    /// everything else is what they have left to place. On the opening deal
+    /// every cluster is one tile, so an arbitrary one survives and the other
+    /// twenty flash — which reads correctly: nearly everything is still loose.
+    ///
+    /// A board of one tile is a single cluster with no bad word and still not a
+    /// grid, so the whole of it flashes. That is `isComplete`'s `tileCount`
+    /// floor, seen from the other side.
+    private static func stranded(_ board: Board) -> Set<Coord> {
+        let all = Set(board.placementList.map(\.coord))
+        guard all.count >= 2 else { return all }
+        let clusters = board.clusters
+        guard clusters.count > 1,
+              let main = clusters.max(by: { $0.count < $1.count })
+        else { return [] }
+        return all.subtracting(main)
     }
 
     /// Where each tile sits INSIDE its cell, in cell units, keyed by tile id.
@@ -381,6 +419,7 @@ public struct BoardModel: Sendable {
     private mutating func revalidate(_ board: Board, against dictionary: some WordList) {
         validation = board.validate(against: dictionary)
         invalidRuns = Self.runs(of: validation)
+        strandedCoords = Self.stranded(board)
         // Any commit ends a flash: it was an answer about the board as it stood
         // when the player claimed to be done, and that board no longer exists.
         flashedInvalid = []

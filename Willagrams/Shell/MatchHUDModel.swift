@@ -123,13 +123,37 @@ public final class MatchHUDModel {
     ///
     /// The board's own published answer, AND-ed with the three states in which
     /// drawing is meaningless. The shell never checks a board or a word itself.
-    /// A tile already waiting behind Draw does *not* disable it: taking that
-    /// tile is what reopens the board.
+    ///
+    /// A tile already waiting behind Draw does *not* disable it, and does not
+    /// have to wait for a finished board either: taking an owed tile is not a
+    /// completion claim, it is how the board reopens. Gating it on `canDraw`
+    /// would strand a player whose board is unfinished — the only press that
+    /// unfreezes them is the one they are not allowed to make.
     public var isDrawEnabled: Bool {
-        board.canDraw
-            && !session.isMatchOver
+        isDrawPressable && (owesATile || board.canDraw)
+    }
+
+    /// Whether the opponent's draw has left this device a tile to take. Named
+    /// once here because three properties below turn on it.
+    public var owesATile: Bool { session.hasPendingDraw }
+
+    /// Whether Draw and Win may be *pressed*, which is not whether they can
+    /// succeed — everything except the board itself.
+    ///
+    /// The split is the whole point. A button disabled outright swallows the
+    /// press, so nothing counts a refusal and nothing flashes, and a player
+    /// whose board is merely unfinished — which is every player on every
+    /// opening deal — presses a dead control and is told nothing at all. When
+    /// the board is the problem the board can say so, so the press must land:
+    /// see ``draw()`` and ``MatchHUDModel/blockedCoords`` on the surface.
+    ///
+    /// These three states are different. There is nothing on the board to light
+    /// up for a finished match, a departed opponent or an empty pool, so those
+    /// really do disable the control.
+    public var isDrawPressable: Bool {
+        !session.isMatchOver
             && session.peerPresence == .present
-            && !session.poolIsExhausted
+            && (owesATile || !session.poolIsExhausted)
     }
 
     /// Takes a round. Refuses outright when ``isDrawEnabled`` is false, so the
@@ -151,10 +175,23 @@ public final class MatchHUDModel {
 
     public var winLabel: String { Terminology.winCall }
 
-    /// Exactly the states Draw is disabled in, read through the property that
-    /// already decides them. Restating the rule here is how the two answers
-    /// start to disagree.
-    public var isWinEnabled: Bool { isDrawEnabled }
+    /// Whether calling the match is on offer at all.
+    ///
+    /// Four things at once, and the pool is the one that is not a Draw rule: a
+    /// player calls the game when there is nothing left to take and their own
+    /// board is one complete grid. Offering the call while the pool still has
+    /// tiles in it would be offering a press that ends a game nobody has run out
+    /// of — so the control is not merely disabled then, it is not drawn.
+    ///
+    /// The other three are the Draw rules, minus the pool clause `isDrawPressable`
+    /// folds in — which is false in exactly the state this must be true in.
+    public var isWinEnabled: Bool {
+        !session.isMatchOver
+            && session.peerPresence == .present
+            && !owesATile
+            && session.poolIsExhausted
+            && board.canDraw
+    }
 
     /// Calls the match, and moves the shell to the results it just produced —
     /// the same ending ``confirmResign()`` makes, from the other side.

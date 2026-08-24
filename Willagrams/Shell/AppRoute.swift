@@ -10,17 +10,29 @@ import WillagramsRules
 /// Everything a match needs to be stood up, carried by the routes that lead to
 /// it so the countdown and the match it becomes cannot disagree about the seed.
 ///
-/// ponytail: exactly the three arguments `MatchSession.startMatch` takes — no
-/// speculative fields. Add more when a screen actually renders one.
+/// Exactly the four arguments `MatchSession.startMatch` takes. `options` was the
+/// speculative one until a screen rendered it — ``SoloSetup`` does now, so a
+/// setup carries the rules the match will actually be played under rather than
+/// leaving `startMatch` to assume the standard ones.
+///
+/// It defaults to `.standard`, so every caller that predates the screen still
+/// describes the match it always described.
 public struct MatchSetup: Hashable, Sendable {
     public let seed: UInt64
     public let startingHandSize: Int
     public let countdownSeconds: Int
+    public let options: MatchOptions
 
-    public init(seed: UInt64, startingHandSize: Int, countdownSeconds: Int) {
+    public init(
+        seed: UInt64,
+        startingHandSize: Int,
+        countdownSeconds: Int,
+        options: MatchOptions = .standard
+    ) {
         self.seed = seed
         self.startingHandSize = startingHandSize
         self.countdownSeconds = countdownSeconds
+        self.options = options
     }
 }
 
@@ -30,6 +42,11 @@ public struct MatchSetup: Hashable, Sendable {
 public enum AppRoute: Hashable, Sendable {
     /// The root screen. Renders nothing match-specific, so it carries nothing.
     case menu
+    /// The screen that configures solo practice: who plays, and under what
+    /// rules. Reachable from the menu, and the only way into a solo match. It
+    /// carries nothing — the settings live on ``ShellModel/soloSetup``, which
+    /// outlives the screen so a player's choices survive a visit to the menu.
+    case soloSetup
     /// The rules screen. Reachable from the menu and back again, never from
     /// inside a match, and it renders nothing match-specific — so, like `menu`,
     /// it carries nothing.
