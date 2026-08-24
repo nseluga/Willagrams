@@ -537,4 +537,57 @@ struct MatchHUDTests {
         #expect(solo.session.state.hand.count == before + 1)
         #expect(hud.drawLabel == Terminology.draw)
     }
+
+    // MARK: - One press, one tile, laid on the press
+
+    @Test("Each press lays its own tile while the rest of the queue still waits")
+    func everyPressLaysItsTileWithMoreStillQueued() async throws {
+        let dictionary = EveryWordIsReal()
+        let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        wiring.viewport = MatchBoardTests.viewport
+        let shell = ShellModel(route: .match(Self.setup))
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+
+        try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
+        try await SoloMatchTests.waitUntil("the opening on the board") {
+            wiring.board.placementList.count == 2
+        }
+
+        // Three peels this device never asked for. It now owes three presses,
+        // and the queue is what makes this different from the single-tile case
+        // already covered: with tiles still behind it, a press used to take a
+        // letter it could not lay, and the whole queue then landed at once on
+        // the last press.
+        let owed = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
+        try await MatchBoardTests.grant(owed, from: host)
+        try await SoloMatchTests.waitUntil("three tiles waiting behind Draw") {
+            session.pendingDrawTiles.count == 3
+        }
+
+        for (pressed, tile) in owed.enumerated() {
+            #expect(hud.isDrawEnabled, "press \(pressed + 1) was not offered")
+            #expect(hud.draw(), "press \(pressed + 1) did nothing")
+
+            // The tile this press took is on the board before the next press,
+            // and it is on the board because the wiring laid it — no test calls
+            // `sync()` here.
+            try await SoloMatchTests.waitUntil("press \(pressed + 1)'s tile on the board") {
+                wiring.board.placementList.count == 3 + pressed
+            }
+            #expect(
+                wiring.board.placementList.contains { $0.tile.id == tile.id },
+                "press \(pressed + 1) took a tile it never laid"
+            )
+            #expect(session.state.hand.isEmpty, "press \(pressed + 1) left its tile in the rack")
+            // One per press, never the queue.
+            #expect(session.pendingDrawTiles.count == owed.count - pressed - 1)
+            _ = MatchBoardTests.custody(wiring, session, "after press \(pressed + 1)")
+        }
+
+        #expect(session.hasPendingDraw == false)
+        #expect(wiring.board.placementList.count == 5)
+
+        session.leave()
+    }
 }
