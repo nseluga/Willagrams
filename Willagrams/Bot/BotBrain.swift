@@ -114,12 +114,28 @@ public actor BotBrain {
     /// re-checked those would ask again on every tick of that window.
     private var pendingSwap: WireMark?
 
+    /// How the brain waits between ticks. The same seam ``BotMatch`` and
+    /// `MatchSession` already take, for the same reason: a test that had to
+    /// sleep real milliseconds could not play a whole match, and a test that
+    /// could not see the sleeps could not count the ticks a match costs.
+    private let sleepFor: @Sendable (Duration) async -> Void
+
     /// The shipping initialiser: the session and the word list both come from
     /// one ``BotMatch``, so they cannot be handed disagreeing dictionaries.
-    public init(match: BotMatch, difficulty: BotDifficulty = .medium) {
+    public init(
+        match: BotMatch,
+        difficulty: BotDifficulty = .medium,
+        sleepFor: @escaping @Sendable (Duration) async -> Void = BotBrain.realSleep
+    ) {
         self.session = match.session
         self.baseDictionary = match.dictionary
         self.difficulty = difficulty
+        self.sleepFor = sleepFor
+    }
+
+    /// The only sleep a shipping build ever uses.
+    public static let realSleep: @Sendable (Duration) async -> Void = {
+        try? await Task.sleep(for: $0)
     }
 
     /// Splits the session from the word list, which only a test wants: it is
@@ -130,11 +146,13 @@ public actor BotBrain {
     public init(
         session: MatchSession,
         dictionary: any WordList,
-        difficulty: BotDifficulty = .medium
+        difficulty: BotDifficulty = .medium,
+        sleepFor: @escaping @Sendable (Duration) async -> Void = BotBrain.realSleep
     ) {
         self.session = session
         self.baseDictionary = dictionary
         self.difficulty = difficulty
+        self.sleepFor = sleepFor
     }
 
     // MARK: - Driving
@@ -171,7 +189,7 @@ public actor BotBrain {
                 drawMark = nil
                 await attempt(snapshot)
             }
-            try? await Task.sleep(for: difficulty.thinkDelay)
+            await sleepFor(difficulty.thinkDelay)
         }
     }
 
@@ -587,14 +605,160 @@ public actor BotBrain {
         var board = board
         var pool = tiles
         var moves: [Move] = []
-        while budget > 0, let move = step(on: board, from: pool, dictionary: dictionary, budget: &budget) {
-            guard let index = pool.firstIndex(where: { $0.id == move.tileID }),
-                  (try? board.place(pool[index], at: move.coord)) != nil
+        while budget > 0 {
+            // On an empty board, ask for a whole word before asking for a tile.
+            // Any single opening tile is legal, so `step` will happily open with
+            // the Q and then find that nothing in the rack can legally touch
+            // it — the tile is stranded by the very move that placed it, and
+            // greedy has already spent the letters that would have saved it.
+            // Opening with `QAT` is the only way that tile ever goes down, and
+            // an empty board is the one moment the whole rack is still in hand.
+            if board.placements.isEmpty,
+               let opening = stepWord(on: board, from: pool, dictionary: dictionary, budget: &budget) {
+                board = opening.board
+                moves += opening.moves
+                for move in opening.moves { pool.removeAll { $0.id == move.tileID } }
+                continue
+            }
+            if let move = step(on: board, from: pool, dictionary: dictionary, budget: &budget) {
+                guard let index = pool.firstIndex(where: { $0.id == move.tileID }),
+                      (try? board.place(pool[index], at: move.coord)) != nil
+                else { break }
+                pool.remove(at: index)
+                moves.append(move)
+                continue
+            }
+            // Nothing fits one tile at a time. That is not the same as nothing
+            // fitting: a tile whose every two-letter run is unwordable — a Q
+            // with no QI in the list — can only ever go down beside its own
+            // neighbours, so ask for a whole word before giving up.
+            guard let laid = stepWord(on: board, from: pool, dictionary: dictionary, budget: &budget)
             else { break }
-            pool.remove(at: index)
-            moves.append(move)
+            board = laid.board
+            moves += laid.moves
+            for move in laid.moves { pool.removeAll { $0.id == move.tileID } }
         }
         return (board, moves)
+    }
+
+    /// Lays a whole word at once, for when no single tile can be laid at all.
+    ///
+    /// ``step(on:from:dictionary:budget:)`` keeps a placement only if the board
+    /// is legal *after that one tile*, so it can only ever grow words whose
+    /// every prefix is itself a word. ENABLE has no two-letter Q word, so a
+    /// lone Q is unplaceable one tile at a time however the board is
+    /// rearranged — pulling tiles off changes what is around it, never that
+    /// `QA` is not a word. The tile has to go down with its neighbours or not
+    /// at all, and that is what this does: place the whole run, validate once.
+    ///
+    /// Only ``fill(_:with:dictionary:budget:)`` reaches this, and only rungs 1
+    /// and 2 reach `fill`, so it is exactly the rearranging rungs that gain it
+    /// and an easy bot that does not.
+    ///
+    /// ponytail: rack-only words of at most ``maxWordTiles`` letters laid into
+    /// empty cells. It will not read a letter already on the board as part of
+    /// its word, so it finds `QAT` in hand but not the `Z` in front of an
+    /// existing `OO`. Both widenings want a word list that can be enumerated
+    /// rather than only asked, which is the frozen engine's call, not this
+    /// lane's.
+    private static func stepWord(
+        on board: Board,
+        from tiles: [Tile],
+        dictionary: some WordList,
+        budget: inout Int
+    ) -> (board: Board, moves: [Move])? {
+        // Capped separately from the rung's budget: `fill` asks for a word only
+        // when it is already stuck, and a search that ate the whole repair
+        // allowance on its first stuck tile would leave nothing for the seeds
+        // still untried.
+        let cap = min(budget, wordNodeBudget)
+        guard cap > 0 else { return nil }
+        var spend = cap
+        let laid = layWord(on: board, from: tiles, dictionary: dictionary, budget: &spend)
+        budget -= cap - spend
+        return laid
+    }
+
+    /// ``stepWord(on:from:dictionary:budget:)`` inside its own budget.
+    private static func layWord(
+        on board: Board,
+        from tiles: [Tile],
+        dictionary: some WordList,
+        budget: inout Int
+    ) -> (board: Board, moves: [Move])? {
+        // Distinct letters, counted: two tiles with the same letter spell the
+        // same word, so only the count matters until a tile is actually chosen.
+        var byLetter: [Character: [Tile]] = [:]
+        for tile in tiles { byLetter[tile.letter, default: []].append(tile) }
+        // Sorted, like every other walk over a dictionary in this file, or the
+        // bot builds a different board each run from the same rack.
+        let letters = byLetter.keys.sorted()
+        // Fewer than two tiles spells nothing, and an empty pool has no first
+        // letter to ask about.
+        guard tiles.count > 1 else { return nil }
+
+        var words: [[Character]] = []
+        func grow(_ prefix: [Character], _ left: [Character: Int]) {
+            if prefix.count >= 2, dictionary.contains(String(prefix)) { words.append(prefix) }
+            guard prefix.count < maxWordTiles else { return }
+            for letter in letters where left[letter, default: 0] > 0 {
+                var next = left
+                next[letter] = next[letter]! - 1
+                grow(prefix + [letter], next)
+            }
+        }
+        grow([], byLetter.mapValues(\.count))
+        guard !words.isEmpty else { return nil }
+
+        // Longest first, because a rung that rearranges the board should pay
+        // for itself in tiles; then rarest letter first, because the tile that
+        // got us stuck is the one worth spending the budget on.
+        words.sort { lhs, rhs in
+            let l = (-lhs.count, lhs.map(frequency).min() ?? 0, String(lhs))
+            let r = (-rhs.count, rhs.map(frequency).min() ?? 0, String(rhs))
+            return l < r
+        }
+
+        let anchors = frontier(of: board)
+        for word in words {
+            for (rowStep, colStep) in [(0, 1), (1, 0)] {
+                // One start cell can be reached from several anchors at several
+                // offsets, and every one of those is the same board.
+                var tried: Set<Coord> = []
+                for anchor in anchors {
+                    for offset in 0..<word.count {
+                        guard budget > 0 else { return nil }
+                        let start = Coord(
+                            row: anchor.row - rowStep * offset,
+                            col: anchor.col - colStep * offset
+                        )
+                        guard tried.insert(start).inserted else { continue }
+                        var trial = board
+                        var moves: [Move] = []
+                        var used: Set<UUID> = []
+                        var fits = true
+                        for (index, letter) in word.enumerated() {
+                            let coord = Coord(
+                                row: start.row + rowStep * index,
+                                col: start.col + colStep * index
+                            )
+                            guard trial.tile(at: coord) == nil,
+                                  let tile = byLetter[letter]?.first(where: { !used.contains($0.id) }),
+                                  (try? trial.place(tile, at: coord)) != nil
+                            else { fits = false; break }
+                            used.insert(tile.id)
+                            moves.append(Move(tileID: tile.id, coord: coord))
+                        }
+                        guard fits else { continue }
+                        budget -= 1
+                        if trial.validate(against: dictionary).invalidWords.isEmpty {
+                            return (trial, moves)
+                        }
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Rung 1: local repair
@@ -852,6 +1016,16 @@ public actor BotBrain {
 
     /// Greedy passes a rebuild may make, each starting from a different tile.
     static let rebuildRestarts = 3
+
+    /// Whole-board validations one whole-word search may spend. Small on
+    /// purpose: it runs only when the rung is already stuck, and it must not
+    /// eat the allowance the seeds still untried are counting on.
+    static let wordNodeBudget = 600
+
+    /// The longest word the whole-word search will try to lay from the rack.
+    /// Three covers the tiles that strand a bot — `QAT`, `ZAS`, `XIS` — while
+    /// keeping candidate generation at distinct-letters-cubed.
+    static let maxWordTiles = 3
 
     /// How many fruitless stall-floor grants a bot below depth 3 must spend
     /// before the floor will hand a tile back for it. Tuned against

@@ -22,8 +22,15 @@ public struct BotDifficulty: Sendable, Equatable {
     ///
     /// `0` extend · `1` repair · `2` rebuild · `3` swap. All four exist. Rung
     /// 3 is the only one that speaks to the host rather than moving tiles, and
-    /// it is reached from this number alone — the stall floor below cannot
-    /// grant it, so a bot at depth 2 or less never asks to swap.
+    /// it is the only rung this number is not the last word on: a bot below
+    /// depth 3 never *searches* for a swap, but ``stallFloorTicks`` will hand a
+    /// tile back on its behalf once it is demonstrably stuck.
+    ///
+    /// Rungs 1 and 2 are also where the bot may lay a whole word at once
+    /// rather than one tile at a time, which is what makes a tile with no
+    /// two-letter word — a `Q`, with no `QI` in the list — placeable at all.
+    /// A depth-0 bot cannot do that and will sit on such a tile until the
+    /// floor swaps it away.
     public var ladderDepth: Int
 
     /// The pause between placements. The bot is not slow — it is *paced*, so a
@@ -35,8 +42,11 @@ public struct BotDifficulty: Sendable, Equatable {
 
     /// How many consecutive ticks the brain may place nothing before the stall
     /// floor fires — granting it one attempt at one rung above ``ladderDepth``,
-    /// clamped to rung 2, after which the count resets. A bot already at rung 2
-    /// gains nothing from the floor: rung 3 is deliberately out of its reach.
+    /// clamped to rung 2, after which the count resets. Once enough of those
+    /// grants have come back with nothing changed, the floor takes its own
+    /// separate door to rung 3 and hands a tile back. That is an escape, never
+    /// a promotion: the bot gains the swap and none of the searching rungs
+    /// above its own, so being stuck never makes it a better player.
     ///
     /// This is the floor under every difficulty: an easy bot is allowed to be
     /// bad, not to sit on an unplayable rack for the rest of the match, which
@@ -56,7 +66,8 @@ public struct BotDifficulty: Sendable, Equatable {
         stallFloorTicks: 12
     )
 
-    /// Extend, repair and rebuild, at a conversational pace.
+    /// Extend, repair and rebuild — so it rearranges the board and lays whole
+    /// words — at a conversational pace.
     public static let medium = BotDifficulty(
         ladderDepth: 2,
         thinkDelay: .milliseconds(600),
@@ -64,7 +75,8 @@ public struct BotDifficulty: Sendable, Equatable {
     )
 
     /// The whole ladder, swap included, and quick to give up on a bad rack.
-    /// The only preset that ever hands a tile back.
+    /// The only preset that hands a tile back *by choice*; the others reach it
+    /// only through the stall floor, and only once nothing else is left.
     public static let hard = BotDifficulty(
         ladderDepth: 3,
         thinkDelay: .milliseconds(250),
