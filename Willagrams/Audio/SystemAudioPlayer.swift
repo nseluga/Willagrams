@@ -51,6 +51,12 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
 
     private let lock = NSLock()
     private var muted: Bool
+    /// `lock` only. Bumped when the app backgrounds, which strands every sound
+    /// already scheduled but not yet fired — a delayed cue that comes due while
+    /// the app is away belongs to a moment the player is no longer watching.
+    private var generation = 0
+
+    private var backgroundObserver: NSObjectProtocol?
 
     /// - Parameters:
     ///   - bundle: where the assets are looked up. Injected so a test can
@@ -74,6 +80,28 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
         // Decoding on the caller's thread would stall launch. The queue is
         // serial, so this lands before any `play` dispatched after init.
         queue.async { [weak self] in self?.preload() }
+
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in self?.bumpGeneration() }
+    }
+
+    deinit {
+        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+    }
+
+    private func bumpGeneration() {
+        lock.lock()
+        defer { lock.unlock() }
+        generation &+= 1
+    }
+
+    private var currentGeneration: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation
     }
 
     public var isMuted: Bool {
@@ -88,17 +116,54 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
         self.muted = muted
     }
 
+    /// How long after the call a cue's *sound* is due, in seconds.
+    ///
+    /// The board animates a snap over `Motion.snapDuration` and a deal over
+    /// `Motion.dealDuration`, so a sound fired at gesture-release plays while
+    /// the tile is still travelling. These are read from `DesignTokens`, never
+    /// copied: retuning the animation there retunes the sound with it.
+    ///
+    /// Exhaustive on purpose — a tenth `SoundEffect` is a compile error here
+    /// rather than a cue that silently defaults to immediate.
+    private static func delay(for effect: SoundEffect) -> TimeInterval {
+        switch effect {
+        case .tilePlace, .tileRecall: return DesignTokens.Motion.snapDuration
+        case .draw: return DesignTokens.Motion.dealDuration
+        case .swap, .invalid, .countdownTick, .win, .loss, .menuTap: return 0
+        }
+    }
+
     public func play(_ effect: SoundEffect) {
         let cue = AudioCatalogue.cue(for: effect)
+        // The haptic still fires now, on the caller's thread. Only the sound is
+        // scheduled: the haptic belongs to the gesture the player just made,
+        // the sound belongs to the tile arriving at the end of the animation.
         if let haptic = cue.haptic { impact(haptic) }
         guard !isMuted else { return }
-        // Stamped on the caller's thread: `queue` is serial, so a cue enqueued
-        // behind a cold preload would otherwise fire seconds after the haptic
+        // Computed on the caller's thread: `queue` is serial, so a cue enqueued
+        // behind a cold preload would otherwise fire seconds after the moment
         // that belongs to it.
+        //
+        // This is the cue's *intended* fire time, not the moment `play` was
+        // called — `emit` measures lateness against it, so a deliberate delay
+        // is never mistaken for a stalled queue (see `emit`).
         // Only a haptic-paired cue is worth dropping when late (see `emit`);
         // a sound-only cue has no second event to desync from, so it is stampless.
-        let requestedAt = cue.haptic == nil ? nil : DispatchTime.now()
-        queue.async { [weak self] in self?.emit(effect, volume: cue.volume, requestedAt: requestedAt) }
+        let delay = Self.delay(for: effect)
+        let dueAt = DispatchTime.now() + delay
+        let stamp = cue.haptic == nil ? nil : dueAt
+        let scheduledGeneration = currentGeneration
+        let work: @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            emit(effect, volume: cue.volume, dueAt: stamp, generation: scheduledGeneration)
+        }
+        // Zero-delay cues keep the plain `async` enqueue, and with it the
+        // ordering behind `preload` that the comment in `init` relies on.
+        if delay > 0 {
+            queue.asyncAfter(deadline: dueAt, execute: work)
+        } else {
+            queue.async(execute: work)
+        }
     }
 
     /// Fires regardless of mute: the mute control is sound-only, and iOS
@@ -126,14 +191,25 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
 
     /// A *haptic-paired* cue this late is worse than no cue: its haptic already
     /// fired on the caller's thread, so playing now buzzes then clicks as two
-    /// events. A sound-only cue (`requestedAt == nil`) is never dropped — late
-    /// is unnoticeable, silent is a bug.
+    /// events. A sound-only cue (`dueAt == nil`) is never dropped — late is
+    /// unnoticeable, silent is a bug.
+    ///
+    /// Measured from when the cue was *due*, not from when `play` was called:
+    /// a cue with a `delay(for:)` is deliberately later than its haptic, and
+    /// measuring from the call would drop `draw` every single time.
     private static let staleAfterNanos: UInt64 = 200_000_000
 
-    private func emit(_ effect: SoundEffect, volume: Float, requestedAt: DispatchTime?) {
-        if let requestedAt {
-            guard DispatchTime.now().uptimeNanoseconds &- requestedAt.uptimeNanoseconds
-                    < Self.staleAfterNanos else { return }
+    private func emit(_ effect: SoundEffect, volume: Float, dueAt: DispatchTime?, generation: Int) {
+        // The app backgrounded between the schedule and now; this sound belongs
+        // to a moment nobody is looking at any more.
+        guard generation == currentGeneration else { return }
+        if let dueAt {
+            let now = DispatchTime.now().uptimeNanoseconds
+            let due = dueAt.uptimeNanoseconds
+            // `asyncAfter` may fire a hair early, and `&-` on unsigned nanos
+            // would turn that into a huge "lateness". Not-yet-due is never stale.
+            let lateBy = now > due ? now - due : 0
+            guard lateBy < Self.staleAfterNanos else { return }
         }
         // No asset on disk is the normal case until the audio files land.
         guard let players = voices[effect], !players.isEmpty else { return }

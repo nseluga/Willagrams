@@ -153,7 +153,7 @@ settles the three scope questions this lane would otherwise re-open.
     - Changing `Motion.snapDuration` in `DesignTokens.swift` changes when the sound plays, with no edit under `Willagrams/Audio/**` — the token is the single source
     - `grep -rn '0\.16\|0\.45' Willagrams/Audio/` returns no timing literal
     - `swift test --package-path Tests/AudioTests` passes
-  status: not started
+  status: done
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
 
