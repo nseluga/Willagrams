@@ -5,10 +5,10 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** in progress — every item above the autonomous-run stop marker is done
-- **Next:** human review at the stop marker, then the two open questions under "Not yet specified" (what the nine effects sound like; the countdown tick's cadence)
+- **Status:** all items above the autonomous-run stop marker are done — run shut down
+- **Next:** human review of the `caution: true` SystemAudioPlayer item, then merge; after that the two open questions under "Not yet specified" (what the nine effects sound like; the countdown tick's cadence)
 - **Blockers:** none
-- **Last updated:** 2026-08-25 15:05
+- **Last updated:** 2026-08-25 15:20 — full-suite regression check (every `Tests/*` package plus `WillagramsRulesTests`) passed with zero failures: WillagramsRules 53/53, AudioTests 19/19, BoardTests 0/0, BotTests 68/68, MatchTests 125/125, OnlineTests 26/26, SettingsTests 36/36, ShellTests 125/125, StyleTests 30/30
 
 ## Round 2 — sound and haptics
 
