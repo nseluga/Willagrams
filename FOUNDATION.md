@@ -310,3 +310,83 @@ discover it:
         twenty singular-peer assumptions, a behaviour change in the freeze rule,
         and a toolchain constraint on stored properties
   status: done
+
+## Amendment — cut the RLS recursion (landed 2026-08-24)
+
+**Recorded after the fact.** `supabase/migrations/**` is `protected:` and MAP's
+guardrail says later migrations land through a `/foundation` amendment. This one
+landed as a Reviewer fix during the schema-verification crossing, so the entry
+is written here to keep the amendment log the record of the schema rather than
+leaving `MAP_PROGRESS.md` as the only place it appears.
+
+Nothing in the frozen shape moves. `0001_init.sql` above states the policies
+semantically — "`matches` selectable by its host or any row in `match_players`",
+"`match_players` selectable by any member of the same match" — and this
+amendment preserves both readings exactly. No table, column, constraint or row
+type changes, so `BackendContracts.swift` and every lane building on it are
+untouched.
+
+- task: Break the policy recursion that made every match unreadable
+  done when:
+    - `supabase/migrations/0002_participant_lookup.sql` declares
+      `public.is_match_participant(target uuid) returns boolean`, `language sql`,
+      `stable`, `security definer`, with `set search_path = public, pg_temp`,
+      answering only whether `auth.uid()` hosts or has joined that match
+    - execute is revoked from `public` and granted to `authenticated`
+    - `matches_select_participants` is recreated as
+      `using (auth.uid() = host_id or public.is_match_participant(matches.id))` —
+      the host test stays inline so a host still reads their own match if the
+      function is ever revoked
+    - `match_players_select_same_match` is recreated as
+      `using (public.is_match_participant(match_players.match_id))`
+    - `supabase/tests/rls_behavior.sql` passes all 21 assertions against the live
+      project, and both SQL fixtures run twice in either order leaving `public`
+      clean
+  guardrails:
+    - this is the **only** `security definer` function in the schema. The
+      `0001_init.sql` guardrail forbidding one stands for every other case; this
+      is the amendment that opens it, narrowly, for one boolean about the caller
+    - a definer function that resolves names through the caller's `search_path`
+      is how a definer function becomes a hole — the pin is not optional
+  risk: **this was not a hypothetical.** As written in `0001`, each policy asked
+        the participation question directly and the question is circular, so
+        Postgres answered `infinite recursion detected in policy for relation
+        "match_players"` and refused the read outright — no player could open a
+        match at all, host included. `schema_invariants.sql` passed on the broken
+        schema, because RLS was on and every table carried a policy, and both are
+        true of a policy that can never return. Existence is not behaviour
+  difficulty: low to write, and it took a behaviour fixture to find
+  status: done
+
+## Decided — Sign in with Apple is postponed, 2026-08-25
+
+**Nate's call.** The paid Apple Developer membership is not being taken out this
+round, so `com.apple.developer.applesignin` cannot be added to
+`Willagrams.entitlements` and no real Apple sign-in can be built or tested.
+
+This is a **postponement, not a contract change.** `BackendClient` keeps
+`signInWithApple(idToken:nonce:)` as its only route to a session, and
+`FakeBackend` implements it end to end. Nothing in the protocol, the row types,
+or the schema moves.
+
+What it means for each remaining lane, stated here so no lane discovers it:
+
+- **`online`** is not blocked. Every call below the session — profiles,
+  friendships, match creation, join, the realtime transport — is reachable with
+  a session obtained any way, and the whole lane is testable against
+  `FakeBackend` plus the live project's SQL fixtures. The one item it may not
+  finish is the concrete `signInWithApple` on the real client: it may be written
+  against the SDK, but it cannot be run. That item sits **below the stop marker**.
+- **`account`** keeps its profile page, display-name editing and stats, all of
+  which need only a user id. Its Sign in with Apple **screen** sits below the
+  stop marker: the button and its nonce plumbing can be built, the flow cannot
+  be exercised on a device.
+- **`friends`** is unaffected. It reads the current user from `account` and the
+  friend tables from `online`, and neither needs the entitlement.
+- **`launch`** cannot close. App Store submission needs the membership, so the
+  store items stay parked until it is taken out. This is the lane the
+  postponement actually stops.
+
+`Willagrams.entitlements` therefore stays empty this round, and its comment
+already says why. Adding the key is a one-line Reviewer edit the day the
+membership is active — not an amendment, because this entry is the amendment.

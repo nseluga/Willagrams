@@ -394,6 +394,48 @@ feature: it is switching the shell from `SoloMatch`/`FakeTransport` to
 it. It crosses `Willagrams/Shell/**` and `Willagrams/Bot/**`, so it is an
 amendment or a round-2 `shell` item, not something a visual pass may touch.
 
+## Decided — what the `audio` lane is and is not, 2026-08-25
+
+Three things about the audio seam were discovered when the lane opened, and all
+three would otherwise be found again by whoever runs it.
+
+**The seam has zero call sites, and that is not this lane's problem.** Nothing
+outside `Willagrams/Audio/` references `AudioPlayer`, `SoundEffect` or
+`HapticStrength`, despite `AudioPlayer.swift`'s own header saying the shell
+would wire them first. It didn't. That work crosses `Willagrams/Shell/**`,
+`Willagrams/Match/**` and `Willagrams/Board/**`, and **`shell` already carries
+the edge** — its `depends on:` line ends `audio (playback seam — sequenced)`.
+So the call sites are a **shell round 3** item, not an audio amendment. The
+audio lane ships a working player that nothing calls yet, and that is the
+design, not a gap.
+
+**Mute is sound only. Haptics are not muted, and this is correct.** Two
+independent haptics stacks exist: `AudioPlayer.impact` in this seam, and
+`BoardHaptics` / `BoardHapticEvent` / `TileFeedback` in
+`Willagrams/Board/BoardDrag.swift` and `BoardFeedback.swift`, which fires UIKit
+generators directly and does not route through the seam. That looked like a
+contradiction — an app-level mute that leaves tile pickup buzzing — and it is
+not one. iOS governs haptics through its own System Haptics setting, and the
+silent switch does not mute them either; an in-app control that silenced them
+would be the odd behaviour, not the expected one. **No board amendment.**
+`TileFeedback` stays where it is and keeps firing directly.
+
+**The mute state is audio's; the mute control is not.** `audio` owns the muted
+flag and its persistence inside `Willagrams/Audio/**`. The toggle the player
+actually taps lives in `Willagrams/Settings/**`, which is `settings`' `owns:`
+and merged. MAP lists "a mute control" in this lane's `area:` and that line
+overreaches — it was written before the settings lane closed. The control is a
+shell round 3 or settings amendment item. Audio ships the state it reads.
+
+**Build constraint, inside `owns:` and so not an amendment:**
+`Tests/AudioTests/AudioSrc` is a directory symlink to `Willagrams/Audio` and the
+package declares `.macOS(.v14)`, so **the whole directory compiles on the host**.
+One AVFoundation or UIKit import added there breaks
+`swift test --package-path Tests/AudioTests`. The lane splits a host-compilable
+routing layer from a `#if canImport(UIKit)` hardware file, or excludes the
+hardware file in `Package.swift`. `Tests/BoardTests` dodged this by never
+compiling `Willagrams/Board` at all.
+
 ## Tuning — the last step before launch
 
 There is no tuning lane; its `owns:` would intersect every other lane. Tuning
