@@ -130,7 +130,7 @@ settles the three scope questions this lane would otherwise re-open.
     - Constructing the player against a bundle holding **no** audio assets at all does not crash, does not throw, and leaves every `play` call a silent no-op — the assets do not exist yet and the app must ship before they do
     - `swift test --package-path Tests/AudioTests` still passes with the file present, proving the platform guard holds
   caution: true
-  status: not started
+  status: done
 
 - task: Wire the placement sound to the snap it belongs to — `tilePlace` must
     land **with** the tile, not ahead of it. `Style.Motion.snapDuration` is 0.16
