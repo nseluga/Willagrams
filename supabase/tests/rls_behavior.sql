@@ -86,37 +86,68 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- Seed. Ada and Grace are friends and share a match; Alan is a stranger to
 -- both and is the reader every "sees zero" assertion below uses.
+--
+-- The seed owns its rows outright: it clears them first, then inserts with no
+-- `on conflict do nothing`. That clause was here once and it is exactly the
+-- disease this file exists to name — `schema_invariants.sql` leaves a match
+-- holding the same invite code behind, the seed skipped without a word, and
+-- the first assertion failed on a foreign key instead of on a policy. A seed
+-- that does not land must say so, for the same reason a refused read must not
+-- look like an empty table.
+--
+-- `auth.users` is the one exception: those three rows are shared with
+-- `schema_invariants.sql`, and neither file may pull them out from under the
+-- other. They are inserted if absent and left alone if present.
 -- ---------------------------------------------------------------------------
 
 select pg_temp.acting_as_owner();
+
+-- Anything a previous run — of this file or its sibling — left behind. The
+-- three players are the fixture's own, so their rows go with them.
+delete from public.match_players
+ where player_id in ('11111111-1111-1111-1111-111111111111',
+                     '22222222-2222-2222-2222-222222222222',
+                     '33333333-3333-3333-3333-333333333333');
+delete from public.matches
+ where host_id in ('11111111-1111-1111-1111-111111111111',
+                   '22222222-2222-2222-2222-222222222222',
+                   '33333333-3333-3333-3333-333333333333')
+    or invite_code in ('RLSX01', 'RLSX02');
+delete from public.friendships
+ where requester_id in ('11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '33333333-3333-3333-3333-333333333333')
+    or addressee_id in ('11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '33333333-3333-3333-3333-333333333333');
+delete from public.profiles
+ where id in ('11111111-1111-1111-1111-111111111111',
+              '22222222-2222-2222-2222-222222222222',
+              '33333333-3333-3333-3333-333333333333');
 
 insert into auth.users (id) values
     ('11111111-1111-1111-1111-111111111111'),
     ('22222222-2222-2222-2222-222222222222'),
     ('33333333-3333-3333-3333-333333333333')
-on conflict do nothing;
+on conflict (id) do nothing;
 
 insert into public.profiles (id, display_name, friend_code) values
     ('11111111-1111-1111-1111-111111111111', 'Ada',   'AAAA1111'),
     ('22222222-2222-2222-2222-222222222222', 'Grace', 'BBBB2222'),
-    ('33333333-3333-3333-3333-333333333333', 'Alan',  'CCCC3333')
-on conflict do nothing;
+    ('33333333-3333-3333-3333-333333333333', 'Alan',  'CCCC3333');
 
 insert into public.friendships (requester_id, addressee_id, status, responded_at) values
     ('11111111-1111-1111-1111-111111111111',
-     '22222222-2222-2222-2222-222222222222', 'accepted', now())
-on conflict do nothing;
+     '22222222-2222-2222-2222-222222222222', 'accepted', now());
 
 insert into public.matches (id, host_id, invite_code, wire_version, seed, options, status, started_at)
 values ('99999999-9999-9999-9999-999999999999',
         '11111111-1111-1111-1111-111111111111',
-        'ABC123', 3, 7, '{}'::jsonb, 'playing', now())
-on conflict do nothing;
+        'RLSX01', 3, 7, '{}'::jsonb, 'playing', now());
 
 insert into public.match_players (match_id, player_id) values
     ('99999999-9999-9999-9999-999999999999', '11111111-1111-1111-1111-111111111111'),
-    ('99999999-9999-9999-9999-999999999999', '22222222-2222-2222-2222-222222222222')
-on conflict do nothing;
+    ('99999999-9999-9999-9999-999999999999', '22222222-2222-2222-2222-222222222222');
 
 -- ---------------------------------------------------------------------------
 -- profiles — public to anyone signed in, writable only by their owner.
@@ -204,7 +235,7 @@ select pg_temp.acting_as('33333333-3333-3333-3333-333333333333');
 -- Joining is what grants the read, so the invite code is the capability: a
 -- stranger who has not joined cannot see the row even knowing its code.
 select pg_temp.must_see(
-    $$select 1 from public.matches where invite_code = 'ABC123'$$, 0,
+    $$select 1 from public.matches where invite_code = 'RLSX01'$$, 0,
     'a stranger cannot read a match by its invite code');
 
 select pg_temp.must_touch(
@@ -215,7 +246,7 @@ select pg_temp.must_touch(
 select pg_temp.must_raise(
     $$insert into public.matches (host_id, invite_code, wire_version, seed, options, status)
       values ('11111111-1111-1111-1111-111111111111',
-              'ZZZ999', 3, 7, '{}'::jsonb, 'lobby')$$,
+              'RLSX02', 3, 7, '{}'::jsonb, 'lobby')$$,
     'a match hosted in somebody else''s name');
 
 -- ---------------------------------------------------------------------------
@@ -255,6 +286,22 @@ select pg_temp.must_touch(
       where player_id = '11111111-1111-1111-1111-111111111111'$$, 0,
     'a player cannot remove somebody else from a match');
 
+-- ---------------------------------------------------------------------------
+-- Leave the database as the fixture found it, so the next run of this file or
+-- of `schema_invariants.sql` starts from the same place this one did.
+-- ---------------------------------------------------------------------------
+
 select pg_temp.acting_as_owner();
+
+delete from public.match_players
+ where match_id = '99999999-9999-9999-9999-999999999999';
+delete from public.matches
+ where id = '99999999-9999-9999-9999-999999999999';
+delete from public.friendships
+ where requester_id = '11111111-1111-1111-1111-111111111111';
+delete from public.profiles
+ where id in ('11111111-1111-1111-1111-111111111111',
+              '22222222-2222-2222-2222-222222222222',
+              '33333333-3333-3333-3333-333333333333');
 
 select 'ALL RLS POLICIES BEHAVE' as result;
