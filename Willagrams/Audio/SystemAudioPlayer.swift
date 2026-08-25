@@ -92,7 +92,11 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
         let cue = AudioCatalogue.cue(for: effect)
         if let haptic = cue.haptic { impact(haptic) }
         guard !isMuted else { return }
-        queue.async { [weak self] in self?.emit(effect, volume: cue.volume) }
+        // Stamped on the caller's thread: `queue` is serial, so a cue enqueued
+        // behind a cold preload would otherwise fire seconds after the haptic
+        // that belongs to it.
+        let requestedAt = DispatchTime.now()
+        queue.async { [weak self] in self?.emit(effect, volume: cue.volume, requestedAt: requestedAt) }
     }
 
     /// Fires regardless of mute: the mute control is sound-only, and iOS
@@ -118,7 +122,13 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
         }
     }
 
-    private func emit(_ effect: SoundEffect, volume: Float) {
+    /// A cue this late is worse than no cue: its haptic already fired on the
+    /// caller's thread, so playing now buzzes then clicks as two events.
+    private static let staleAfterNanos: UInt64 = 200_000_000
+
+    private func emit(_ effect: SoundEffect, volume: Float, requestedAt: DispatchTime) {
+        guard DispatchTime.now().uptimeNanoseconds &- requestedAt.uptimeNanoseconds
+                < Self.staleAfterNanos else { return }
         // No asset on disk is the normal case until the audio files land.
         guard let players = voices[effect], !players.isEmpty else { return }
         activateSessionIfNeeded()
@@ -133,13 +143,24 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
 
     private func activateSessionIfNeeded() {
         guard !sessionReady else { return }
-        sessionReady = true
         let session = AVAudioSession.sharedInstance()
         // `.ambient`, never `.playback`: the game obeys the physical silent
         // switch and never interrupts music the player already had going.
-        try? session.setCategory(.ambient, mode: .default, options: [])
+        // A refused category is retried on the next cue rather than latched —
+        // staying on the default `.soloAmbient` would silence that music.
+        guard (try? session.setCategory(.ambient, mode: .default, options: [])) != nil else { return }
+        sessionReady = true
         try? session.setActive(true)
     }
+
+    #if DEBUG
+    /// Test-only. Runs `body` on `queue` with the voice pool, so a harness can
+    /// read `AVAudioPlayer` state without racing `preload`/`emit` — both the
+    /// dictionary and the players are queue-confined and neither is thread-safe.
+    public func debugVoices<T>(_ effect: SoundEffect, _ body: ([AVAudioPlayer]) -> T) -> T {
+        queue.sync { body(voices[effect] ?? []) }
+    }
+    #endif
 
     // MARK: - Haptics, on the main actor
 

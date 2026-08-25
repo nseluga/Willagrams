@@ -8,7 +8,9 @@ out="$(mktemp -d)"
 mkdir -p "$out/empty.bundle"
 export SIMCTL_CHILD_SMOKE_EMPTY_BUNDLE="$out/empty.bundle"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-xcrun -sdk iphonesimulator swiftc -target arm64-apple-ios17.0-simulator -sdk "$sdk" \
+# -D DEBUG: the harness reads the voice pool through the player's `#if DEBUG`
+# queue-confined accessor, so the assertions cannot race `preload`/`emit`.
+xcrun -sdk iphonesimulator swiftc -D DEBUG -target arm64-apple-ios17.0-simulator -sdk "$sdk" \
   "$here/../../../Willagrams/Audio/AudioPlayer.swift" \
   "$here/../../../Willagrams/Audio/AudioCatalogue.swift" \
   "$here/../../../Willagrams/Audio/SystemAudioPlayer.swift" \

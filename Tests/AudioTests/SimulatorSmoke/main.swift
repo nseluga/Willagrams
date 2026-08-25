@@ -38,17 +38,22 @@ func writeWAV(to url: URL, seconds: Int = 2) {
     try! d.write(to: url)
 }
 
-/// Reaches the player's private, queue-confined `voices` pool. Reading real
-/// object state is the only way to tell "two voices overlapped" apart from
-/// "one voice restarted" from outside the type.
-func voices(of player: SystemAudioPlayer, _ effect: SoundEffect) -> [AVAudioPlayer] {
-    for child in Mirror(reflecting: player).children where child.label == "voices" {
-        guard let map = child.value as? [SoundEffect: [AVAudioPlayer]] else {
-            fail("`voices` changed shape; smoke check needs updating")
-        }
-        return map[effect] ?? []
+/// One voice's state, sampled on the player's own queue. Reading real object
+/// state is the only way to tell "two voices overlapped" apart from "one voice
+/// restarted" from outside the type — but `AVAudioPlayer` is not thread-safe
+/// and the pool is queue-confined, so every field is read inside `debugVoices`.
+struct VoiceState {
+    let id: ObjectIdentifier
+    let isPlaying: Bool
+    let currentTime: TimeInterval
+    let volume: Float
+}
+
+func voices(of player: SystemAudioPlayer, _ effect: SoundEffect) -> [VoiceState] {
+    player.debugVoices(effect) {
+        $0.map { VoiceState(id: ObjectIdentifier($0), isPlaying: $0.isPlaying,
+                            currentTime: $0.currentTime, volume: $0.volume) }
     }
-    fail("no `voices` property on SystemAudioPlayer")
 }
 
 func settle(_ seconds: TimeInterval = 0.4) {
@@ -102,13 +107,14 @@ while voices(of: player, .tilePlace).count < 3 && waited < 15 {
     settle(0.25); waited += 0.25
 }
 print("ok: \(voices(of: player, .tilePlace).count) voices preloaded after \(waited)s")
-let pool = voices(of: player, .tilePlace)
-check(pool.count == 3, "C6: three voices preloaded per asset, got \(pool.count)")
+check(voices(of: player, .tilePlace).count == 3,
+      "C6: three voices preloaded per asset, got \(voices(of: player, .tilePlace).count)")
 check(player.isMuted, "C2: player starts muted")
 player.play(.tilePlace)
 player.impact(.medium)
 settle()
-check(pool.allSatisfy { !$0.isPlaying }, "C2: a muted play must not start any voice")
+check(voices(of: player, .tilePlace).allSatisfy { !$0.isPlaying },
+      "C2: a muted play must not start any voice")
 check(session.category == defaultCategory,
       "C3: session must still be unconfigured before the first audible play (was \(session.category.rawValue))")
 print("ok C2/C3: muted play is silent, impact still runs, session not activated yet")
@@ -119,7 +125,7 @@ player.play(.tilePlace)
 settle(0.3)
 check(session.category == .ambient,
       "C3: category must be .ambient after the first sound, got \(session.category.rawValue)")
-let first = pool.filter { $0.isPlaying }
+let first = voices(of: player, .tilePlace).filter(\.isPlaying)
 check(first.count == 1, "C6: one play starts exactly one voice, got \(first.count)")
 check(first[0].volume == cue.volume, "cue volume applied, got \(first[0].volume)")
 print("ok C3: first sound set category .ambient")
@@ -127,10 +133,10 @@ print("ok C3: first sound set category .ambient")
 // --- C6: a second, immediate play overlaps on a distinct voice.
 player.play(.tilePlace)
 settle(0.3)
-let playing = pool.filter { $0.isPlaying }
+let playing = voices(of: player, .tilePlace).filter(\.isPlaying)
 check(playing.count == 2, "C6: two quick plays must occupy two voices, got \(playing.count)")
-check(ObjectIdentifier(playing[0]) != ObjectIdentifier(playing[1]), "C6: the two voices are distinct objects")
-check(playing.contains { ObjectIdentifier($0) == ObjectIdentifier(first[0]) },
+check(playing[0].id != playing[1].id, "C6: the two voices are distinct objects")
+check(playing.contains { $0.id == first[0].id },
       "C6: the first voice kept playing rather than being restarted")
 check(playing.map(\.currentTime).max()! > playing.map(\.currentTime).min()!,
       "C6: the two voices are at different playback positions, so neither was restarted")
