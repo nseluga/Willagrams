@@ -153,5 +153,20 @@ seam.setMuted(false)
 check(!seam.isMuted, "C1: setMuted(false) round-trips through the existential")
 print("ok C1: AudioPlayer witness is non-async, non-throwing")
 
+// --- C6: a haptic-paired cue that reaches the queue past the staleness window
+// is dropped. `debugVoices` runs its body on the player's own serial queue, so
+// stalling it from another thread is how the harness gets inside that window.
+let stalled = SystemAudioPlayer(bundle: bundle)
+check(voices(of: stalled, .tilePlace).count == 3, "precondition: stall player preloaded")
+DispatchQueue.global().async {
+    stalled.debugVoices(.tilePlace) { _ in Thread.sleep(forTimeInterval: 0.6) }
+}
+settle(0.1)                  // let the stall take the queue
+stalled.play(.tilePlace)     // haptic-paired, so stamped and droppable
+settle(1.0)
+check(voices(of: stalled, .tilePlace).allSatisfy { !$0.isPlaying },
+      "C6: a haptic-paired cue delivered past the staleness window starts no voice")
+print("ok C6: stale haptic-paired cue dropped rather than played late")
+
 print("ALL OK")
 exit(0)

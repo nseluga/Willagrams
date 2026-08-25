@@ -95,7 +95,9 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
         // Stamped on the caller's thread: `queue` is serial, so a cue enqueued
         // behind a cold preload would otherwise fire seconds after the haptic
         // that belongs to it.
-        let requestedAt = DispatchTime.now()
+        // Only a haptic-paired cue is worth dropping when late (see `emit`);
+        // a sound-only cue has no second event to desync from, so it is stampless.
+        let requestedAt = cue.haptic == nil ? nil : DispatchTime.now()
         queue.async { [weak self] in self?.emit(effect, volume: cue.volume, requestedAt: requestedAt) }
     }
 
@@ -122,13 +124,17 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
         }
     }
 
-    /// A cue this late is worse than no cue: its haptic already fired on the
-    /// caller's thread, so playing now buzzes then clicks as two events.
+    /// A *haptic-paired* cue this late is worse than no cue: its haptic already
+    /// fired on the caller's thread, so playing now buzzes then clicks as two
+    /// events. A sound-only cue (`requestedAt == nil`) is never dropped — late
+    /// is unnoticeable, silent is a bug.
     private static let staleAfterNanos: UInt64 = 200_000_000
 
-    private func emit(_ effect: SoundEffect, volume: Float, requestedAt: DispatchTime) {
-        guard DispatchTime.now().uptimeNanoseconds &- requestedAt.uptimeNanoseconds
-                < Self.staleAfterNanos else { return }
+    private func emit(_ effect: SoundEffect, volume: Float, requestedAt: DispatchTime?) {
+        if let requestedAt {
+            guard DispatchTime.now().uptimeNanoseconds &- requestedAt.uptimeNanoseconds
+                    < Self.staleAfterNanos else { return }
+        }
         // No asset on disk is the normal case until the audio files land.
         guard let players = voices[effect], !players.isEmpty else { return }
         activateSessionIfNeeded()
@@ -148,9 +154,12 @@ public final class SystemAudioPlayer: AudioPlayer, @unchecked Sendable {
         // switch and never interrupts music the player already had going.
         // A refused category is retried on the next cue rather than latched —
         // staying on the default `.soloAmbient` would silence that music.
-        guard (try? session.setCategory(.ambient, mode: .default, options: [])) != nil else { return }
+        // Both calls are retried on the next cue rather than latched: staying
+        // on the default `.soloAmbient` would silence the player's own music,
+        // and an inactive session plays nothing at all.
+        guard (try? session.setCategory(.ambient, mode: .default, options: [])) != nil,
+              (try? session.setActive(true)) != nil else { return }
         sessionReady = true
-        try? session.setActive(true)
     }
 
     #if DEBUG
