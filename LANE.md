@@ -80,7 +80,7 @@ settles the three scope questions this lane would otherwise re-open.
     - Every returned `volume` is in `0...1`, and `countdownTick` is quieter than `win` — the tick repeats and the win fires once
     - `tilePlace`, `tileRecall`, `draw`, `swap` and `invalid` each return a non-nil `haptic`; `menuTap` returns `.light`; `win` and `loss` return `.heavy`
     - `swift test --package-path Tests/AudioTests` passes, and the six existing seam tests are unchanged
-  status: not started
+  status: done
   parallel-group: audio-a
 
 - task: Build the mute state and its persistence — a new file
@@ -102,7 +102,7 @@ settles the three scope questions this lane would otherwise re-open.
     - `setMuted(true)` then a **newly constructed** `AudioSettings` over the same suite reports `isMuted == true` — the value survives the object, which is what persistence means
     - A fixture that constructs `AudioSettings` leaves `UserDefaults.standard` unmodified
     - `swift test --package-path Tests/AudioTests` passes
-  status: not started
+  status: done
   parallel-group: audio-a
 
 - task: Build `SystemAudioPlayer` — the real `AudioPlayer` conformance, in a new
