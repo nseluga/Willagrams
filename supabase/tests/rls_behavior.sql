@@ -83,6 +83,26 @@ begin
     raise exception 'POLICY WRONG: % was allowed', label;
 end $$;
 
+-- Asserts that `stmt` is refused with one specific sqlstate. `join_match` has
+-- an error contract rather than a policy — the client maps the code onto a
+-- case, so "it raised something" is not enough: a full lobby reported as
+-- notFound sends the player back to retype a code that was correct.
+create or replace function pg_temp.must_raise(stmt text, code text, label text)
+returns void language plpgsql as $$
+begin
+    begin
+        execute stmt;
+    exception when others then
+        if sqlstate <> code then
+            raise exception 'POLICY WRONG: % — raised %, expected %',
+                label, sqlstate, code;
+        end if;
+        raise notice 'ok   refused %: %', code, label;
+        return;
+    end;
+    raise exception 'POLICY WRONG: % was allowed', label;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Seed. Ada and Grace are friends and share a match; Alan is a stranger to
 -- both and is the reader every "sees zero" assertion below uses.
@@ -112,7 +132,7 @@ delete from public.matches
  where host_id in ('11111111-1111-1111-1111-111111111111',
                    '22222222-2222-2222-2222-222222222222',
                    '33333333-3333-3333-3333-333333333333')
-    or invite_code in ('RLSX01', 'RLSX02');
+    or invite_code in ('RLSX01', 'RLSX02', 'RLSX03', 'RLSX04', 'RLSX05');
 delete from public.friendships
  where requester_id in ('11111111-1111-1111-1111-111111111111',
                         '22222222-2222-2222-2222-222222222222',
@@ -124,6 +144,16 @@ delete from public.profiles
  where id in ('11111111-1111-1111-1111-111111111111',
               '22222222-2222-2222-2222-222222222222',
               '33333333-3333-3333-3333-333333333333');
+
+-- The four extra bodies the `join_match` section needs to fill a lobby. Unlike
+-- Ada, Grace and Alan these are not shared with `schema_invariants.sql`, so
+-- this file owns their `auth.users` rows outright and the cascade clears
+-- everything hanging off them.
+delete from auth.users
+ where id in ('55555555-5555-5555-5555-555555555555',
+              '66666666-6666-6666-6666-666666666666',
+              '77777777-7777-7777-7777-777777777777',
+              '88888888-8888-8888-8888-888888888888');
 
 insert into auth.users (id) values
     ('11111111-1111-1111-1111-111111111111'),
@@ -140,10 +170,20 @@ insert into public.friendships (requester_id, addressee_id, status, responded_at
     ('11111111-1111-1111-1111-111111111111',
      '22222222-2222-2222-2222-222222222222', 'accepted', now());
 
+-- Three matches: Ada's playing match with Ada and Grace seated; Ada's empty
+-- lobby, which she seats herself in below through the insert policy; and a
+-- playing match Alan hosts but never sat down in, so his own self-insert has a
+-- non-lobby match to be refused from.
 insert into public.matches (id, host_id, invite_code, wire_version, seed, options, status, started_at)
 values ('99999999-9999-9999-9999-999999999999',
         '11111111-1111-1111-1111-111111111111',
-        'RLSX01', 3, 7, '{}'::jsonb, 'playing', now());
+        'RLSX01', 3, 7, '{}'::jsonb, 'playing', now()),
+       ('bbbbbbbb-0000-0000-0000-000000000001',
+        '11111111-1111-1111-1111-111111111111',
+        'RLSX03', 3, 7, '{}'::jsonb, 'lobby', null),
+       ('99999999-9999-9999-9999-999999999992',
+        '33333333-3333-3333-3333-333333333333',
+        'RLSX05', 3, 7, '{}'::jsonb, 'playing', now());
 
 insert into public.match_players (match_id, player_id) values
     ('99999999-9999-9999-9999-999999999999', '11111111-1111-1111-1111-111111111111'),
@@ -222,8 +262,8 @@ select pg_temp.must_touch(
 
 select pg_temp.acting_as('11111111-1111-1111-1111-111111111111');
 select pg_temp.must_see(
-    $$select 1 from public.matches$$, 1,
-    'the host reads their match');
+    $$select 1 from public.matches$$, 2,
+    'the host reads their matches');
 
 select pg_temp.acting_as('22222222-2222-2222-2222-222222222222');
 select pg_temp.must_see(
@@ -269,22 +309,146 @@ select pg_temp.must_raise(
               '11111111-1111-1111-1111-111111111111')$$,
     'a player dragged into a match by somebody else');
 
--- Alan may add himself — and that read is what then opens the roster to him,
--- which is the capability working as designed rather than a leak.
-select pg_temp.must_touch(
+-- Seating yourself directly is the host's move only, and only in its own
+-- lobby. Everyone else goes through `join_match`, which is where the lobby
+-- and cap guards live; a direct insert that got past this policy would walk
+-- around both.
+select pg_temp.must_raise(
     $$insert into public.match_players (match_id, player_id)
       values ('99999999-9999-9999-9999-999999999999',
-              '33333333-3333-3333-3333-333333333333')$$, 1,
-    'a player adds themselves to a match');
+              '33333333-3333-3333-3333-333333333333')$$,
+    'a non-host seating themselves in a playing match');
 
-select pg_temp.must_see(
-    $$select 1 from public.match_players$$, 3,
-    'joining opens the roster');
+select pg_temp.must_raise(
+    $$insert into public.match_players (match_id, player_id)
+      values ('bbbbbbbb-0000-0000-0000-000000000001',
+              '33333333-3333-3333-3333-333333333333')$$,
+    'a non-host seating themselves in a lobby instead of using join_match');
+
+select pg_temp.must_raise(
+    $$insert into public.match_players (match_id, player_id)
+      values ('99999999-9999-9999-9999-999999999992',
+              '33333333-3333-3333-3333-333333333333')$$,
+    'a host seating themselves in their own match once it is playing');
+
+select pg_temp.acting_as('11111111-1111-1111-1111-111111111111');
+select pg_temp.must_touch(
+    $$insert into public.match_players (match_id, player_id)
+      values ('bbbbbbbb-0000-0000-0000-000000000001',
+              '11111111-1111-1111-1111-111111111111')$$, 1,
+    'a host seats themselves in their own lobby');
+
+select pg_temp.acting_as('33333333-3333-3333-3333-333333333333');
 
 select pg_temp.must_touch(
     $$delete from public.match_players
       where player_id = '11111111-1111-1111-1111-111111111111'$$, 0,
     'a player cannot remove somebody else from a match');
+
+-- ---------------------------------------------------------------------------
+-- join_match — the one door from an invite code to a match row.
+--
+-- The assertions above prove the door is shut: a stranger holding a correct
+-- invite code reads nothing. That is a working policy and a broken product, so
+-- everything below is about the definer function being the only way through,
+-- and about it refusing in the four distinct ways the client has to tell apart.
+-- ---------------------------------------------------------------------------
+
+select pg_temp.acting_as_owner();
+
+-- Four more players, so one lobby can be filled to `MatchLimits.players`'
+-- upper bound and one more player turned away from it.
+insert into auth.users (id) values
+    ('55555555-5555-5555-5555-555555555555'),
+    ('66666666-6666-6666-6666-666666666666'),
+    ('77777777-7777-7777-7777-777777777777'),
+    ('88888888-8888-8888-8888-888888888888');
+
+insert into public.profiles (id, display_name, friend_code) values
+    ('55555555-5555-5555-5555-555555555555', 'Edsger', 'EEEE5555'),
+    ('66666666-6666-6666-6666-666666666666', 'Barbara','FFFF6666'),
+    ('77777777-7777-7777-7777-777777777777', 'Katherine', 'GGGG7777'),
+    ('88888888-8888-8888-8888-888888888888', 'Donald', 'HHHH8888');
+
+-- A full lobby, also Ada's. The open lobby with one seat taken is `RLSX03`
+-- from the top of this file, which Ada seated herself in above; the match
+-- seeded `playing` there is the third case.
+insert into public.matches (id, host_id, invite_code, wire_version, seed, options, status)
+values ('bbbbbbbb-0000-0000-0000-000000000002',
+        '11111111-1111-1111-1111-111111111111',
+        'RLSX04', 3, 7, '{}'::jsonb, 'lobby');
+
+insert into public.match_players (match_id, player_id) values
+    ('bbbbbbbb-0000-0000-0000-000000000002', '11111111-1111-1111-1111-111111111111'),
+    ('bbbbbbbb-0000-0000-0000-000000000002', '22222222-2222-2222-2222-222222222222'),
+    ('bbbbbbbb-0000-0000-0000-000000000002', '55555555-5555-5555-5555-555555555555'),
+    ('bbbbbbbb-0000-0000-0000-000000000002', '66666666-6666-6666-6666-666666666666'),
+    ('bbbbbbbb-0000-0000-0000-000000000002', '77777777-7777-7777-7777-777777777777'),
+    ('bbbbbbbb-0000-0000-0000-000000000002', '88888888-8888-8888-8888-888888888888');
+
+select pg_temp.acting_as('33333333-3333-3333-3333-333333333333');
+
+-- The closed door, restated for the lobby the stranger is about to join. If
+-- this ever returns 1, `join_match` has stopped being the only reader and the
+-- invite code has become guessable at scale.
+select pg_temp.must_see(
+    $$select 1 from public.matches where invite_code = 'RLSX03'$$, 0,
+    'a stranger cannot read a lobby match by its invite code');
+
+-- The door itself. The row comes back, so the client has the id, the seed and
+-- the options in one round trip rather than a join followed by a read.
+select pg_temp.must_see(
+    $$select * from public.join_match('RLSX03')
+      where id = 'bbbbbbbb-0000-0000-0000-000000000001'$$, 1,
+    'a stranger joins by code and gets the match row back');
+
+select pg_temp.must_see(
+    $$select 1 from public.matches
+      where id = 'bbbbbbbb-0000-0000-0000-000000000001'$$, 1,
+    'joining opens the match to the joiner');
+
+select pg_temp.must_see(
+    $$select 1 from public.match_players
+      where match_id = 'bbbbbbbb-0000-0000-0000-000000000001'$$, 2,
+    'the joiner sees the host and themselves');
+
+-- Idempotent, and case-folding: a retried request or a code typed in lower
+-- case is the same join, not a second row and not a not-found.
+select pg_temp.must_see(
+    $$select * from public.join_match('rlsx03')
+      where id = 'bbbbbbbb-0000-0000-0000-000000000001'$$, 1,
+    'joining twice returns the same match row');
+
+select pg_temp.must_see(
+    $$select 1 from public.match_players
+      where match_id = 'bbbbbbbb-0000-0000-0000-000000000001'$$, 2,
+    'joining twice seats the player once');
+
+-- A match that has started is not in the lobby list and is not joinable, even
+-- by somebody already in it. Reported as notFound on purpose: distinguishing
+-- "started" from "never existed" is the oracle the function exists to avoid.
+select pg_temp.must_raise(
+    $$select public.join_match('RLSX01')$$, 'P0002',
+    'a match that is already playing is not joinable by code');
+
+select pg_temp.must_raise(
+    $$select public.join_match('ZZZZ99')$$, 'P0002',
+    'an invite code that belongs to no match');
+
+-- The seventh player. Without the count this inserts, and a seven-player match
+-- is one no client will start.
+select pg_temp.must_raise(
+    $$select public.join_match('RLSX04')$$, 'P0005',
+    'a seventh player joining a full lobby');
+
+-- Signed out: the role is still `authenticated` — that is what the anon key
+-- carries — but there is no subject claim, so `auth.uid()` is null and there is
+-- nobody to seat.
+select pg_temp.acting_as(null::uuid);
+
+select pg_temp.must_raise(
+    $$select public.join_match('RLSX03')$$, '42501',
+    'joining with no signed-in caller');
 
 -- ---------------------------------------------------------------------------
 -- Leave the database as the fixture found it, so the next run of this file or
@@ -294,9 +458,20 @@ select pg_temp.must_touch(
 select pg_temp.acting_as_owner();
 
 delete from public.match_players
- where match_id = '99999999-9999-9999-9999-999999999999';
+ where match_id in ('99999999-9999-9999-9999-999999999999',
+                    '99999999-9999-9999-9999-999999999992',
+                    'bbbbbbbb-0000-0000-0000-000000000001',
+                    'bbbbbbbb-0000-0000-0000-000000000002');
 delete from public.matches
- where id = '99999999-9999-9999-9999-999999999999';
+ where id in ('99999999-9999-9999-9999-999999999999',
+              '99999999-9999-9999-9999-999999999992',
+              'bbbbbbbb-0000-0000-0000-000000000001',
+              'bbbbbbbb-0000-0000-0000-000000000002');
+delete from auth.users
+ where id in ('55555555-5555-5555-5555-555555555555',
+              '66666666-6666-6666-6666-666666666666',
+              '77777777-7777-7777-7777-777777777777',
+              '88888888-8888-8888-8888-888888888888');
 delete from public.friendships
  where requester_id = '11111111-1111-1111-1111-111111111111';
 delete from public.profiles

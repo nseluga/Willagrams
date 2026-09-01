@@ -390,3 +390,61 @@ What it means for each remaining lane, stated here so no lane discovers it:
 `Willagrams.entitlements` therefore stays empty this round, and its comment
 already says why. Adding the key is a one-line Reviewer edit the day the
 membership is active — not an amendment, because this entry is the amendment.
+
+## Amendment — join by invite code (written 2026-09-01, pending live push)
+
+Found during `/lane online`, before any item ran. `matches` is readable only by
+its host or a row in `match_players`, and joining is what creates that row — so
+a player holding a six-character invite code cannot resolve it to a match and
+cannot join. `docs/schema.md` said "the invite code is the capability" and
+nothing let a non-participant spend it. `BackendClient.joinMatch(inviteCode:)`
+was unimplementable against the schema as frozen.
+
+Nothing in the frozen shape moves. No table, column, constraint or row type
+changes; `BackendContracts.swift` is untouched. One policy does change:
+`match_players_insert_self` is tightened so a direct insert is only the host
+seating itself in its own lobby — as `0001` wrote it, any signed-in player
+could seat themselves in any match by id and walk around `join_match`'s
+lobby and cap guards. The `0002` guardrail —
+"this is the **only** `security definer` function" — is widened to two, each
+narrowly scoped: one boolean about the caller, and one join that reads a match
+by code only after seating the caller in it.
+
+- task: Let a non-participant join a lobby match by its invite code
+  done when:
+    - `supabase/migrations/0003_join_match.sql` declares
+      `public.join_match(code text) returns public.matches`, `language plpgsql`,
+      `security definer`, `set search_path = public, pg_temp`; execute revoked
+      from `public`, granted to `authenticated`
+    - it raises `42501` with no signed-in caller, `P0002` when no `lobby` match
+      carries `upper(code)` (a started match and a nonexistent code are
+      deliberately indistinguishable), `P0005` when six players are already
+      seated; otherwise it inserts the caller's `match_players` row and returns
+      the match, and a repeat call returns the same row without a second insert
+    - `match_players_insert_self` is recreated with `auth.uid() = player_id`
+      and the target match hosted by the caller, in `lobby`, holding fewer than
+      six players; a non-host self-insert into any match raises, and so does a
+      host self-insert once its match is `playing`
+    - the lobby row is locked `for update` so two callers racing for the last
+      seat cannot both count five
+    - `supabase/tests/rls_behavior.sql` asserts all of the above as a stranger
+      (33 assertions), and both SQL fixtures run twice in either order leaving
+      `public` clean — verified locally against the runbook in `docs/schema.md`
+    - the migration is applied to the live project and both fixtures pass there
+  guardrails:
+    - this function is the only thing in the schema that reads `matches` by
+      `invite_code`; no policy does, and none is to be added — a readable
+      six-character space is an oracle the anon key can walk
+    - the literal `6` is `MatchLimits.players.upperBound` duplicated on purpose,
+      in both the function and the insert policy; the three move together or
+      not at all
+    - `P0004` is `assert_failure`, which a plpgsql `when others` does not catch,
+      so it is never used as a contract code
+  risk: without this, the `online` lane ships a host nobody can reach — every
+        `FakeBackend` test stays green and the first real invite returns
+        `notFound`
+  difficulty: low — the `0002` pattern, one function
+  status: in progress — live push pending a Supabase credential
+
+The error contract the Swift client maps: `42501` → `notAuthenticated`,
+`P0002` → `notFound`, `P0005` → `matchFull`.
