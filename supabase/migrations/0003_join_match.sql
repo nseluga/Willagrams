@@ -104,6 +104,9 @@ begin
 end $$;
 
 revoke execute on function public.join_match(text) from public;
+-- Supabase's default privileges hand every new public function to anon too;
+-- the revoke from public does not cover that grant.
+revoke execute on function public.join_match(text) from anon;
 grant execute on function public.join_match(text) to authenticated;
 
 -- `match_players_insert_self` as `0001` wrote it — `auth.uid() = player_id` —

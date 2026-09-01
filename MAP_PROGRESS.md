@@ -16,7 +16,7 @@ are counted from their merge commit message.
 | match | nate | lane/match | done — merged 2026-08-15 `22d6c22` via /octopus-merge, 10 items, archived `progress/match.md`; reopens for the wire v3 amendment |
 | settings | nate | lane/settings | done — merged 2026-08-17 `68cb22d`; no archive, /merge-lane was skipped |
 | shell | nate | lane/shell-r2 | round 2 done — octopus-merged 2026-08-20 `0e25124`, items 1–7; archive `progress/shell.md` + `progress/shell-lane-plan.md`; ShellTests 61 → 99. Round 1 merged 2026-08-17 `ec9d186`, items 1–11 |
-| online | nate | `lane/online` (not merged) | **planned 2026-09-01**, `LANE.md` on `lane/online`, eight items, stop marker before the real `signInWithApple`. The URL/anon key decision is closed: constants in `Willagrams/Online/SupabaseConfig.swift`, lane-owned. `0003_join_match.sql` (`FOUNDATION.md` amendment) adds `public.join_match(code)` — the only join path for a non-host — and tightens `match_players_insert_self` to host-into-own-lobby; `rls_behavior.sql` is at 33 assertions and both fixtures pass twice in either order on the local stub. **Not yet applied to `ynkayuwwrifluhhqnrjc`** and anonymous sign-ins are not yet enabled there — both wait on a Supabase credential; the lane's green (live two-client test) needs both |
+| online | nate | `lane/online` (not merged) | **planned 2026-09-01**, `LANE.md` on `lane/online`, eight items, stop marker before the real `signInWithApple`. The URL/anon key decision is closed: constants in `Willagrams/Online/SupabaseConfig.swift`, lane-owned. `0003_join_match.sql` (`FOUNDATION.md` amendment) adds `public.join_match(code)` — the only join path for a non-host — and tightens `match_players_insert_self` to host-into-own-lobby; `rls_behavior.sql` is at 33 assertions and both fixtures pass twice in either order on the local stub. Applied to `ynkayuwwrifluhhqnrjc` 2026-09-01 and both fixtures pass there. **Anonymous sign-ins are still off on the hosted project** — a dashboard toggle (Authentication → Sign In / Providers → Allow anonymous sign-ins); the lane's green (live two-client test) cannot run until it is on |
 | account | nate | — | not started — sequenced behind online, and **partly gated by the postponed Apple Developer membership** (`FOUNDATION.md`, 2026-08-25). The profile page, display-name editing and the stats need only a user id and are fully buildable against `FakeBackend`. The Sign in with Apple screen may be written but cannot be exercised: `com.apple.developer.applesignin` is absent from `Willagrams.entitlements` and stays absent this round. That item belongs **below the stop marker**. **`Tests/AccountTests/` does not exist** — every other lane had its package scaffolded by `/foundation` and this one did not, so the lane's first item creates it. Read MAP's symlink-hazard section before laying it out |
 | friends | nate | — | not started — sequenced behind online. **Unaffected by the Apple membership postponement.** Build against the real database, not `FakeBackend`: RLS refuses a read by returning zero rows rather than an error, and the fake enforces no policies, so a fake-green lane can still render an empty friends page in production. `rls_behavior.sql` is the fixture that proves a policy returns; extend it rather than trusting the fake. **`Tests/FriendsTests/` does not exist** — same as `account`, the lane scaffolds its own package |
 | bot | nate | lane/bot | round 2 done — octopus-merged 2026-08-20 `0e25124`, items 1–6 at `457e20f`; archive `progress/bot.md` + `progress/bot-lane-plan.md`; BotTests 0 → 63 |
@@ -43,9 +43,9 @@ Match 125 · Style 30 · Shell 125 · Settings 36 · Audio 6 · Online 26 · Bot
 Counted by running every package, not carried forward — an earlier handoff
 reported 720 and the real number was 718.
 
-**Open, needs a credential:** `0003_join_match.sql` is committed but not
-applied to the live project, and anonymous sign-ins are off there. See the
-`online` row.
+**Open, one dashboard toggle:** anonymous sign-ins are off on the hosted
+project. Item 1 of `lane/online` signs in anonymously in DEBUG and every live
+test after it depends on that. See the `online` row.
 
 **Also open:** `Willagrams/Shell/**` needs a **round 3** for the audio call
 sites. `AudioPlayer` has none, and the wiring crosses shell, match and board.

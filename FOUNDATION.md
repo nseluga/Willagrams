@@ -391,7 +391,7 @@ What it means for each remaining lane, stated here so no lane discovers it:
 already says why. Adding the key is a one-line Reviewer edit the day the
 membership is active — not an amendment, because this entry is the amendment.
 
-## Amendment — join by invite code (written 2026-09-01, pending live push)
+## Amendment — join by invite code (written and applied live 2026-09-01)
 
 Found during `/lane online`, before any item ran. `matches` is readable only by
 its host or a row in `match_players`, and joining is what creates that row — so
@@ -444,7 +444,7 @@ by code only after seating the caller in it.
         `FakeBackend` test stays green and the first real invite returns
         `notFound`
   difficulty: low — the `0002` pattern, one function
-  status: in progress — live push pending a Supabase credential
+  status: done — applied to `ynkayuwwrifluhhqnrjc` by psql over the us-west-2 session pooler (the project has no `supabase_migrations` ledger; 0001 and 0002 were applied the same way), both fixtures pass there five runs alternating; `join_match` also revoked from `anon`, which Supabase's default privileges had granted
 
 The error contract the Swift client maps: `42501` → `notAuthenticated`,
 `P0002` → `notFound`, `P0005` → `matchFull`.
