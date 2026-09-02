@@ -66,22 +66,42 @@ public actor RealtimeMatchTransport: MatchTransport {
     /// `leave()` is not `async`.
     private nonisolated let peers = PeerRoster()
 
+    /// How long the last peer may be gone before the match is declared over.
+    ///
+    /// A transient socket drop arrives as a real presence leave, and finishing
+    /// is one-way, so without this a two-second blip would permanently end the
+    /// match. `.disconnected` is still delivered the moment the leave arrives —
+    /// only the stream *finish* waits the window out. Offline tests pass
+    /// `.zero`, which finishes inline exactly as before.
+    private nonisolated let peerGrace: Duration
+
     /// Builds a transport and returns it only once the channel is subscribed.
     static func connect(
         localPlayerID: PlayerID,
-        channel: any MatchChannel
+        channel: any MatchChannel,
+        peerGrace: Duration = .seconds(5)
     ) async throws -> RealtimeMatchTransport {
-        let transport = RealtimeMatchTransport(localPlayerID: localPlayerID, channel: channel)
+        let transport = RealtimeMatchTransport(
+            localPlayerID: localPlayerID, channel: channel, peerGrace: peerGrace)
         transport.attach()
-        try await channel.subscribe(as: localPlayerID)
+        do {
+            try await channel.subscribe(as: localPlayerID)
+        } catch {
+            // The channel is already registered on the client and may be
+            // mid-join, and a caller that grabbed the streams would hang on
+            // them forever. Tear both down before rethrowing.
+            transport.leave()
+            throw error
+        }
         return transport
     }
 
-    init(localPlayerID: PlayerID, channel: any MatchChannel) {
+    init(localPlayerID: PlayerID, channel: any MatchChannel, peerGrace: Duration = .seconds(5)) {
         let inbound = AsyncStream.makeStream(of: MatchMessage.self, bufferingPolicy: .unbounded)
         let states = AsyncStream.makeStream(of: PeerConnectionState.self, bufferingPolicy: .unbounded)
         self.localPlayerID = localPlayerID
         self.channel = channel
+        self.peerGrace = peerGrace
         self.inboundMessages = inbound.stream
         self.peerConnectionStates = states.stream
         self.inbound = inbound.continuation
@@ -96,6 +116,7 @@ public actor RealtimeMatchTransport: MatchTransport {
         let inbound = inbound
         let states = states
         let peers = peers
+        let grace = peerGrace
 
         channel.onWire { envelope in
             // `self: false` is also set on the channel. This is the second
@@ -119,10 +140,25 @@ public actor RealtimeMatchTransport: MatchTransport {
             }
             // The last peer's presence leaving ends the match from this side,
             // exactly as `leave()` does. Buffered elements — including the
-            // `.disconnected` just yielded — still drain first.
-            if lastLeft, peers.finish() {
+            // `.disconnected` just yielded — still drain first. A peer that
+            // re-joins inside the grace window keeps the match alive: the
+            // roster is no longer empty, so nothing finishes.
+            guard lastLeft else { return }
+            let close = { @Sendable in
+                guard peers.isEmpty, peers.finish() else { return }
                 inbound.finish()
                 states.finish()
+            }
+            if grace == .zero {
+                close()
+            } else {
+                // ponytail: one timer per leave. A leave/re-join/leave inside
+                // one window can close on the first timer rather than the
+                // second — a generation counter if that ever matters.
+                Task {
+                    try? await Task.sleep(for: grace)
+                    close()
+                }
             }
         }
     }
@@ -144,11 +180,19 @@ public actor RealtimeMatchTransport: MatchTransport {
     }
 
     public nonisolated func leave() {
-        channel.leave()
+        // Two latches, not one: the channel has to be torn down even when the
+        // streams were already finished by the peer's presence leaving, and it
+        // must not be torn down twice when `deinit` follows an explicit call.
+        if peers.closeChannel() { channel.leave() }
         guard peers.finish() else { return }  // Calling it twice is harmless.
         inbound.finish()
         states.finish()
     }
+
+    /// A dropped transport would otherwise leave the channel joined and
+    /// presence tracked until the process exits. `leave()` is already
+    /// synchronous and idempotent, which is what makes this safe here.
+    deinit { leave() }
 }
 
 /// The peers this endpoint has seen, plus the one-way "this match is over"
@@ -157,6 +201,7 @@ private final class PeerRoster: @unchecked Sendable {
     private let lock = NSLock()
     private var players: Set<PlayerID> = []
     private var finished = false
+    private var channelClosed = false
 
     /// `true` if `player` was not already present.
     func insert(_ player: PlayerID) -> Bool {
@@ -171,6 +216,14 @@ private final class PeerRoster: @unchecked Sendable {
     var isEmpty: Bool { lock.withLock { players.isEmpty } }
 
     var isFinished: Bool { lock.withLock { finished } }
+
+    /// Latches the channel torn down. `true` only for the first caller.
+    func closeChannel() -> Bool {
+        lock.withLock {
+            defer { channelClosed = true }
+            return !channelClosed
+        }
+    }
 
     /// Latches the endpoint closed. `true` only for the caller that flipped it,
     /// so the streams are finished exactly once however many paths race here.

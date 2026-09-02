@@ -78,7 +78,12 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
     /// The guardrail: one subscribe per channel per transport. A second one is
     /// a bug, so it is counted rather than tolerated.
     private(set) var subscribeCount = 0
+    private(set) var leaveCount = 0
     private(set) var sentEnvelopes: [WireEnvelope] = []
+
+    /// Set to make `subscribe` throw, standing in for a channel the server
+    /// refuses or that times out mid-join.
+    var subscribeFailure: (any Error)?
 
     init(bus: StubBus) { self.bus = bus }
 
@@ -92,6 +97,7 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
 
     func subscribe(as player: PlayerID) async throws {
         lock.withLock { subscribeCount += 1 }
+        if let subscribeFailure { throw subscribeFailure }
         bus.join(self, as: player)
     }
 
@@ -100,7 +106,10 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
         bus.broadcast(envelope, from: self)
     }
 
-    func leave() { bus.leave(self) }
+    func leave() {
+        lock.withLock { leaveCount += 1 }
+        bus.leave(self)
+    }
 
     func deliverWire(_ envelope: WireEnvelope) {
         lock.withLock { wire }?(envelope)
@@ -111,6 +120,7 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
     }
 
     var subscribes: Int { lock.withLock { subscribeCount } }
+    var leaves: Int { lock.withLock { leaveCount } }
     var sent: [WireEnvelope] { lock.withLock { sentEnvelopes } }
 }
 
@@ -118,6 +128,18 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
 
 private let hostID = PlayerID(rawValue: "host")
 private let guestID = PlayerID(rawValue: "guest")
+
+/// Every offline case runs with a zero grace window, so the last peer leaving
+/// finishes the streams inline — no added latency, and criterion 3 still proves
+/// finish-on-last-peer-leave exactly as written.
+private func connect(
+    _ player: PlayerID,
+    channel: StubChannel,
+    grace: Duration = .zero
+) async throws -> RealtimeMatchTransport {
+    try await RealtimeMatchTransport.connect(
+        localPlayerID: player, channel: channel, peerGrace: grace)
+}
 
 /// Twenty distinguishable messages, so "in order" and "not twice" are both
 /// observable from the received sequence alone.
@@ -158,16 +180,14 @@ struct RealtimeMatchTransportTests {
     @Test("Each stream property returns the same stream object on every access")
     func streamsAreSingleSubscription() async throws {
         let bus = StubBus()
-        let host = try await RealtimeMatchTransport.connect(
-            localPlayerID: hostID, channel: bus.channel())
+        let host = try await connect(hostID, channel: bus.channel())
 
         // `AsyncStream` is a struct, so identity is the shared storage behind
         // it — the same continuation, not a fresh subscription per access.
         var first = host.inboundMessages.makeAsyncIterator()
         let second = host.inboundMessages
 
-        let guest = try await RealtimeMatchTransport.connect(
-            localPlayerID: guestID, channel: bus.channel())
+        let guest = try await connect(guestID, channel: bus.channel())
         try await guest.send(.poolExhausted, delivery: .reliable)
 
         #expect(await first.next() == .poolExhausted)
@@ -183,10 +203,8 @@ struct RealtimeMatchTransportTests {
     @Test("A consumer that starts after ten sends still receives all twenty, in order")
     func lateConsumerReceivesEverything() async throws {
         let bus = StubBus()
-        let host = try await RealtimeMatchTransport.connect(
-            localPlayerID: hostID, channel: bus.channel())
-        let guest = try await RealtimeMatchTransport.connect(
-            localPlayerID: guestID, channel: bus.channel())
+        let host = try await connect(hostID, channel: bus.channel())
+        let guest = try await connect(guestID, channel: bus.channel())
 
         let sent = script(20)
         for message in sent.prefix(10) {
@@ -210,10 +228,8 @@ struct RealtimeMatchTransportTests {
         // `self: false` regressed to `self: true`. The sender-id filter is the
         // second door, and it has to hold on its own.
         let bus = StubBus(echoesOwnBroadcasts: true)
-        let host = try await RealtimeMatchTransport.connect(
-            localPlayerID: hostID, channel: bus.channel())
-        let guest = try await RealtimeMatchTransport.connect(
-            localPlayerID: guestID, channel: bus.channel())
+        let host = try await connect(hostID, channel: bus.channel())
+        let guest = try await connect(guestID, channel: bus.channel())
 
         for message in script(5) { try await host.send(message, delivery: .reliable) }
         try await guest.send(.poolExhausted, delivery: .reliable)
@@ -230,10 +246,8 @@ struct RealtimeMatchTransportTests {
     @Test("The peer leaving delivers .disconnected and then finishes both streams")
     func peerLeavingEndsTheSurvivorsStreams() async throws {
         let bus = StubBus()
-        let host = try await RealtimeMatchTransport.connect(
-            localPlayerID: hostID, channel: bus.channel())
-        let guest = try await RealtimeMatchTransport.connect(
-            localPlayerID: guestID, channel: bus.channel())
+        let host = try await connect(hostID, channel: bus.channel())
+        let guest = try await connect(guestID, channel: bus.channel())
 
         try await guest.send(.poolExhausted, delivery: .reliable)
         guest.leave()
@@ -248,9 +262,9 @@ struct RealtimeMatchTransportTests {
     @Test("The caller's own two streams finish on leave()")
     func leaveEndsTheCallersOwnStreams() async throws {
         let bus = StubBus()
-        let host = try await RealtimeMatchTransport.connect(
-            localPlayerID: hostID, channel: bus.channel())
-        _ = try await RealtimeMatchTransport.connect(localPlayerID: guestID, channel: bus.channel())
+        let host = try await connect(hostID, channel: bus.channel())
+        let guest = try await connect(guestID, channel: bus.channel())
+        defer { _ = guest }  // A discarded transport deinits, and deinit leaves.
 
         host.leave()
         host.leave()  // Calling it more than once is harmless.
@@ -270,7 +284,7 @@ struct RealtimeMatchTransportTests {
     func sendsWithoutAPeerAndInBothModes() async throws {
         let bus = StubBus()
         let channel = bus.channel()
-        let host = try await RealtimeMatchTransport.connect(localPlayerID: hostID, channel: channel)
+        let host = try await connect(hostID, channel: channel)
 
         // Nobody else is on the channel yet. Both of these return.
         try await host.send(.poolExhausted, delivery: .reliable)
@@ -278,8 +292,7 @@ struct RealtimeMatchTransportTests {
         #expect(channel.sent.count == 2)
         #expect(channel.subscribes == 1)
 
-        let guest = try await RealtimeMatchTransport.connect(
-            localPlayerID: guestID, channel: bus.channel())
+        let guest = try await connect(guestID, channel: bus.channel())
 
         let reliable = MatchMessage.drawRequest(player: hostID)
         let lossy = MatchMessage.resign(player: hostID)
@@ -290,6 +303,74 @@ struct RealtimeMatchTransportTests {
         // `.lossy` is sent exactly as `.reliable` is, so both land.
         let received = try await drain(guest.inboundMessages)
         #expect(received == [reliable, lossy])
+    }
+
+    // MARK: - Fault tolerance
+
+    @Test("A peer that re-joins inside the grace window does not end the match")
+    func transientPeerDropDoesNotEndTheMatch() async throws {
+        let bus = StubBus()
+        let hostChannel = bus.channel()
+        // Short enough that the window really elapses inside the case: a timer
+        // that fires anyway is then red rather than merely untested.
+        let host = try await connect(hostID, channel: hostChannel, grace: .milliseconds(100))
+        let guestChannel = bus.channel()
+        let guest = try await connect(guestID, channel: guestChannel)
+        defer { _ = guest }  // A discarded transport deinits, and deinit leaves.
+
+        // A transient socket drop reaches the host as a real presence leave.
+        guestChannel.leave()
+        // ...and the peer is back well inside the window.
+        bus.join(guestChannel, as: guestID)
+
+        // The match is still live: sending still works rather than throwing.
+        try await host.send(.poolExhausted, delivery: .reliable)
+
+        // Past the window. A timer that ignored the re-join has fired by now.
+        try await Task.sleep(for: .milliseconds(300))
+        try await host.send(.poolExhausted, delivery: .reliable)
+        #expect(hostChannel.sent.count == 2)
+
+        // And the host was told about the round trip rather than silence.
+        host.leave()
+        let states = try await drain(host.peerConnectionStates)
+        #expect(states == [.connected(guestID), .disconnected(guestID), .connected(guestID)])
+    }
+
+    @Test("A subscribe that throws tears the channel down instead of leaving a caller hanging")
+    func failedSubscribeCleansUp() async throws {
+        struct Refused: Error {}
+        let bus = StubBus()
+        let channel = bus.channel()
+        channel.subscribeFailure = Refused()
+
+        await #expect(throws: Refused.self) {
+            _ = try await connect(hostID, channel: channel)
+        }
+
+        // `leave()` is the single path that both tears the channel down and
+        // finishes the two streams, so seeing it run is seeing both happen.
+        #expect(channel.leaves == 1)
+    }
+
+    /// Invisible to any offline behavioural test — the stub channel has no
+    /// client to leak an entry into — so it is guarded at the source, the way
+    /// this lane already guards the wiring of the protocol methods.
+    @Test("The channel is removed from the client, not merely unsubscribed")
+    func leavingRemovesTheChannelFromTheClient() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // Cases
+                .deletingLastPathComponent()  // OnlineTests
+                .deletingLastPathComponent()  // Tests
+                .deletingLastPathComponent()  // repo root
+                .appendingPathComponent("Willagrams/Online/SupabaseMatchChannel.swift"),
+            encoding: .utf8)
+
+        // `unsubscribe` alone leaves the channel in `RealtimeClientV2.channels`,
+        // so every match leaks an entry and the socket never tears down.
+        #expect(source.contains("removeChannel(channel)"))
+        #expect(!source.contains("await channel.unsubscribe()"))
     }
 
     // MARK: - Framing

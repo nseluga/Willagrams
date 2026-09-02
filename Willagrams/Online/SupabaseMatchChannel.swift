@@ -20,6 +20,7 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
     /// The broadcast event every wire message travels as.
     static let wireEvent = "wire"
 
+    private let realtime: RealtimeClientV2
     private let channel: RealtimeChannelV2
 
     /// `RealtimeSubscription` cancels its callback when the token deallocates,
@@ -27,6 +28,7 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
     private var subscriptions: [RealtimeSubscription] = []
 
     init(realtime: RealtimeClientV2, matchID: UUID, localPlayerID: PlayerID) {
+        self.realtime = realtime
         channel = realtime.channel("match:\(matchID.uuidString.lowercased())") { config in
             // No echo. The transport also filters on `sender`, so this is the
             // first of two doors, not the only one.
@@ -65,9 +67,15 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
         try await channel.broadcast(event: Self.wireEvent, message: Self.payload(for: envelope))
     }
 
+    /// `removeChannel`, not `unsubscribe`: unsubscribing leaves the channel in
+    /// `RealtimeClientV2.channels`, so every match would leak an entry and the
+    /// socket would never tear down after the last one. `removeChannel`
+    /// unsubscribes first, clears the map, and is what triggers
+    /// disconnect-on-empty.
     func leave() {
+        let realtime = realtime
         let channel = channel
-        Task { await channel.unsubscribe() }
+        Task { await realtime.removeChannel(channel) }
     }
 
     // MARK: - Framing
