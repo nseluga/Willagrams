@@ -66,7 +66,7 @@ Fuller context: `README.md` (run/verify commands), `MAP.md` (lane map, symlink h
     - Signing the same user in a second time returns the same row; the table holds one row for that id, not two
     - A PostgREST unique violation surfaces as `BackendError.alreadyExists`, and `profile(friendCode:)` for an unknown code returns nil without throwing
     - With the gate unset, `swift test --package-path Tests/OnlineTests` passes with every live case reported as skipped, and the 26 existing cases still pass
-  status: not started
+  status: done — e061e4a; live criteria 1-3 deferred to a live pass (no anon key this session)
 
 - task: Friendships on the real client. `Willagrams/Online/SupabaseBackend+Friends.swift` implements `friendships()`, `requestFriend(addresseeID:)`, `respondToFriendRequest(requesterID:accept:)` and `block(_:)` against the `friendships` table under the existing policies. Semantics are the ones `FakeBackendTests` already pins: one row per unordered pair (the `friendships_pair_idx` unique index is the dedupe, surfaced as `alreadyExists`), decline stores `blocked`, `respondedAt` is stamped once on the transition out of `pending`, `block` upserts the pair as `blocked` with the caller as requester when no row exists.
   guardrails:
