@@ -5,7 +5,7 @@ LANE.md wins for scope.
 
 **Current position**
 - Status: in progress — autonomous run started 2026-09-01
-- Next: item 7 — wiring: a whole match over the live project
+- Next: shut down — item 8 sits below the stop marker and is not part of this run
 - Blockers: no Supabase anon key is reachable this session, so every
   `WILLAGRAMS_LIVE_TESTS` criterion is written and gated but not yet executed
   against the real project. A live verification pass is owed.
@@ -19,5 +19,5 @@ LANE.md wins for scope.
 | 4 — the realtime transport | done — the transport speaks over a real Supabase channel; everything about how messages queue, replay and stop was proven without a server, and the one criterion needing two live players is owed |
 | 5 — recording the match outcome | done — when a match ends, the result is written down: the match row closes with a winner and times, and each player's own record gains a game played, a win if they won, tiles placed, and a best-win time. Written once per match, never decremented. The checks that need a live database are written but not yet run. |
 | 6 — the OnlineMatch façade | done — one object now stands up an online match end to end: a creator opens a lobby and gets an invite code, a friend joins with it, each side watches the other appear, and starting the match hands both players a session with the same tiles in the same order. Whichever of the two sorts first serves the tile pool, so it works the same no matter who created the match, and starting with nobody there refuses and leaves the match untouched. The checks that need two live players are written but not yet run. |
-| 7 — wiring: a whole match over the live project | not started |
+| 7 — wiring: a whole match over the live project | done — there is now one test that plays a whole match the way two real players would: two accounts, one hosts and one joins, both draw tiles through the connection, one wins, and the result is written down. It runs for real against the live database when a key is available; without one it is skipped, and an offline twin of the same script runs every time so the match logic is still checked. |
 | 8 — real Sign in with Apple (below the stop marker) | not started |

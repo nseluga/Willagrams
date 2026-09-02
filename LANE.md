@@ -138,7 +138,7 @@ Fuller context: `README.md` (run/verify commands), `MAP.md` (lane map, symlink h
     - The `matches` row reads `finished` with that winner, and both `profiles` rows carry the stats item 5 specifies
     - With `WILLAGRAMS_LIVE_TESTS` unset the case is reported as skipped and the package stays green
   after: match
-  status: not started
+  status: done — be67ecf; 1 attempt; 10 mutation checks (7 engineer + 3 orchestrator), all caught; criterion 3 executed, criteria 1-2 deferred live (no anon key this session) with a running offline analogue over FakeBackend + SpyTransport
 
 > **⚠️ AUTONOMOUS RUN — STOP HERE**
 
