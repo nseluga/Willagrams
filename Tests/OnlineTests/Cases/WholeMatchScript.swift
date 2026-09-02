@@ -380,6 +380,12 @@ struct WholeMatchOfflineTests {
 
         let guestSession = try await f.guest.awaitStart()
         let creatorSession = try await f.creator.start()
+        // Same guardrail as the live case: a throw below must not walk out
+        // leaving two sessions subscribed.
+        defer {
+            creatorSession.leave()
+            guestSession.leave()
+        }
         await Self.until("the creator is playing") { creatorSession.state.status == .playing }
         await Self.until("the guest is playing") { guestSession.state.status == .playing }
 
@@ -436,8 +442,5 @@ struct WholeMatchOfflineTests {
 
         #expect(f.creator.recorder?.lastError == nil)
         #expect(f.guest.recorder?.lastError == nil)
-
-        creatorSession.leave()
-        guestSession.leave()
     }
 }

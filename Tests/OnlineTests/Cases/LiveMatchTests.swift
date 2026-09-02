@@ -131,6 +131,13 @@ struct LiveMatchTests {
 
         let guestSession = try await guest.awaitStart()
         let creatorSession = try await creator.start()
+        // `defer`, not a trailing pair of calls: a `try` below that throws would
+        // otherwise walk out of this case leaving two channels subscribed, which
+        // is the guardrail this file holds to.
+        defer {
+            creatorSession.leave()
+            guestSession.leave()
+        }
         await Self.until("the creator is playing") { creatorSession.state.status == .playing }
         await Self.until("the guest is playing") { guestSession.state.status == .playing }
         #expect(creatorSession.roster == guestSession.roster)
@@ -178,9 +185,5 @@ struct LiveMatchTests {
 
         #expect(creator.recorder?.lastError == nil)
         #expect(guest.recorder?.lastError == nil)
-
-        // The guardrail: nothing left subscribed when this case ends.
-        creatorSession.leave()
-        guestSession.leave()
     }
 }
