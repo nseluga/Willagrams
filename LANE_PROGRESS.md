@@ -5,7 +5,7 @@ LANE.md wins for scope.
 
 **Current position**
 - Status: in progress — autonomous run started 2026-09-01
-- Next: item 5 — recording the match outcome
+- Next: item 6 — the OnlineMatch façade
 - Blockers: no Supabase anon key is reachable this session, so every
   `WILLAGRAMS_LIVE_TESTS` criterion is written and gated but not yet executed
   against the real project. A live verification pass is owed.
@@ -17,7 +17,7 @@ LANE.md wins for scope.
 | 2 — friendships on the real client | done — players can now send, accept, decline and block friend requests against the real database, with one record per pair and a decline stored as a block. The checks that need a live database are written but not yet run. |
 | 3 — matches on the real client | done — a player can now open a match on the real database and hand out a six-character invite code, and a friend can join with it. Joining goes through the database's own guarded join, never a lookup by code. The checks that need a live database are written but not yet run. |
 | 4 — the realtime transport | done — the transport speaks over a real Supabase channel; everything about how messages queue, replay and stop was proven without a server, and the one criterion needing two live players is owed |
-| 5 — recording the match outcome | not started |
+| 5 — recording the match outcome | done — when a match ends, the result is written down: the match row closes with a winner and times, and each player's own record gains a game played, a win if they won, tiles placed, and a best-win time. Written once per match, never decremented. The checks that need a live database are written but not yet run. |
 | 6 — the OnlineMatch façade | not started |
 | 7 — wiring: a whole match over the live project | not started |
 | 8 — real Sign in with Apple (below the stop marker) | not started |
