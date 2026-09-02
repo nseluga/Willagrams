@@ -246,7 +246,11 @@ public actor SupabaseBackend: BackendClient {
     /// One channel, one subscription, and it is subscribed before this returns
     /// — a caller that has the transport in hand can send straight away.
     public func transport(for match: MatchRecord, as player: PlayerID) async throws -> any MatchTransport {
-        try await mapping {
+        // A previous transport on this same match may still be tearing its
+        // channel down; the client would otherwise hand back that dying
+        // instance.
+        await SupabaseMatchChannel.awaitPendingRemoval(matchID: match.id)
+        return try await mapping {
             try await RealtimeMatchTransport.connect(
                 localPlayerID: player,
                 channel: SupabaseMatchChannel(

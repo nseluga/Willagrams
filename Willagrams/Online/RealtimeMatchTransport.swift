@@ -75,11 +75,22 @@ public actor RealtimeMatchTransport: MatchTransport {
     /// `.zero`, which finishes inline exactly as before.
     private nonisolated let peerGrace: Duration
 
+    /// The production window: `MatchSession.reconnectGraceSeconds` (30) plus
+    /// margin, so the transport outlives the session's own reconnect window
+    /// rather than finishing the streams 25 seconds early and turning
+    /// `MatchSession.peerReturned` into dead code.
+    ///
+    /// ponytail: the two windows are coupled by convention, not by the type
+    /// system — `MatchSession` is `@MainActor`, so its constant is not
+    /// referenceable from this nonisolated default. `defaultPeerGraceCoversTheSessionWindow`
+    /// is the guard that fails if either number moves.
+    static let defaultPeerGrace: Duration = .seconds(35)
+
     /// Builds a transport and returns it only once the channel is subscribed.
     static func connect(
         localPlayerID: PlayerID,
         channel: any MatchChannel,
-        peerGrace: Duration = .seconds(5)
+        peerGrace: Duration = defaultPeerGrace
     ) async throws -> RealtimeMatchTransport {
         let transport = RealtimeMatchTransport(
             localPlayerID: localPlayerID, channel: channel, peerGrace: peerGrace)
@@ -96,7 +107,7 @@ public actor RealtimeMatchTransport: MatchTransport {
         return transport
     }
 
-    init(localPlayerID: PlayerID, channel: any MatchChannel, peerGrace: Duration = .seconds(5)) {
+    init(localPlayerID: PlayerID, channel: any MatchChannel, peerGrace: Duration = defaultPeerGrace) {
         let inbound = AsyncStream.makeStream(of: MatchMessage.self, bufferingPolicy: .unbounded)
         let states = AsyncStream.makeStream(of: PeerConnectionState.self, bufferingPolicy: .unbounded)
         self.localPlayerID = localPlayerID
@@ -145,20 +156,24 @@ public actor RealtimeMatchTransport: MatchTransport {
             // roster is no longer empty, so nothing finishes.
             guard lastLeft else { return }
             let close = { @Sendable in
-                guard peers.isEmpty, peers.finish() else { return }
+                // One lock, not two: an emptiness check and a separate latch
+                // could interleave with a re-join between them.
+                guard peers.finishIfEmpty() else { return }
                 inbound.finish()
                 states.finish()
             }
             if grace == .zero {
                 close()
             } else {
-                // ponytail: one timer per leave. A leave/re-join/leave inside
-                // one window can close on the first timer rather than the
-                // second — a generation counter if that ever matters.
-                Task {
-                    try? await Task.sleep(for: grace)
-                    close()
-                }
+                // Arming replaces any timer still running, so a
+                // leave/re-join/leave inside one window closes on the second
+                // leave's window rather than the first's.
+                peers.armGrace(
+                    Task {
+                        try? await Task.sleep(for: grace)
+                        guard !Task.isCancelled else { return }
+                        close()
+                    })
             }
         }
     }
@@ -183,6 +198,7 @@ public actor RealtimeMatchTransport: MatchTransport {
         // Two latches, not one: the channel has to be torn down even when the
         // streams were already finished by the peer's presence leaving, and it
         // must not be torn down twice when `deinit` follows an explicit call.
+        peers.cancelGrace()  // Nothing left to wait for; don't outlive the match.
         if peers.closeChannel() { channel.leave() }
         guard peers.finish() else { return }  // Calling it twice is harmless.
         inbound.finish()
@@ -202,6 +218,7 @@ private final class PeerRoster: @unchecked Sendable {
     private var players: Set<PlayerID> = []
     private var finished = false
     private var channelClosed = false
+    private var graceTask: Task<Void, Never>?
 
     /// `true` if `player` was not already present.
     func insert(_ player: PlayerID) -> Bool {
@@ -216,6 +233,31 @@ private final class PeerRoster: @unchecked Sendable {
     var isEmpty: Bool { lock.withLock { players.isEmpty } }
 
     var isFinished: Bool { lock.withLock { finished } }
+
+    /// Latches closed only if the roster is still empty, under one lock.
+    /// `true` for the caller that flipped it.
+    func finishIfEmpty() -> Bool {
+        lock.withLock {
+            guard players.isEmpty, !finished else { return false }
+            finished = true
+            return true
+        }
+    }
+
+    /// Holds the pending last-peer grace timer, replacing any predecessor.
+    func armGrace(_ task: Task<Void, Never>) {
+        lock.withLock {
+            graceTask?.cancel()
+            graceTask = task
+        }
+    }
+
+    func cancelGrace() {
+        lock.withLock {
+            graceTask?.cancel()
+            graceTask = nil
+        }
+    }
 
     /// Latches the channel torn down. `true` only for the first caller.
     func closeChannel() -> Bool {

@@ -337,8 +337,14 @@ struct RealtimeMatchTransportTests {
         #expect(states == [.connected(guestID), .disconnected(guestID), .connected(guestID)])
     }
 
-    @Test("A subscribe that throws tears the channel down instead of leaving a caller hanging")
-    func failedSubscribeCleansUp() async throws {
+    /// Proves the end state only: after a refused subscribe the channel is torn
+    /// down exactly once. It does *not* pin down which path got there —
+    /// `connect`'s catch and `deinit` are two routes to the same `leave()`, and
+    /// ARC releases the local transport deterministically when `connect`
+    /// throws, so removing either one alone keeps this green. Removing both is
+    /// red, which is the property that actually matters to a caller.
+    @Test("A refused subscribe does not leave the channel joined")
+    func refusedSubscribeLeavesNothingJoined() async throws {
         struct Refused: Error {}
         let bus = StubBus()
         let channel = bus.channel()
@@ -351,6 +357,79 @@ struct RealtimeMatchTransportTests {
         // `leave()` is the single path that both tears the channel down and
         // finishes the two streams, so seeing it run is seeing both happen.
         #expect(channel.leaves == 1)
+    }
+
+    /// The transport's window has to outlive `MatchSession`'s, or the session's
+    /// reconnect path is dead code over this transport: the streams would
+    /// finish, and `peerReturned` would never be reached. Coupled by
+    /// convention — this is the guard that fails if either number moves.
+    @Test("The default grace window covers the session's reconnect window")
+    @MainActor
+    func defaultPeerGraceCoversTheSessionWindow() {
+        #expect(
+            RealtimeMatchTransport.defaultPeerGrace
+                >= .seconds(MatchSession.reconnectGraceSeconds))
+    }
+
+    /// A second leave restarts the clock rather than inheriting the first
+    /// leave's deadline. Windows are short so the whole sequence — two windows,
+    /// a re-join between them — really elapses inside the case.
+    @Test("A leave inside an open grace window re-arms it instead of closing early")
+    func aSecondLeaveRestartsTheGraceWindow() async throws {
+        let bus = StubBus()
+        let hostChannel = bus.channel()
+        let host = try await connect(hostID, channel: hostChannel, grace: .milliseconds(200))
+        let guestChannel = bus.channel()
+        let guest = try await connect(guestID, channel: guestChannel)
+        defer { _ = guest }  // A discarded transport deinits, and deinit leaves.
+
+        guestChannel.leave()  // First window opens here.
+        try await Task.sleep(for: .milliseconds(50))
+        bus.join(guestChannel, as: guestID)
+        try await Task.sleep(for: .milliseconds(50))
+        guestChannel.leave()  // Second window opens here; the first must not survive.
+
+        // Past the *first* leave's deadline but inside the second's. A stale
+        // timer has fired by now, and the match would already be over.
+        try await Task.sleep(for: .milliseconds(150))
+        try await host.send(.poolExhausted, delivery: .reliable)
+
+        // And the second window still closes the match on its own schedule.
+        try await Task.sleep(for: .milliseconds(200))
+        await #expect(throws: MatchTransportError.self) {
+            try await host.send(.poolExhausted, delivery: .reliable)
+        }
+        let states = try await drain(host.peerConnectionStates)
+        #expect(
+            states == [
+                .connected(guestID), .disconnected(guestID), .connected(guestID),
+                .disconnected(guestID),
+            ])
+    }
+
+    /// 2.55.1 rejoins a channel without re-sending presence, so a socket blip
+    /// would make this endpoint permanently absent to its peer. The gate is the
+    /// decision that fixes it; it is kept SDK-free so it can be driven here
+    /// without a project.
+    @Test("Presence is re-tracked on a rejoin, but not on the first subscribe or after leaving")
+    func rejoiningRetracksPresence() {
+        let gate = RetrackGate()
+        gate.track(hostID)
+
+        // The registration replay of the status we are already in.
+        #expect(gate.player(subscribed: true) == nil)
+
+        // A drop and a rejoin.
+        #expect(gate.player(subscribed: false) == nil)
+        #expect(gate.player(subscribed: true) == hostID)
+
+        // A repeat of `.subscribed` without an intervening drop is not a rejoin.
+        #expect(gate.player(subscribed: true) == nil)
+
+        // Nothing re-tracks a channel that has been left.
+        gate.close()
+        #expect(gate.player(subscribed: false) == nil)
+        #expect(gate.player(subscribed: true) == nil)
     }
 
     /// Invisible to any offline behavioural test — the stub channel has no
@@ -368,9 +447,21 @@ struct RealtimeMatchTransportTests {
             encoding: .utf8)
 
         // `unsubscribe` alone leaves the channel in `RealtimeClientV2.channels`,
-        // so every match leaks an entry and the socket never tears down.
-        #expect(source.contains("removeChannel(channel)"))
-        #expect(!source.contains("await channel.unsubscribe()"))
+        // so every match leaks an entry and the socket never tears down. But
+        // `removeChannel` only unsubscribes when the status is exactly
+        // `.subscribed`, so an explicit unsubscribe has to come first or a
+        // teardown mid-join drops the channel with its join still in flight.
+        let unsubscribe = source.range(of: "await channel.unsubscribe()")
+        let remove = source.range(of: "await realtime.removeChannel(channel)")
+        #expect(unsubscribe != nil)
+        #expect(remove != nil)
+        if let unsubscribe, let remove { #expect(unsubscribe.upperBound < remove.lowerBound) }
+
+        // The SDK rejoins without presence after a socket drop, so the endpoint
+        // has to track again on a return to `.subscribed`. Invisible offline
+        // for the same reason: the stub has no socket to drop.
+        #expect(source.contains("channel.onStatusChange"))
+        #expect(source.contains("retrack.player(subscribed: subscribed)"))
     }
 
     // MARK: - Framing
