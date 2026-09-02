@@ -104,7 +104,7 @@ Fuller context: `README.md` (run/verify commands), `MAP.md` (lane map, symlink h
     - The guest calling `leave()` delivers `.disconnected(guest)` on the host's `peerConnectionStates` and then finishes it; the caller's own two streams finish on `leave()`
     - `send(_:delivery: .lossy)` and `.reliable` both arrive; a send before any peer is present neither throws nor blocks
   caution: true
-  status: not started
+  status: done — e0d9040; QA PASS, review 0 Critical / 0 Important; criteria 2-4 executed and mutation-verified offline, criterion 1 (two transports on the live project) deferred (no anon key this session)
 
 - task: Recording the match outcome. `Willagrams/Online/MatchOutcomeRecorder.swift` takes a `MatchRecord`, the local `PlayerID`, and a `MatchSession`, and observes the session's state. The match's creator (`record.hostID`) updates the `matches` row to `status = 'playing', started_at = now()` when the session enters `.playing`, and to `status = 'finished', finished_at = now(), winner_id = <winner>` when it ends with a winner. Every player, once per finished match, updates their own `profiles` row: `matches_played + 1`, `matches_won + 1` if they won, `tiles_placed + <tiles they placed>`, and `fastest_win_seconds` set only if they won and the elapsed seconds are lower than the current value or the current value is null. Elapsed is measured from `.playing` to finished on the local clock.
   guardrails:
