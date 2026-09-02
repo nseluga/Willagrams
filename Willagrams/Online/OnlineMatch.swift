@@ -25,11 +25,6 @@ public enum OnlineMatchError: Error, Sendable, Equatable {
     /// actually held, so a caller can say "waiting for 1 more".
     case lobbyNotReady(Int)
 
-    /// This device is not `roster[0]`, so it does not open the match — the
-    /// frozen rule hands the pool, and with it the start, to the lowest
-    /// `rawValue` in the roster, whoever happened to create the lobby.
-    case notPoolHost
-
     /// No signed-in user to play as.
     case notAuthenticated
 }
@@ -253,43 +248,58 @@ public final class OnlineMatch {
 
     // MARK: - Opening the match
 
-    /// Opens the match from this device and hands back the live session.
+    /// Hands back the live session for the device that created the lobby.
     ///
     /// Refuses — writing nothing and sending nothing — unless the lobby holds
-    /// exactly two players and this device is the one the frozen rule elects.
+    /// exactly two players.
+    ///
+    /// Creating the lobby is not what opens the match: the frozen rule gives
+    /// the pool, and with it the `.start`, to `roster[0]`. A creator that does
+    /// not sort first gets a perfectly live session that plays the receiving
+    /// side, rather than an error — a match must not be undealable because two
+    /// UUIDs happened to fall the wrong way round.
     public func start() async throws -> MatchSession {
         guard lobby.count == 2 else { throw OnlineMatchError.lobbyNotReady(lobby.count) }
         let roster = Self.roster(from: lobby)
-        // Not `record.hostID`: whoever created the lobby, the pool — and so the
-        // start — belongs to `roster[0]`, which both devices compute alike.
-        guard HostPool.host(of: roster) == localPlayer else {
-            throw OnlineMatchError.notPoolHost
-        }
         let session = makeSession(roster: roster)
-        // `startMatch` builds and sends the `.start` and applies it locally. The
-        // seed is the row's, never a second draw.
+        // Never `record.hostID`. Both devices compute this from the same sorted
+        // roster, so exactly one of them opens and there is no negotiation.
+        if HostPool.host(of: roster) == localPlayer { open(session) }
+        attachRecorder(to: session)
+        return session
+    }
+
+    /// Hands back the live session for the device that joined by code.
+    ///
+    /// The roster comes from `match_players` rather than from presence: it is
+    /// the same set that travels on `.start`, sorted the same way, so both
+    /// devices elect the same opener and the message validates on arrival.
+    ///
+    /// Opens the match itself when this device is `roster[0]`; otherwise the
+    /// session takes the opener's `.start` off the transport by itself.
+    public func awaitStart() async throws -> MatchSession {
+        let rows = try await backend.players(inMatch: record.id)
+        let roster = Self.roster(from: rows.map { PlayerID(rawValue: $0.playerID.uuidString) })
+        guard roster.count == 2 else { throw OnlineMatchError.lobbyNotReady(roster.count) }
+        let session = makeSession(roster: roster)
+        if HostPool.host(of: roster) == localPlayer { open(session) }
+        attachRecorder(to: session)
+        return session
+    }
+
+    /// Sends the `.start` and applies it locally, from the one device the
+    /// roster elects.
+    ///
+    /// `MatchSession.startMatch` carries its own `roster[0]` guard, so this is
+    /// belt and braces rather than the only rule — but the seed and the two
+    /// constants are read here, in one place, whichever entry point called.
+    private func open(_ session: MatchSession) {
         session.startMatch(
             seed: record.poolSeed,
             startingHandSize: Self.startingHandSize,
             countdownSeconds: Self.countdownSeconds,
             options: record.options
         )
-        attachRecorder(to: session)
-        return session
-    }
-
-    /// Builds the session a guest plays, and lets it take the host's `.start`
-    /// off the transport by itself.
-    ///
-    /// The roster comes from `match_players` rather than from presence: it is
-    /// the same set the host sends, sorted the same way, so both devices elect
-    /// the same host and the arriving `.start` validates.
-    public func awaitStart() async throws -> MatchSession {
-        let rows = try await backend.players(inMatch: record.id)
-        let roster = Self.roster(from: rows.map { PlayerID(rawValue: $0.playerID.uuidString) })
-        let session = makeSession(roster: roster)
-        attachRecorder(to: session)
-        return session
     }
 
     /// The roster every device computes, from whatever order it learned the

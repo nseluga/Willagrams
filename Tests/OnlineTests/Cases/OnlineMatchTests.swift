@@ -178,29 +178,101 @@ struct OnlineMatchOfflineTests {
         #expect(row?.status == .lobby, "a refused start moved the matches row off lobby")
     }
 
-    @Test("The creator that is not roster[0] defers rather than opening the match")
-    func theCreatorNeverAssumesItHostsThePool() async throws {
-        // "C" sorts above "B": the creator is the *second* element of the
-        // roster, so the frozen rule hands the pool — and the start — to the
-        // guest.
-        let f = try await Self.fixture(creatorToken: "C", guestToken: "B")
-        #expect(f.guestPlayer.rawValue < f.creatorPlayer.rawValue)
-        #expect(f.creator.record.hostID.uuidString == f.creatorPlayer.rawValue)
+    // MARK: - Opening the match, from whichever side the roster elects
 
+    /// Drives one whole pairing to `.playing` and reports what each endpoint put
+    /// on the wire.
+    ///
+    /// Both direction cases run through this, so "exactly one `.start` crosses
+    /// the channel" is asserted the same way for each — two openers racing is
+    /// precisely the failure the roster rule exists to prevent.
+    static func playThrough(
+        creatorToken: String,
+        guestToken: String
+    ) async throws -> (f: Fixture, creatorSession: MatchSession, guestSession: MatchSession) {
+        let f = try await fixture(creatorToken: creatorToken, guestToken: guestToken)
         f.creatorWire.announce(.connected(f.guestPlayer))
-        await Self.until("the creator sees the guest") { f.creator.lobby.count == 2 }
+        f.guestWire.announce(.connected(f.creatorPlayer))
+        await until("two in the creator's lobby") { f.creator.lobby.count == 2 }
+        await until("two in the guest's lobby") { f.guest.lobby.count == 2 }
 
-        await #expect(throws: OnlineMatchError.notPoolHost) {
-            _ = try await f.creator.start()
-        }
+        let guestSession = try await f.guest.awaitStart()
+        let creatorSession = try await f.creator.start()
 
-        #expect(f.creatorWire.sent.isEmpty, "the creator opened a match it does not host")
-        #expect(f.creatorStore.calls.isEmpty)
-        let row = await f.backend.matchRecord(f.creator.record.id)
-        #expect(row?.status == .lobby, "a refused start moved the matches row off lobby")
+        await until("the creator is playing") { creatorSession.state.status == .playing }
+        await until("the guest is playing") { guestSession.state.status == .playing }
+        return (f, creatorSession, guestSession)
     }
 
-    // MARK: - Opening the match
+    /// Everything both devices must agree about, whoever opened the match.
+    static func expectAgreement(
+        _ f: Fixture,
+        _ creatorSession: MatchSession,
+        _ guestSession: MatchSession
+    ) async {
+        let expected = [f.creatorPlayer, f.guestPlayer].sorted { $0.rawValue < $1.rawValue }
+        #expect(creatorSession.roster == expected)
+        #expect(guestSession.roster == expected)
+        #expect(creatorSession.options == Self.options)
+        #expect(guestSession.options == Self.options)
+        #expect(creatorSession.startingHandSize == 21)
+        #expect(guestSession.startingHandSize == 21)
+
+        // Exactly one `.start`, and it carries the row's seed. Counted on both
+        // endpoints: a second opener would show up as a start from the other
+        // side, not as a missing one.
+        let sent = starts(f.creatorWire.sent) + starts(f.guestWire.sent)
+        #expect(sent.count == 1, "the roster elected \(sent.count) openers")
+        guard case let .start(version, seed, handSize, countdown, options, roster) = sent[0] else {
+            Issue.record("no start crossed the channel")
+            return
+        }
+        #expect(version == WireFormat.current)
+        #expect(seed == f.creator.record.poolSeed)
+        #expect(handSize == 21)
+        #expect(countdown == 3)
+        #expect(options == Self.options)
+        #expect(roster == expected)
+
+        await until("the creator is dealt in") { creatorSession.state.hand.count == 21 }
+        await until("the guest is dealt in") { guestSession.state.hand.count == 21 }
+    }
+
+    static func starts(_ messages: [MatchMessage]) -> [MatchMessage] {
+        messages.filter { if case .start = $0 { true } else { false } }
+    }
+
+    @Test("The creator that sorts first opens the match, and only it sends a start")
+    func theCreatorOpensWhenItIsRosterZero() async throws {
+        // "A" sorts below "B": the creator is `roster[0]`.
+        let (f, creatorSession, guestSession) = try await Self.playThrough(
+            creatorToken: "A", guestToken: "B")
+        #expect(f.creatorPlayer.rawValue < f.guestPlayer.rawValue)
+        await Self.expectAgreement(f, creatorSession, guestSession)
+        #expect(Self.starts(f.creatorWire.sent).count == 1)
+        #expect(Self.starts(f.guestWire.sent).isEmpty)
+        // The receiving side never even attempted an open: `startMatch` leaves
+        // "only the host opens the match" behind when it refuses one, so a nil
+        // note is what says the façade never asked.
+        #expect(guestSession.lastNote == nil)
+    }
+
+    @Test("The guest opens the match when the creator does not sort first")
+    func theGuestOpensWhenTheCreatorIsNotRosterZero() async throws {
+        // "C" sorts above "B": the *creator* is `roster[1]`, so the guest opens
+        // and the creator plays the receiving side. Insertion order (creator
+        // then guest, in the lobby and in the membership rows) is the reverse of
+        // sorted order, so a roster that skipped the sort would elect the wrong
+        // device here.
+        let (f, creatorSession, guestSession) = try await Self.playThrough(
+            creatorToken: "C", guestToken: "B")
+        #expect(f.guestPlayer.rawValue < f.creatorPlayer.rawValue)
+        #expect(f.creator.record.hostID.uuidString == f.creatorPlayer.rawValue)
+        await Self.expectAgreement(f, creatorSession, guestSession)
+        #expect(Self.starts(f.guestWire.sent).count == 1)
+        #expect(Self.starts(f.creatorWire.sent).isEmpty, "the creator opened a match it does not host")
+        #expect(creatorSession.lastNote == nil, "the creator attempted an open it does not own")
+    }
 
     @Test("The start message carries the row's seed and this file's two constants")
     func theStartMessageCarriesTheRowsSeed() async throws {
@@ -229,43 +301,6 @@ struct OnlineMatchOfflineTests {
         // `bigint` the backend stored, and nothing else in this process holds it.
         #expect(f.creator.record.poolSeed == UInt64(f.creator.record.seed))
         #expect(f.creator.record.seed >= 0)
-    }
-
-    @Test("Both devices reach playing with the same roster and the same options")
-    func bothDevicesReachPlaying() async throws {
-        let f = try await Self.fixture(creatorToken: "A", guestToken: "B")
-        f.creatorWire.announce(.connected(f.guestPlayer))
-        f.guestWire.announce(.connected(f.creatorPlayer))
-        await Self.until("two in the creator's lobby") { f.creator.lobby.count == 2 }
-        await Self.until("two in the guest's lobby") { f.guest.lobby.count == 2 }
-
-        let guestSession = try await f.guest.awaitStart()
-        let creatorSession = try await f.creator.start()
-
-        await Self.until("the creator is playing") { creatorSession.state.status == .playing }
-        await Self.until("the guest is playing") { guestSession.state.status == .playing }
-
-        let expected = [f.creatorPlayer, f.guestPlayer].sorted { $0.rawValue < $1.rawValue }
-        #expect(creatorSession.roster == expected)
-        #expect(guestSession.roster == expected)
-        #expect(creatorSession.roster == guestSession.roster)
-        #expect(creatorSession.options == Self.options)
-        #expect(guestSession.options == Self.options)
-        #expect(creatorSession.startingHandSize == 21)
-        #expect(guestSession.startingHandSize == 21)
-        // The seed both sides played is the one that travelled, which is the
-        // row's. Nothing else on either device could have supplied it.
-        #expect(f.guestWire.received.contains { message in
-            guard case let .start(_, seed, _, _, _, _) = message else { return false }
-            return seed == f.creator.record.poolSeed
-        })
-
-        // Same seed, same deal: two devices that disagreed about the seed would
-        // hold different opening hands off the same host pool.
-        await Self.until("the creator is dealt in") { !creatorSession.state.hand.isEmpty }
-        await Self.until("the guest is dealt in") { !guestSession.state.hand.isEmpty }
-        #expect(creatorSession.state.hand.count == 21)
-        #expect(guestSession.state.hand.count == 21)
     }
 
     // MARK: - The guest's roster
