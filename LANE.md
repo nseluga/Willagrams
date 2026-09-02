@@ -127,7 +127,7 @@ Fuller context: `README.md` (run/verify commands), `MAP.md` (lane map, symlink h
     - Creator and guest each hold a `MatchSession` that reaches `.playing` with the same seed, the same sorted two-player roster, and the same `MatchOptions`
     - `start()` with an empty lobby throws, and afterwards the `matches` row still reads `lobby`
     - The guest's `lobby` shows two players before the creator calls `start()`, and the creator's `lobby` shows the guest within the transport's presence delivery
-  status: not started
+  status: done — ffa8cfe; 2 attempts; 11 mutation checks; criteria 1-3 executed offline (criterion 1 including a creator that is not roster[0]), live two-client forms deferred (no anon key this session)
 
 - task: Wiring — this lane calls `match`. `Tests/OnlineTests/Cases/LiveMatchTests.swift` plays a whole match through real `MatchSession`s over the live project: two `SupabaseBackend`s with two fresh anonymous users, `OnlineMatch.host` and `OnlineMatch.join`, `start()` and `awaitStart()`, then each session draws through the channel (`drawRequest` → `grant` across the wire, the pool host serving both), the guest claims a win the host pool accepts, and the recorder lands the rows. This is the call site that proves the adapter, the façade and the session agree; every other item's test is a fragment of it.
   guardrails:
