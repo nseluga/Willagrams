@@ -172,6 +172,14 @@ private func drain<T: Sendable>(
 
 private struct StreamTimedOut: Error {}
 
+/// Order of completion, from tasks that finish on whatever thread they like.
+private final class Recorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [String] = []
+    func record(_ entry: String) { lock.withLock { seen.append(entry) } }
+    var entries: [String] { lock.withLock { seen } }
+}
+
 @Suite("Realtime transport, stream contract")
 struct RealtimeMatchTransportTests {
 
@@ -462,6 +470,65 @@ struct RealtimeMatchTransportTests {
         // for the same reason: the stub has no socket to drop.
         #expect(source.contains("channel.onStatusChange"))
         #expect(source.contains("retrack.player(subscribed: subscribed)"))
+
+        // ...and the gate has to be closed *by* `leave()`, or a re-track can
+        // still fire on a channel the match is done with.
+        #expect(leaveBody(of: source).contains("retrack.close()"))
+    }
+
+    /// The body of the file's `leave()`. Text, not behaviour — a leaked timer
+    /// and a late re-track are both invisible to the stub, which has no socket
+    /// to drop and no clock to leak.
+    private func leaveBody(of source: String) -> String {
+        guard let start = source.range(of: "func leave() {"),
+            let end = source.range(of: "\n    }", range: start.upperBound ..< source.endIndex)
+        else { return "" }
+        return String(source[start.upperBound ..< end.lowerBound])
+    }
+
+    @Test("leave() cancels the grace timer rather than leaving a 35-second task running")
+    func leaveCancelsTheGraceTimer() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // Cases
+                .deletingLastPathComponent()  // OnlineTests
+                .deletingLastPathComponent()  // Tests
+                .deletingLastPathComponent()  // repo root
+                .appendingPathComponent("Willagrams/Online/RealtimeMatchTransport.swift"),
+            encoding: .utf8)
+        #expect(leaveBody(of: source).contains("peers.cancelGrace()"))
+    }
+
+    /// Teardown is async and `leave()` is not, so a new transport on the same
+    /// match has to wait the old one's removal out. Driveable offline: the
+    /// bookkeeping is a dictionary of tasks, not a socket.
+    @Test("A pending removal is awaited, and a second one queues behind the first")
+    func pendingRemovalsSequenceByTopic() async throws {
+        let removals = PendingRemovals()
+        let order = Recorder()
+
+        await removals.wait("match:absent")  // Nothing pending: returns at once.
+
+        removals.begin("match:a") {
+            try? await Task.sleep(for: .milliseconds(50))
+            order.record("first")
+        }
+        removals.begin("match:a") { order.record("second") }
+
+        // A different topic is independent, so it gets its own recorder rather
+        // than racing into this one's ordering.
+        let other = Recorder()
+        removals.begin("match:b") { other.record("other") }
+
+        await removals.wait("match:a")
+        #expect(order.entries == ["first", "second"])
+
+        // The entry cleared itself, so waiting again is not a second wait on a
+        // task that already ran.
+        await removals.wait("match:a")
+        await removals.wait("match:b")
+        #expect(order.entries == ["first", "second"])
+        #expect(other.entries == ["other"])
     }
 
     // MARK: - Framing

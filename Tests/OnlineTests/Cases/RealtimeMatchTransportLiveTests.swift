@@ -121,7 +121,11 @@ struct RealtimeMatchTransportLiveTests {
                 return seen
             }
             group.addTask {
-                try await Task.sleep(for: .seconds(30))
+                // Derived, not a literal: the host's stream finishes a whole
+                // grace window after the guest leaves, so a deadline sized
+                // against a stale number times out every run. Moving the
+                // production default moves this with it.
+                try await Task.sleep(for: RealtimeMatchTransport.defaultPeerGrace + .seconds(25))
                 throw LiveTransportTimedOut()
             }
             let result = try await group.next()!
