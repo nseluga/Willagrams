@@ -267,6 +267,16 @@ struct SupabaseMatchesOfflineTests {
             #expect(backend.contains(forward), "SupabaseBackend never calls \(forward)")
         }
 
+        #expect(
+            !backend.contains("notAuthenticated // item 6"),
+            "SupabaseBackend still carries the placeholder transport body")
+        #expect(
+            backend.contains("RealtimeMatchTransport.connect"),
+            "SupabaseBackend never builds a RealtimeMatchTransport")
+        #expect(
+            backend.contains("SupabaseMatchChannel("),
+            "SupabaseBackend never builds the realtime channel the transport runs on")
+
         let matches = try String(
             contentsOf: online.appendingPathComponent("SupabaseBackend+Matches.swift"), encoding: .utf8)
         #expect(

@@ -243,7 +243,14 @@ public actor SupabaseBackend: BackendClient {
         try await matchPlayerRows(inMatch: matchID)
     }
 
+    /// One channel, one subscription, and it is subscribed before this returns
+    /// — a caller that has the transport in hand can send straight away.
     public func transport(for match: MatchRecord, as player: PlayerID) async throws -> any MatchTransport {
-        throw BackendError.notAuthenticated // item 6
+        try await mapping {
+            try await RealtimeMatchTransport.connect(
+                localPlayerID: player,
+                channel: SupabaseMatchChannel(
+                    realtime: realtime, matchID: match.id, localPlayerID: player))
+        }
     }
 }
