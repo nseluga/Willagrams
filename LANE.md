@@ -77,7 +77,7 @@ Fuller context: `README.md` (run/verify commands), `MAP.md` (lane map, symlink h
     - A third anonymous user's `friendships()` contains zero rows for that pair
     - A second `requestFriend` for the same pair from either direction throws `alreadyExists`
     - Responding to a request that does not exist throws `notFound`
-  status: not started
+  status: done — 50b0947; offline core proven (5 mutation checks), all 4 live criteria deferred (no anon key this session)
   parallel-group: b
 
 - task: Matches on the real client. `Willagrams/Online/SupabaseBackend+Matches.swift` implements `createMatch(options:seed:)`, `joinMatch(inviteCode:)` and `players(inMatch:)`. `createMatch` inserts the `matches` row with a random `[A-Z0-9]{6}` invite code (retry once on a unique violation), `wire_version = WireFormat.current`, the signed seed, `options` encoded through `BackendCoding.encoder`, `status = 'lobby'`, and then inserts the host's own `match_players` row so the host is a participant like everyone else. `joinMatch` calls `rpc("join_match", params: ["code": code])` and decodes the returned `matches` row; P0002 maps to `notFound`, P0005 to `matchFull`. `players(inMatch:)` selects the roster ordered by `joined_at`.
