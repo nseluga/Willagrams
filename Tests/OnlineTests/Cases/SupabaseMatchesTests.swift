@@ -282,5 +282,22 @@ struct SupabaseMatchesOfflineTests {
         #expect(
             !matches.contains("throw SupabaseMatchesUnwired()"),
             "matchQueries() still throws instead of building the real queries")
+
+        // The outcome store is the same hazard one file over: every offline
+        // test of the recorder runs against a double, so a store whose bodies
+        // never reached PostgREST would keep the whole suite green and write
+        // nothing in production.
+        let outcome = try String(
+            contentsOf: online.appendingPathComponent("SupabaseBackend+Outcome.swift"),
+            encoding: .utf8)
+        for fragment in [
+            "rest.from(\"matches\")", "rest.from(\"profiles\")", ".update(", ".select()",
+            "SupabaseOutcomeQueries(rest: rest",
+        ] {
+            #expect(outcome.contains(fragment), "the outcome store never reaches PostgREST: \(fragment)")
+        }
+        #expect(
+            !outcome.contains("fatalError") && !outcome.contains("// TODO"),
+            "the outcome store still carries a placeholder body")
     }
 }
