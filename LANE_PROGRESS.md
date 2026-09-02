@@ -15,7 +15,7 @@ LANE.md wins for scope.
 |------|--------|
 | 1 — the concrete Supabase client and its session | done — the app can now talk to the real Willagrams database: it signs a player in, creates their profile with an eight-character friend code the first time, and turns database errors into the app's own error list. The checks that need a live database are written but not yet run. |
 | 2 — friendships on the real client | done — players can now send, accept, decline and block friend requests against the real database, with one record per pair and a decline stored as a block. The checks that need a live database are written but not yet run. |
-| 3 — matches on the real client | not started |
+| 3 — matches on the real client | done — a player can now open a match on the real database and hand out a six-character invite code, and a friend can join with it. Joining goes through the database's own guarded join, never a lookup by code. The checks that need a live database are written but not yet run. |
 | 4 — the realtime transport | not started |
 | 5 — recording the match outcome | not started |
 | 6 — the OnlineMatch façade | not started |

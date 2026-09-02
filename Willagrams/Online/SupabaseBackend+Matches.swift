@@ -273,7 +273,7 @@ extension SupabaseBackend {
     /// The one unwired line in this file. See the header: `rest` and `auth` are
     /// `private` to `SupabaseBackend.swift`, which a parallel item owns.
     func matchQueries() throws -> SupabaseMatchQueries {
-        throw SupabaseMatchesUnwired()
+        SupabaseMatchQueries(rest: rest, hasSession: auth.currentSession != nil)
     }
 
     func createMatchRow(options: MatchOptions, seed: Int64) async throws -> MatchRecord {

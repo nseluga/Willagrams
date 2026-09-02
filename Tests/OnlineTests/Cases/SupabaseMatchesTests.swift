@@ -243,4 +243,34 @@ struct SupabaseMatchesOfflineTests {
             }
         }
     }
+
+    /// The three protocol methods forward to the real queries. Nothing else in
+    /// the suite covers them — a live call is the only other witness — so a
+    /// silent revert to the placeholder bodies would surface first in
+    /// production, as `notAuthenticated` on every host and join.
+    @Test("createMatch, joinMatch and players are wired, not still stubbed")
+    func theProtocolMethodsAreWired() throws {
+        let online = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()               // Cases
+            .deletingLastPathComponent()               // OnlineTests
+            .deletingLastPathComponent()               // Tests
+            .deletingLastPathComponent()               // repo root
+            .appendingPathComponent("Willagrams/Online")
+
+        let backend = try String(
+            contentsOf: online.appendingPathComponent("SupabaseBackend.swift"), encoding: .utf8)
+        #expect(
+            !backend.contains("notAuthenticated // item 5"),
+            "SupabaseBackend still carries the placeholder match bodies")
+        for call in ["createMatchRow(options:", "joinMatchRow(inviteCode:", "matchPlayerRows(inMatch:"] {
+            let forward = String(call.prefix(while: { $0 != "(" }))
+            #expect(backend.contains(forward), "SupabaseBackend never calls \(forward)")
+        }
+
+        let matches = try String(
+            contentsOf: online.appendingPathComponent("SupabaseBackend+Matches.swift"), encoding: .utf8)
+        #expect(
+            !matches.contains("throw SupabaseMatchesUnwired()"),
+            "matchQueries() still throws instead of building the real queries")
+    }
 }

@@ -19,7 +19,7 @@ import WillagramsRules
 
 public actor SupabaseBackend: BackendClient {
 
-    private let auth: AuthClient
+    let auth: AuthClient
     let rest: PostgrestClient
 
     /// Built here rather than in item 8, so the whole client has one token
@@ -232,15 +232,15 @@ public actor SupabaseBackend: BackendClient {
     // MARK: - Not yet
 
     public func createMatch(options: MatchOptions, seed: Int64) async throws -> MatchRecord {
-        throw BackendError.notAuthenticated // item 5
+        try await createMatchRow(options: options, seed: seed)
     }
 
     public func joinMatch(inviteCode: String) async throws -> MatchRecord {
-        throw BackendError.notAuthenticated // item 5
+        try await joinMatchRow(inviteCode: inviteCode)
     }
 
     public func players(inMatch matchID: UUID) async throws -> [MatchPlayerRow] {
-        throw BackendError.notAuthenticated // item 5
+        try await matchPlayerRows(inMatch: matchID)
     }
 
     public func transport(for match: MatchRecord, as player: PlayerID) async throws -> any MatchTransport {
