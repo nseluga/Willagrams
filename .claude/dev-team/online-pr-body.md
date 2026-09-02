@@ -60,3 +60,58 @@ before merging.
 - **What worked:** Factoring criteria 1 and 2 into one `@MainActor enum WholeMatchScript` with an injected `Waiter` closure — live derives its deadline from `MatchSession.reconnectGraceSeconds`, offline counts scheduler turns. Deriving the draw ledger from `hand.count + pendingDrawTiles.count` rather than a transport spy, since `HostPool` deals a round to every player or to none — that makes "granted on one side, observed on the other" decidable from session state, which the live case has and a spy does not. Seeding offline profile rows 5/2/77/120 and 3/1/40/90 and asserting deltas, so the same helper reads correctly against a fresh live anonymous profile. Forcing the gate open with a junk key is a cheap, decisive proof that a live case is not a silent no-op — do this on every live item.
 - **What failed:** none. Mutation results: 7 engineer mutations + 3 independent orchestrator mutations, 10/10 caught by a named test. Two of my three landed on the new whole-match case (`matches` row never goes through `.playing` → `row.startedAt == nil`; `matches_played + 2` → the delta assertion). The third — dropping `isCreator` from the recorder's `.finished` write so the guest also writes the `matches` row — was caught only by item 5's `SpyOutcomeStore` test, not by the new case: one shared `MemoryOutcomeStore` makes a duplicate write idempotent and therefore invisible. That is the right division of labour (item 5 owns that rule), but it is a real blind spot in the whole-match double.
 - **Remember next run:** (1) `.claude/dev-team/analyze-report.md` is gitignored, so it does NOT travel into a fresh worktree — a spawn prompt that promises one is often wrong; check before briefing an agent to read it, and note that sibling worktrees' reports cover other lanes. (2) Never `pgrep -fl` a swift build to poll for completion — the full compiler command lines are enormous and will flood context; poll the background task's output file for non-emptiness instead. (3) `swift test --filter` matches the *type* name, not the `@Suite` display string: `--filter LiveMatchTests` works, `--filter 'whole match, live'` silently runs 0 tests and reports green — a real vacuous-pass trap when using a filter to prove a live case fires. (4) A test whose guardrail is "leaves no dangling subscription" must put teardown in a `defer`, not in trailing calls — a throwing `try` above them skips the cleanup, and the guardrail then only holds on the happy path. (5) When grepping a mutation run for failures, do not `head -N` the output: a truncated failure list made one mutation look uncaught when it was caught.
+
+## Lane acceptance review (fresh dt-review, against the merged diff)
+
+No criterion unmet, no guardrail violated, verdict: merge. Of the 25 `done when:`
+criteria across items 1–7 — 12 MET by executing tests, 4 MIXED (offline half
+executed, live half deferred), 9 DEFERRED-LIVE, 0 UNMET.
+
+Guardrails all confirmed clean against the lane's own diff (`0adc89c...lane/online`,
+28 files, +5715/−10): the SDK-free seam holds, no credential of any kind appears in
+the diff, `supabase/migrations/**` is untouched, `signInAnonymously()` is `#if DEBUG`
+only, nothing under `Willagrams/Match/**` was modified so no stored property reached
+`MatchSession`, and nothing was written through the `MatchSrc` symlink.
+
+**Two Important findings, both owed to the live pass rather than fixed here:**
+
+1. `Willagrams/Online/SupabaseConfig.swift:14` — `anonKey` reads
+   `ProcessInfo.processInfo.environment["SUPABASE_ANON_KEY"] ?? ""`. A shipped iOS
+   app has no such variable, so every Release backend call would go out with an
+   empty apikey and the online path is dead on device. LANE.md's global rule says
+   this file holds the project URL *and the anon key*; it currently holds only the
+   URL. This is also why the live pass is **blocked**, not merely deferred — no key
+   was reachable this session. Fix: a literal constant or an Info.plist/xcconfig
+   value read at launch, keeping the env var as a test override only.
+2. `Willagrams/Online/SupabaseBackend+Outcome.swift:104` — profile stats are a blind
+   read-modify-write, so two matches finishing concurrently on one account lose an
+   increment, last-write-wins. Fix: a Postgres-side `matches_played = matches_played + 1`,
+   which is a `/foundation` amendment since migrations are protected.
+
+Four Minor findings also recorded: a stale hand-apply header and now-unreachable
+`SupabaseMatchesUnwired` in `SupabaseBackend+Matches.swift`, two independent copies
+of the same 36-character code alphabet, a `hasSession` snapshotted once per match
+rather than read live, and two `ponytail:`-marked fault-tolerance ceilings in
+`MatchOutcomeRecorder` that are accepted with their upgrade paths written down.
+
+The reviewer explicitly checked the traps this lane had already hit and found them
+handled: no double-guard vacuity (the non-opening side asserts `lastNote == nil`),
+RLS-hidden UPDATEs gated client-side rather than expected to throw, every test
+deadline derived from `MatchSession.reconnectGraceSeconds` rather than written as a
+literal, all 14 live tests genuinely gated on both the flag and a non-empty key, and
+the directory-enumerating source scan filtering `/.claude/`.
+
+## Full suite on the merged branch
+
+engine 53 · Board 253 · Match 125 · Style 30 · Shell 125 · Settings 36 · Bot 68 ·
+Online 124 (22 of them the gated live cases) · Audio 19 — plus
+`xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build`
+BUILD SUCCEEDED. The first Bot run reported one issue; BotTests passed 68/68 on two
+consecutive re-runs and this lane touches no file under `Willagrams/Bot/**`, so it is
+a flake in a timing-sensitive pacing test, not a regression.
+
+66 orchestrator mutation checks across the seven items, all caught by a named test.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+https://claude.ai/code/session_014ux9HKudcT8xZGZY7dy88T
