@@ -14,7 +14,9 @@
 //
 //  `PostgrestQueryBuilder.update` defaults to `.representation`, which asks the
 //  server to send the updated row back — and that read is a *second* policy
-//  check. Neither caller here wants the row, so neither pays for it.
+//  check. The `matches` writes here do not want the row, so they do not pay for
+//  it. The stats bump is not an update at all: it is `record_outcome`, which
+//  returns its row from inside the same statement that wrote it.
 //
 //  ## What an RLS refusal looks like on an update
 //
@@ -101,14 +103,44 @@ struct SupabaseOutcomeQueries: MatchOutcomeStore {
         return profile
     }
 
-    func updateProfile(_ id: UUID, _ stats: ProfileStats) async throws {
-        _ = try await mapping {
-            try await rest.from("profiles")
-                .update(stats, returning: .minimal)
-                .eq("id", value: id.uuidString)
+    /// The three deltas `record_outcome` takes. `id` is deliberately not among
+    /// them: the function reads the caller from `auth.uid()`, so there is no
+    /// row for a client to name and therefore no wrong one it can name.
+    private struct OutcomeParams: Encodable {
+        let won: Bool
+        let tiles: Int
+        let elapsedSeconds: Int
+
+        enum CodingKeys: String, CodingKey {
+            case won
+            case tiles
+            case elapsedSeconds = "elapsed_seconds"
+        }
+    }
+
+    /// One statement on the server, so the counters cannot be computed from a
+    /// row a concurrent match has already moved. `42501` with no session and
+    /// `P0002` with no profile row; `SupabaseBackend.backendError` maps both.
+    ///
+    /// `id` is the caller's own and is not sent — see ``OutcomeParams``. It
+    /// stays in the signature because the offline doubles hold more than one
+    /// row and have to be told which.
+    @discardableResult
+    func recordOutcome(
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+    ) async throws -> Profile {
+        let row = try await mapping {
+            try await rest
+                .rpc(
+                    "record_outcome",
+                    params: OutcomeParams(
+                        won: won, tiles: tilesPlaced, elapsedSeconds: elapsedSeconds)
+                )
                 .execute()
                 .data
         }
+        // A composite return is one object, not the array `firstProfile` reads.
+        return try BackendCoding.decoder.decode(Profile.self, from: row)
     }
 }
 

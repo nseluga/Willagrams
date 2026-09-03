@@ -1,7 +1,7 @@
 # Willagrams — database schema
 
-Source of truth is `supabase/migrations/0001_init.sql`, with `0002_participant_lookup.sql`
-and `0003_join_match.sql` on top of it. They are `protected:` in `MAP.md`: a
+Source of truth is `supabase/migrations/0001_init.sql`, with `0002_participant_lookup.sql`,
+`0003_join_match.sql` and `0004_record_outcome.sql` on top of it. They are `protected:` in `MAP.md`: a
 later migration goes through `/foundation`, not through a lane.
 
 The runnable checks are `supabase/tests/schema_invariants.sql` — every invariant
@@ -18,7 +18,7 @@ rows rather than an error.
       select (nullif(current_setting('request.jwt.claims', true), '')::json->>'sub')::uuid $$;
     create role authenticated;
     SQL
-    for f in 0001_init 0002_participant_lookup 0003_join_match; do
+    for f in 0001_init 0002_participant_lookup 0003_join_match 0004_record_outcome; do
       psql -v ON_ERROR_STOP=1 -d willagrams_schema_check -f supabase/migrations/$f.sql
     done
     psql -q -d willagrams_schema_check <<'SQL'
@@ -40,7 +40,7 @@ them, so without the grants every read fails with `permission denied` before a
 policy is ever consulted.
 
 Both files clean up after themselves and may be run repeatedly in either order.
-Last run: 17 illegal writes rejected, `ALL SCHEMA INVARIANTS ENFORCED`; 33
+Last run: 17 illegal writes rejected, `ALL SCHEMA INVARIANTS ENFORCED`; 45
 policy assertions, `ALL RLS POLICIES BEHAVE`.
 
 ## The four tables
@@ -133,9 +133,26 @@ app binary and is readable by anyone who downloads it.
   let anyone seat themselves in any match by id). Everyone else's seat comes
   from `join_match`. The `6` is `MatchLimits.players.upperBound` again.
 
-No seed data and no service-role key appears in any migration. Two `security
-definer` functions do — `is_match_participant` (0002) and `join_match` (0003).
-Both are there because a policy cannot answer its own question, both pin
-`search_path = public, pg_temp`, both are executable by `authenticated` only,
-and both are written narrowly enough to tell a caller nothing about anyone but
-itself.
+- **Stats are bumped only through `public.record_outcome(won, tiles,
+  elapsed_seconds)`.** The four counters on `profiles` are a tally nobody
+  recomputes, so an increment computed on the client from a row read a round
+  trip earlier can lose a match for good — two matches finishing close together
+  both read the same `before` and the second write erases the first, silently.
+  `record_outcome` sends deltas instead and Postgres evaluates them inside one
+  UPDATE. It takes no player id: the row is `auth.uid()`, so a caller cannot
+  name a row and therefore cannot name the wrong one. `42501` with nobody
+  signed in, `P0002` when the caller has no profile row. The same five rules are
+  stated in Swift as `ProfileStats.after`, which every offline test double
+  applies; the two are duplicated on purpose and `MatchOutcomeRecorderLiveTests`
+  is the crossing that proves they agree. `display_name` and `friend_code` are
+  untouched by it and stay reachable only through `profiles_update_self`.
+
+No seed data and no service-role key appears in any migration. Three `security
+definer` functions do — `is_match_participant` (0002), `join_match` (0003) and
+`record_outcome` (0004). All three pin `search_path = public, pg_temp` and are
+executable by `authenticated` only. The first two are definer because a policy
+cannot answer its own question; the third is definer because as an invoker
+function `auth.uid()` becomes a grant the caller must hold, and because a policy
+turns "not your row" into zero rows, which would make its `P0002` mean two
+different things. All three are written narrowly enough to tell a caller nothing
+about anyone but itself.

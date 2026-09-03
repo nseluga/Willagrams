@@ -425,7 +425,7 @@ final class SpyOutcomeStore: MatchOutcomeStore, @unchecked Sendable {
     enum Call: Equatable {
         case updateMatch(UUID, MatchOutcomeUpdate)
         case readProfile(UUID)
-        case updateProfile(UUID)
+        case recordOutcome(UUID)
     }
 
     private let lock = NSLock()
@@ -444,7 +444,14 @@ final class SpyOutcomeStore: MatchOutcomeStore, @unchecked Sendable {
         )
     }
 
-    func updateProfile(_ id: UUID, _ stats: ProfileStats) async throws {
-        lock.withLock { storedCalls.append(.updateProfile(id)) }
+    @discardableResult
+    func recordOutcome(
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+    ) async throws -> Profile {
+        lock.withLock { storedCalls.append(.recordOutcome(id)) }
+        return Profile(
+            id: id, displayName: "spy", friendCode: "AAAAAAAA",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
     }
 }
