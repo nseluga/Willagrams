@@ -54,8 +54,12 @@ sites. `AudioPlayer` has none, and the wiring crosses shell, match and board.
 Shell's `depends on:` already carries the edge, so this is an item list, not an
 amendment.
 
-**Open, needs a decision:** `design/visual-pass-r1` carries 17 unmerged commits
-and its own `Willagrams/Style/WordmarkTiles.swift`, a second implementation of
-the crossword wordmark that `Shell/Wordmark.swift` now also provides. Merging
-that branch without reconciling the two leaves the repo with two wordmarks.
+**Resolved 2026-09-02:** `design/visual-pass-r1` was already an ancestor of
+`integration` (its tip `eddf12a` is in `main`); the "17 unmerged commits" note
+this paragraph carried was stale. Its `Willagrams/Style/WordmarkTiles.swift` is
+the wordmark `MenuView` draws. The competing `Shell/Wordmark.swift`,
+`Shell/WordmarkView.swift` and `Tests/ShellTests/Cases/WordmarkTests.swift` had
+zero production callers and were deleted as a Reviewer crossing into
+`Willagrams/Shell/**` — recorded here because the glob check cannot see a
+deletion after the fact.
 
