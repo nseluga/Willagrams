@@ -45,11 +45,12 @@ Suite on `integration` after PR #3: **834 tests, nine packages** — rules 53 ·
 Board 253 · Match 125 · Style 30 · Shell 125 · Settings 36 · Audio 19 ·
 Online 126 · Bot 68, and `xcodebuild` BUILD SUCCEEDED. Counted by running every
 package, not carried forward. 22 of the 126 Online cases are gated live cases
-that skip without a key; **all 22 pass live as of 2026-09-02.** Three tests are
+that skip without a key; **all 22 pass live as of 2026-09-02.** Two tests are
 wall-clock flaky under a full parallel run and pass alone: the BotTests pacing
-case, ShellTests' countdown overlay, and OnlineTests' live "guest leaving"
-case (deadline is grace + 25 s while the whole suite shares the socket; 3/3
-green alone).
+case and ShellTests' countdown overlay. OnlineTests' live "guest leaving" case
+was the third and is no longer flaky — it was leaving before the host had
+observed the peer, so it hung on a stream that would never finish; it now waits
+for `.connected` under its own deadline and passes inside a full parallel run.
 
 **Resolved 2026-09-02:** anonymous sign-ins are on for the hosted project,
 rate limit 300/h.
