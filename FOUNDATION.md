@@ -517,9 +517,41 @@ would report the second as `P0002` → `notFound`. Definer removes both.
         A counter that is one short looks exactly like a player who played one
         fewer match, on the one table the schema deliberately never recomputes
   difficulty: low to write; the invoker-first draft is the part worth reading
-  status: written and proven on a scratch database — 45 assertions, both
-        fixtures twice in either order, and nine mutations of the function each
-        confirmed to turn the suite red. **Not yet applied to
-        `ynkayuwwrifluhhqnrjc`**, and the live OnlineTests have not been run
-        against it: the merge worktree carries the anon key only, not the
-        database password the pooler needs
+  status: **done, and live on `ynkayuwwrifluhhqnrjc` as of 2026-09-02.** Proven
+        first on a scratch database — 45 assertions, both fixtures twice in
+        either order, nine mutations of the function each confirmed to turn the
+        suite red — then applied to the project, where `record_outcome` stands
+        alongside the other two definer functions with `search_path` pinned. The
+        live OnlineTests run green, including `MatchOutcomeRecorderLiveTests`,
+        which is the only crossing that can prove `ProfileStats.after` and the
+        SQL still agree. The database password is in the `fnd` worktree's
+        `.env`, written there by `scripts/supabase-setup.sh`; `scripts/apply-0004-live.sh`
+        is the runner and `scripts/scratch-verify.sh` the offline one
+
+
+## Open risk — Realtime broadcast is not ordered (found 2026-09-02)
+
+  task: give `WireEnvelope` a per-sender sequence number and have the receiving
+        transport deliver in that order, holding a gap briefly before giving up
+        on it
+  why:  `RealtimeMatchTransportLiveTests` sent twenty messages each way, awaiting
+        each send before the next, and they arrived transposed — `host-0` behind
+        `host-3` — on roughly one live run in two. The sends are sequential, so
+        the reordering is the server's fan-out. Supabase Realtime broadcast is
+        best-effort ordered and makes no sequencing promise across a fan-out
+  found by: the assertion that used to demand strict order. It was narrowed to a
+        multiset comparison, which is what the platform actually guarantees, so
+        the suite no longer flakes — and no longer covers this. That is why the
+        risk is written here rather than left in a comment
+  risk: **this is a real defect, not a test artifact.** The match protocol
+        applies moves in the order they arrive. Two moves that cross put the two
+        devices in different board states with nothing raised, which is the same
+        silent-divergence shape `0004` was written to remove from the stats
+  guardrails:
+    - the fix belongs to whichever lane owns the wire format, not to a test
+    - a sequence number is not a delivery guarantee. Exactly-once is already
+      covered; ordering is the missing half
+    - the offline stub channel delivers in send order, so no offline case can
+      fail on this. It needs a live case, or a stub that deliberately transposes
+  difficulty: medium — the buffering-and-timeout policy is the whole of it
+  status: open. Not scheduled to a lane yet
