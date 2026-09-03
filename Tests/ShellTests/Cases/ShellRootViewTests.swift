@@ -79,6 +79,18 @@ struct ShellRootViewTests {
         #expect(code.contains { $0.contains("model: $matchBoard.model") })
     }
 
+    /// The wire that was missing: `MatchSession` flips its own status to
+    /// `.playing` when the count runs out, and until this landed nothing told
+    /// the route. Every `countdownFinished()` call site was a test, so the
+    /// suite stayed green over an app that dealt a rack and then sat there with
+    /// no HUD. A source check, because the transition lives in a `View`.
+    @Test("The countdown ending is carried to the route")
+    func countdownAdvancesTheRoute() throws {
+        let code = try Self.code
+        #expect(code.contains { $0.contains("shell.countdownFinished()") },
+                "nothing in ShellRootView leaves the countdown route")
+    }
+
     /// What the Release fence rests on: the route cannot leave `.menu` when no
     /// run can be built, so the empty branches are unreachable rather than
     /// blank screens a player can land on. Executable in Debug only in the

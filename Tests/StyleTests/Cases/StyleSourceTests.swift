@@ -10,7 +10,10 @@ import Testing
 struct StyleSourceTests {
 
     /// Files that render, as opposed to declaring the tokens themselves.
-    static let views = ["BrandTile.swift", "BrandCard.swift", "ButtonStyles.swift", "StyleGallery.swift"]
+    static let views = [
+        "BrandTile.swift", "BrandCard.swift", "ButtonStyles.swift", "StyleGallery.swift",
+        "BrandLabel.swift", "WordmarkTiles.swift", "ScreenHeader.swift", "StatRow.swift",
+    ]
 
     static func present() throws -> [(name: String, text: String)] {
         try StyleRepo.styleSources().filter { views.contains($0.name) }

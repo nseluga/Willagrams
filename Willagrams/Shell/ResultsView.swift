@@ -47,6 +47,9 @@ struct ResultsView: View {
     /// landscape iPad, no assumed viewport.
     private var card: some View {
         VStack(spacing: DesignTokens.Space.l) {
+            Text(Self.kicker)
+                .monoLabel()
+
             Text(results.headline)
                 .font(DesignTokens.Typography.display)
                 .tracking(DesignTokens.Typography.displayTracking)
@@ -56,16 +59,33 @@ struct ResultsView: View {
                 .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: DesignTokens.Space.m) {
-                Button(ResultsModel.rematchLabel) { results.rematch() }
-                    .buttonStyle(.brandPrimary)
-                    .disabled(!results.isRematchEnabled)
+                Button { results.rematch() } label: {
+                    Text(ResultsModel.rematchLabel).resultsActionLabel()
+                }
+                .buttonStyle(.brandPrimary)
+                .disabled(!results.isRematchEnabled)
 
-                Button(ResultsModel.mainMenuLabel) { results.mainMenu() }
-                    .buttonStyle(.brandQuiet)
+                Button { results.mainMenu() } label: {
+                    Text(ResultsModel.mainMenuLabel).resultsActionLabel()
+                }
+                .buttonStyle(.brandQuiet)
             }
         }
         .padding(DesignTokens.Space.xl)
         .brandCard()
         .padding(DesignTokens.Space.l)
+    }
+
+    /// Screen chrome, not `Terminology`: that file names game concepts, and
+    /// "the match is over" is a statement about the screen, not the game.
+    private static let kicker = "MATCH OVER"
+}
+
+private extension View {
+
+    /// The two end-of-match actions read as a matched pair, so they share a
+    /// width rather than sizing to their labels.
+    func resultsActionLabel() -> some View {
+        frame(minWidth: 132, minHeight: 36)
     }
 }

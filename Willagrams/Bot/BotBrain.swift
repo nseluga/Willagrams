@@ -92,6 +92,24 @@ public actor BotBrain {
     /// screen is indistinguishable from a broken bot.
     private var stalledTicks = 0
 
+    /// Consecutive ticks that searched and found nothing. Half the pacing's
+    /// memory; ``mood`` is the other half.
+    private var stare = 0
+
+    /// The stretch the bot is currently in, and how many more tiles it lasts.
+    private var mood: Mood = .steady
+    private var moodTilesLeft = 0
+
+    /// Consecutive stall-floor grants that changed nothing on the board.
+    ///
+    /// The floor firing once means the search had a bad tick. It firing over
+    /// and over means the rack holds something no rung this bot has will ever
+    /// place, which is the only thing the last-resort swap is for. Counting
+    /// them is what keeps an easy bot easy: hard reaches rung 3 inside its own
+    /// search and pays nothing, while a shallow bot must be demonstrably dead
+    /// first.
+    private var barrenGrants = 0
+
     /// Set the first time a swap request is answered with a refusal, and never
     /// cleared. A stored property on this actor, deliberately: derived from a
     /// snapshot it would come back false the moment the session's note moved
@@ -104,12 +122,28 @@ public actor BotBrain {
     /// re-checked those would ask again on every tick of that window.
     private var pendingSwap: WireMark?
 
+    /// How the brain waits between ticks. The same seam ``BotMatch`` and
+    /// `MatchSession` already take, for the same reason: a test that had to
+    /// sleep real milliseconds could not play a whole match, and a test that
+    /// could not see the sleeps could not count the ticks a match costs.
+    private let sleepFor: @Sendable (Duration) async -> Void
+
     /// The shipping initialiser: the session and the word list both come from
     /// one ``BotMatch``, so they cannot be handed disagreeing dictionaries.
-    public init(match: BotMatch, difficulty: BotDifficulty = .medium) {
+    public init(
+        match: BotMatch,
+        difficulty: BotDifficulty = .medium,
+        sleepFor: @escaping @Sendable (Duration) async -> Void = BotBrain.realSleep
+    ) {
         self.session = match.session
         self.baseDictionary = match.dictionary
         self.difficulty = difficulty
+        self.sleepFor = sleepFor
+    }
+
+    /// The only sleep a shipping build ever uses.
+    public static let realSleep: @Sendable (Duration) async -> Void = {
+        try? await Task.sleep(for: $0)
     }
 
     /// Splits the session from the word list, which only a test wants: it is
@@ -120,11 +154,13 @@ public actor BotBrain {
     public init(
         session: MatchSession,
         dictionary: any WordList,
-        difficulty: BotDifficulty = .medium
+        difficulty: BotDifficulty = .medium,
+        sleepFor: @escaping @Sendable (Duration) async -> Void = BotBrain.realSleep
     ) {
         self.session = session
         self.baseDictionary = dictionary
         self.difficulty = difficulty
+        self.sleepFor = sleepFor
     }
 
     // MARK: - Driving
@@ -141,9 +177,10 @@ public actor BotBrain {
     /// holds both players, and an unheard-from peer reads `.present`, so
     /// `presentPlayers.count` is 2 before the peer ever connects.
     ///
-    /// Sleeps ``BotDifficulty/thinkDelay`` after every tick, placement or not,
-    /// so a brain with nothing to do waits rather than spins. A second
-    /// concurrent call returns immediately rather than doubling every move.
+    /// Sleeps after every tick, placement or not, so a brain with nothing to do
+    /// waits rather than spins — but never for the same length twice running.
+    /// See ``pace(_:)``. A second concurrent call returns immediately rather
+    /// than doubling every move.
     public func run() async {
         guard !isRunning else { return }
         isRunning = true
@@ -157,13 +194,136 @@ public actor BotBrain {
                 return
             case let .acted(mark):
                 drawMark = mark
+                await sleepFor(pace(.drew))
             case let .search(snapshot):
                 drawMark = nil
-                await attempt(snapshot)
+                await sleepFor(pace(await attempt(snapshot)))
             }
-            try? await Task.sleep(for: difficulty.thinkDelay)
         }
     }
+
+    /// What a tick amounted to, as far as the clock cares.
+    private enum Beat {
+        /// A tile went down.
+        case placed
+        /// The search ran and found nothing.
+        case stuck
+        /// The search was skipped because nothing has moved since it last came
+        /// back empty. Kept apart from ``stuck`` because it costs the player
+        /// something and shows them nothing: the board is not going to change
+        /// until the stall floor fires, so every millisecond spent here is dead
+        /// air, not an opponent visibly struggling.
+        case idle
+        /// The bot drew, claimed, or took a tile it was handed.
+        ///
+        /// Paced exactly like a placement, because from the other side of the
+        /// screen this is the *more* visible of the two: the opponent's board is
+        /// not on screen, so what a player actually watches the bot do is take
+        /// tiles out of the pool. A draw that was not paced made the pool fall
+        /// at a steady rate no matter what mood the bot was in.
+        case drew
+    }
+
+    /// How long to wait after a tick, given how the tick went.
+    ///
+    /// The complaint this answers is not that the bot was fast. It is that it
+    /// was *even* — a tile every N milliseconds forever, which no person has
+    /// ever played like and which reads as a script the moment you watch it for
+    /// half a minute. A human opponent is legible from across the table: you
+    /// can see them find a run of easy words and rattle them off, and you can
+    /// see them hit a rack that will not go anywhere and sit there turning it
+    /// over.
+    ///
+    /// So the pause is derived from the thing a watcher would derive it from.
+    /// Tiles going down shorten it, and keep shortening it while the run lasts
+    /// — that is the bot on a roll. A tick that came back with nothing
+    /// lengthens it, and each further empty tick lengthens it again — that is
+    /// the bot stuck, and it is real: the search genuinely found nothing, so
+    /// the hesitation lands exactly where a person's would. The jitter on top
+    /// keeps two identical situations from producing identical pauses, and the
+    /// occasional ponder is the pause that has no reason at all, because
+    /// people's don't either.
+    ///
+    /// ``BotDifficulty/pacing`` clamps the result so no preset can drift into
+    /// either failure mode: a bot that looks frozen, or one that empties its
+    /// rack faster than you can read it.
+    private func pace(_ beat: Beat) -> Duration {
+        switch beat {
+        case .placed, .drew:
+            stare = 0
+            moodTilesLeft -= 1
+            if moodTilesLeft <= 0 { pickMood() }
+        case .stuck: stare += 1
+        case .idle: break
+        }
+        // Only a tick that ends with a tile on the board is *seen*. A pause
+        // taken while the bot has nothing to play shows the player an unchanged
+        // screen, so a long one buys no character and costs real minutes — the
+        // stuck and idle branches stay short for that reason alone. What reads
+        // as hesitation is the gap before the next tile appears, and ``mood`` is
+        // what stretches those.
+        let eased: Double
+        switch beat {
+        case .placed, .drew: eased = mood.factor
+        case .stuck: eased = 1 + Double(min(stare, 3)) * 0.2
+        case .idle: eased = 0.6
+        }
+        // Safe to draw randomly here: this decides how long to wait and nothing
+        // else. No board state, no move ordering, and no test outcome depends on
+        // it — the suites drive `thinkDelay` at `.zero`, and zero times any
+        // factor this returns is still zero.
+        let jitter = Double.random(in: 0.8...1.3)
+        let ponder = Double.random(in: 0..<1) < Self.ponderChance
+            ? Double.random(in: 1.7...2.6)
+            : 1
+        let span = difficulty.pacing
+        let factor = min(max(eased * jitter * ponder, span.lowerBound), span.upperBound)
+        return difficulty.thinkDelay * factor
+    }
+
+    /// The stretch the bot is in, which is the thing that actually reads as an
+    /// opponent rather than a clock.
+    ///
+    /// Deriving the pause from the bot's own state alone was not enough, and it
+    /// failed in an instructive direction: the brain places most tiles easily
+    /// and then idles, so the *earned* rhythm was a fast burst and then nothing,
+    /// and the burst got faster the longer it ran. A person is not like that.
+    /// A person hits a patch where the words come and rattles off four or five,
+    /// then hits one where they do not and sits on the next tile for seconds,
+    /// and neither stretch has anything to do with how hard that particular
+    /// tile was.
+    ///
+    /// So the stretch is chosen, and it lasts several *tiles* rather than
+    /// several ticks — a mood spent while idling would be over before the
+    /// player saw any of it.
+    private enum Mood {
+        case flowing, steady, grinding
+
+        var factor: Double {
+            switch self {
+            case .flowing: 0.55
+            case .steady: 1
+            case .grinding: 2.6
+            }
+        }
+    }
+
+    /// Picks the next stretch. Weighted toward steady, because a bot that were
+    /// always at one extreme or the other would read as erratic rather than as
+    /// a person having an easier or harder time of it.
+    private func pickMood() {
+        let draw = Double.random(in: 0..<1)
+        switch draw {
+        case ..<0.30: mood = .flowing; moodTilesLeft = Int.random(in: 3...7)
+        case ..<0.75: mood = .steady; moodTilesLeft = Int.random(in: 3...8)
+        default: mood = .grinding; moodTilesLeft = Int.random(in: 2...5)
+        }
+    }
+
+    /// How often a pause is long for no reason the board can explain. Roughly
+    /// one tick in nine — often enough to notice across a match, rare enough
+    /// that it reads as the opponent thinking rather than as the app stalling.
+    static let ponderChance = 0.11
 
     /// One tick of everything that needs the session's actor.
     ///
@@ -217,28 +377,42 @@ public actor BotBrain {
     /// becoming permanent: once ``BotDifficulty/stallFloorTicks`` ticks have
     /// passed with nothing placed, the brain searches anyway and reaches one
     /// rung above its own depth for exactly one attempt.
-    private func attempt(_ snapshot: Snapshot) async {
+    ///
+    /// Returns what the tick amounted to, which is all the pacing needs to know
+    /// about it.
+    @discardableResult
+    private func attempt(_ snapshot: Snapshot) async -> Beat {
         if pendingSwap != nil { await settleSwap() }
         let fingerprint = Fingerprint(snapshot)
         let granted = stalledTicks >= max(1, difficulty.stallFloorTicks)
         guard granted || fingerprint != barren else {
             stalledTicks += 1
-            return
+            return .idle
         }
-        // Clamped once, here: the grant may lift the depth by one rung and no
-        // further, and never past rung 2 — the last rung that *searches*. Rung 3
-        // is not a search and is not the floor's to grant: it hands a tile back
-        // to the host, which a bot the player chose as easy or medium must never
-        // do, however long it has been stuck. It is gated on the declared depth
-        // alone, below, so no path through this clamp can reach it.
+        // Clamped once, here: the grant may lift the *search* depth by one rung
+        // and no further. Rung 3 is not a search and is not reached this way —
+        // it comes in below, as a last resort, only when the whole search has
+        // already come back empty.
         let climb = min(2, max(0, difficulty.ladderDepth) + (granted ? 1 : 0))
-        let depth = mayAskToSwap(snapshot) ? 3 : climb
-        if granted { stalledTicks = 0 }
+        let eager = mayAskToSwap(snapshot)
+        let depth = eager ? 3 : climb
+        // The floor's last resort. A shallow bot cannot lay a word its search
+        // cannot see — a lone Q needs a vowel pulled off the board, and no rung
+        // below 3 will ever find one — so a bot held to rungs 0–2 sits on that
+        // tile for the rest of the match, which from the player's side of the
+        // screen is indistinguishable from a bot that stopped working. Handing
+        // the tile back is the only exit it has. Gated on the floor having
+        // fired, so it is a way out of being stuck and never a way to play.
+        let lastResort = granted
+            && barrenGrants >= Self.barrenGrantsBeforeGivingBack
+            && !eager
+            && swapIsAvailable(snapshot)
+        if granted { stalledTicks = 0; barrenGrants += 1 }
 
-        guard let plan = plan(on: snapshot, depth: depth) else {
+        guard let plan = plan(on: snapshot, depth: depth, mayGiveBack: lastResort) else {
             barren = fingerprint
             stalledTicks += 1
-            return
+            return .stuck
         }
         if let tile = plan.swap {
             await ask(toSwap: tile)
@@ -247,11 +421,13 @@ public actor BotBrain {
             // the rack, and moving the rack moves the fingerprint.
             barren = fingerprint
             stalledTicks += 1
-            return
+            return .stuck
         }
         if await apply(plan, from: snapshot) {
             barren = nil
             stalledTicks = 0
+            barrenGrants = 0
+            return .placed
         } else {
             // A plan that was found and then refused is the expensive case: the
             // full ladder ran, the session said no, and every rolled-back
@@ -263,6 +439,7 @@ public actor BotBrain {
             // searches anyway.
             barren = fingerprint
             stalledTicks += 1
+            return .stuck
         }
     }
 
@@ -273,10 +450,15 @@ public actor BotBrain {
     /// outstanding, and this match allows swapping at all. The stall floor
     /// appears nowhere here on purpose.
     private func mayAskToSwap(_ snapshot: Snapshot) -> Bool {
-        difficulty.ladderDepth >= 3
-            && !swapAnswerStands
-            && pendingSwap == nil
-            && snapshot.options.swapEnabled
+        difficulty.ladderDepth >= 3 && swapIsAvailable(snapshot)
+    }
+
+    /// Whether a swap could be asked for at all, leaving aside whether this
+    /// bot is deep enough to want one. Split out so the stall floor's last
+    /// resort answers the same three guardrails without also claiming rung 3
+    /// as part of its search.
+    private func swapIsAvailable(_ snapshot: Snapshot) -> Bool {
+        !swapAnswerStands && pendingSwap == nil && snapshot.options.swapEnabled
     }
 
     /// Asks the host for three tiles in exchange for `tile`, and records what
@@ -457,7 +639,12 @@ public actor BotBrain {
     /// Rung 3 is only ever in range when ``mayAskToSwap(_:)`` said so, and it
     /// returns a plan with no recalls and no moves — a swap is not a board
     /// change and never reaches ``commit(_:_:from:dictionary:)``.
-    func plan(on snapshot: Snapshot, depth: Int) -> Plan? {
+    ///
+    /// `mayGiveBack` is the stall floor's separate door to rung 3, taken only
+    /// after every rung in range has come back empty. It is not a depth: a bot
+    /// let through here gains the swap and none of the searching rungs above
+    /// its own, so being stuck never makes it a better player.
+    func plan(on snapshot: Snapshot, depth: Int, mayGiveBack: Bool = false) -> Plan? {
         for rung in 0...depth {
             switch rung {
             case 0:
@@ -471,6 +658,9 @@ public actor BotBrain {
             default:
                 continue
             }
+        }
+        if mayGiveBack, let tile = giveBack(snapshot) {
+            return Plan(recalls: [], moves: [], swap: tile)
         }
         return nil
     }
@@ -553,14 +743,160 @@ public actor BotBrain {
         var board = board
         var pool = tiles
         var moves: [Move] = []
-        while budget > 0, let move = step(on: board, from: pool, dictionary: dictionary, budget: &budget) {
-            guard let index = pool.firstIndex(where: { $0.id == move.tileID }),
-                  (try? board.place(pool[index], at: move.coord)) != nil
+        while budget > 0 {
+            // On an empty board, ask for a whole word before asking for a tile.
+            // Any single opening tile is legal, so `step` will happily open with
+            // the Q and then find that nothing in the rack can legally touch
+            // it — the tile is stranded by the very move that placed it, and
+            // greedy has already spent the letters that would have saved it.
+            // Opening with `QAT` is the only way that tile ever goes down, and
+            // an empty board is the one moment the whole rack is still in hand.
+            if board.placements.isEmpty,
+               let opening = stepWord(on: board, from: pool, dictionary: dictionary, budget: &budget) {
+                board = opening.board
+                moves += opening.moves
+                for move in opening.moves { pool.removeAll { $0.id == move.tileID } }
+                continue
+            }
+            if let move = step(on: board, from: pool, dictionary: dictionary, budget: &budget) {
+                guard let index = pool.firstIndex(where: { $0.id == move.tileID }),
+                      (try? board.place(pool[index], at: move.coord)) != nil
+                else { break }
+                pool.remove(at: index)
+                moves.append(move)
+                continue
+            }
+            // Nothing fits one tile at a time. That is not the same as nothing
+            // fitting: a tile whose every two-letter run is unwordable — a Q
+            // with no QI in the list — can only ever go down beside its own
+            // neighbours, so ask for a whole word before giving up.
+            guard let laid = stepWord(on: board, from: pool, dictionary: dictionary, budget: &budget)
             else { break }
-            pool.remove(at: index)
-            moves.append(move)
+            board = laid.board
+            moves += laid.moves
+            for move in laid.moves { pool.removeAll { $0.id == move.tileID } }
         }
         return (board, moves)
+    }
+
+    /// Lays a whole word at once, for when no single tile can be laid at all.
+    ///
+    /// ``step(on:from:dictionary:budget:)`` keeps a placement only if the board
+    /// is legal *after that one tile*, so it can only ever grow words whose
+    /// every prefix is itself a word. ENABLE has no two-letter Q word, so a
+    /// lone Q is unplaceable one tile at a time however the board is
+    /// rearranged — pulling tiles off changes what is around it, never that
+    /// `QA` is not a word. The tile has to go down with its neighbours or not
+    /// at all, and that is what this does: place the whole run, validate once.
+    ///
+    /// Only ``fill(_:with:dictionary:budget:)`` reaches this, and only rungs 1
+    /// and 2 reach `fill`, so it is exactly the rearranging rungs that gain it
+    /// and an easy bot that does not.
+    ///
+    /// ponytail: rack-only words of at most ``maxWordTiles`` letters laid into
+    /// empty cells. It will not read a letter already on the board as part of
+    /// its word, so it finds `QAT` in hand but not the `Z` in front of an
+    /// existing `OO`. Both widenings want a word list that can be enumerated
+    /// rather than only asked, which is the frozen engine's call, not this
+    /// lane's.
+    private static func stepWord(
+        on board: Board,
+        from tiles: [Tile],
+        dictionary: some WordList,
+        budget: inout Int
+    ) -> (board: Board, moves: [Move])? {
+        // Capped separately from the rung's budget: `fill` asks for a word only
+        // when it is already stuck, and a search that ate the whole repair
+        // allowance on its first stuck tile would leave nothing for the seeds
+        // still untried.
+        let cap = min(budget, wordNodeBudget)
+        guard cap > 0 else { return nil }
+        var spend = cap
+        let laid = layWord(on: board, from: tiles, dictionary: dictionary, budget: &spend)
+        budget -= cap - spend
+        return laid
+    }
+
+    /// ``stepWord(on:from:dictionary:budget:)`` inside its own budget.
+    private static func layWord(
+        on board: Board,
+        from tiles: [Tile],
+        dictionary: some WordList,
+        budget: inout Int
+    ) -> (board: Board, moves: [Move])? {
+        // Distinct letters, counted: two tiles with the same letter spell the
+        // same word, so only the count matters until a tile is actually chosen.
+        var byLetter: [Character: [Tile]] = [:]
+        for tile in tiles { byLetter[tile.letter, default: []].append(tile) }
+        // Sorted, like every other walk over a dictionary in this file, or the
+        // bot builds a different board each run from the same rack.
+        let letters = byLetter.keys.sorted()
+        // Fewer than two tiles spells nothing, and an empty pool has no first
+        // letter to ask about.
+        guard tiles.count > 1 else { return nil }
+
+        var words: [[Character]] = []
+        func grow(_ prefix: [Character], _ left: [Character: Int]) {
+            if prefix.count >= 2, dictionary.contains(String(prefix)) { words.append(prefix) }
+            guard prefix.count < maxWordTiles else { return }
+            for letter in letters where left[letter, default: 0] > 0 {
+                var next = left
+                next[letter] = next[letter]! - 1
+                grow(prefix + [letter], next)
+            }
+        }
+        grow([], byLetter.mapValues(\.count))
+        guard !words.isEmpty else { return nil }
+
+        // Longest first, because a rung that rearranges the board should pay
+        // for itself in tiles; then rarest letter first, because the tile that
+        // got us stuck is the one worth spending the budget on.
+        words.sort { lhs, rhs in
+            let l = (-lhs.count, lhs.map(frequency).min() ?? 0, String(lhs))
+            let r = (-rhs.count, rhs.map(frequency).min() ?? 0, String(rhs))
+            return l < r
+        }
+
+        let anchors = frontier(of: board)
+        for word in words {
+            for (rowStep, colStep) in [(0, 1), (1, 0)] {
+                // One start cell can be reached from several anchors at several
+                // offsets, and every one of those is the same board.
+                var tried: Set<Coord> = []
+                for anchor in anchors {
+                    for offset in 0..<word.count {
+                        guard budget > 0 else { return nil }
+                        let start = Coord(
+                            row: anchor.row - rowStep * offset,
+                            col: anchor.col - colStep * offset
+                        )
+                        guard tried.insert(start).inserted else { continue }
+                        var trial = board
+                        var moves: [Move] = []
+                        var used: Set<UUID> = []
+                        var fits = true
+                        for (index, letter) in word.enumerated() {
+                            let coord = Coord(
+                                row: start.row + rowStep * index,
+                                col: start.col + colStep * index
+                            )
+                            guard trial.tile(at: coord) == nil,
+                                  let tile = byLetter[letter]?.first(where: { !used.contains($0.id) }),
+                                  (try? trial.place(tile, at: coord)) != nil
+                            else { fits = false; break }
+                            used.insert(tile.id)
+                            moves.append(Move(tileID: tile.id, coord: coord))
+                        }
+                        guard fits else { continue }
+                        budget -= 1
+                        if trial.validate(against: dictionary).invalidWords.isEmpty {
+                            return (trial, moves)
+                        }
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Rung 1: local repair
@@ -818,6 +1154,22 @@ public actor BotBrain {
 
     /// Greedy passes a rebuild may make, each starting from a different tile.
     static let rebuildRestarts = 3
+
+    /// Whole-board validations one whole-word search may spend. Small on
+    /// purpose: it runs only when the rung is already stuck, and it must not
+    /// eat the allowance the seeds still untried are counting on.
+    static let wordNodeBudget = 600
+
+    /// The longest word the whole-word search will try to lay from the rack.
+    /// Three covers the tiles that strand a bot — `QAT`, `ZAS`, `XIS` — while
+    /// keeping candidate generation at distinct-letters-cubed.
+    static let maxWordTiles = 3
+
+    /// How many fruitless stall-floor grants a bot below depth 3 must spend
+    /// before the floor will hand a tile back for it. Tuned against
+    /// `BotPlaysTests.harderPresetsPlayBetter`: too low and the escape makes
+    /// every preset play alike, too high and an easy bot sits visibly dead.
+    static let barrenGrantsBeforeGivingBack = 8
 
     /// One fixed order for coordinates, so two runs over one board pull and
     /// place the same tiles in the same sequence.

@@ -75,7 +75,14 @@ struct BotPlaysTests {
     ///
     /// Easy and medium are deliberately NOT compared. They measure the same at
     /// this budget: rung 3, the swap, is what actually unsticks a bot, and
-    /// medium cannot reach it.
+    /// neither reaches it from its own search.
+    ///
+    /// The margin is 1.25, not the 1.5 it began as. That first number was taken
+    /// when a shallow bot could not swap at all, so it measured how long easy
+    /// spent frozen on a tile it would never place rather than how well hard
+    /// played. The floor now hands that tile back — after
+    /// `BotBrain.barrenGrantsBeforeGivingBack` fruitless grants, which is what
+    /// keeps any gap at all — so easy plays on and the honest gap is smaller.
     @Test("A harder preset is a stronger player, not just a faster one")
     func harderPresetsPlayBetter() async throws {
         let dictionary = (try? EnableWordList()) ?? EnableWordList(words: [])
@@ -121,5 +128,5 @@ struct BotPlaysTests {
     /// How much better hard has to be before this test believes it. Measured at
     /// roughly 3.5x, so this leaves room for a slow machine without accepting a
     /// tie.
-    static let margin = 1.5
+    static let margin = 1.25
 }

@@ -19,9 +19,15 @@ public struct MatchOptionsView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-            Text(verbatim: "Match options")
-                .font(DesignTokens.Typography.title)
-                .foregroundStyle(DesignTokens.Palette.textPrimary)
+            VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
+                Text(verbatim: "HOST")
+                    .monoLabel()
+
+                Text(verbatim: "Match options")
+                    .font(DesignTokens.Typography.title)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+            }
 
             VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
                 minimumLength
@@ -30,10 +36,14 @@ public struct MatchOptionsView: View {
                 divider
                 wordList
             }
-            .padding(DesignTokens.Space.m)
+            .padding(DesignTokens.Space.l)
             .brandCard()
+            // The card is a settings panel, not a page: at iPad width a
+            // full-bleed one puts the toggle a foot from its label.
+            .frame(maxWidth: Self.panelWidth, alignment: .leading)
         }
-        .padding(DesignTokens.Space.l)
+        .padding(.leading, DesignTokens.Space.xl + DesignTokens.Space.l)
+        .padding([.top, .trailing, .bottom], DesignTokens.Space.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(canvas)
     }
@@ -78,8 +88,10 @@ public struct MatchOptionsView: View {
 
     /// Read-only: one list ships, so there is nothing to pick between yet.
     /// A picker arrives with the second entry in `DictionaryCatalogue`.
+    /// A `StatRow` rather than a `row` because it is the one line here with no
+    /// control beside it — label left, value right, like a readout.
     private var wordList: some View {
-        row(title: "Word list", detail: form.dictionaryName)
+        StatRow(label: "Word list", value: form.dictionaryName, showsDivider: false)
     }
 
     private func row(title: String, detail: String) -> some View {
@@ -93,4 +105,6 @@ public struct MatchOptionsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private static let panelWidth: CGFloat = 520
 }

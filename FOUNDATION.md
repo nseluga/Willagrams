@@ -310,3 +310,141 @@ discover it:
         twenty singular-peer assumptions, a behaviour change in the freeze rule,
         and a toolchain constraint on stored properties
   status: done
+
+## Amendment — cut the RLS recursion (landed 2026-08-24)
+
+**Recorded after the fact.** `supabase/migrations/**` is `protected:` and MAP's
+guardrail says later migrations land through a `/foundation` amendment. This one
+landed as a Reviewer fix during the schema-verification crossing, so the entry
+is written here to keep the amendment log the record of the schema rather than
+leaving `MAP_PROGRESS.md` as the only place it appears.
+
+Nothing in the frozen shape moves. `0001_init.sql` above states the policies
+semantically — "`matches` selectable by its host or any row in `match_players`",
+"`match_players` selectable by any member of the same match" — and this
+amendment preserves both readings exactly. No table, column, constraint or row
+type changes, so `BackendContracts.swift` and every lane building on it are
+untouched.
+
+- task: Break the policy recursion that made every match unreadable
+  done when:
+    - `supabase/migrations/0002_participant_lookup.sql` declares
+      `public.is_match_participant(target uuid) returns boolean`, `language sql`,
+      `stable`, `security definer`, with `set search_path = public, pg_temp`,
+      answering only whether `auth.uid()` hosts or has joined that match
+    - execute is revoked from `public` and granted to `authenticated`
+    - `matches_select_participants` is recreated as
+      `using (auth.uid() = host_id or public.is_match_participant(matches.id))` —
+      the host test stays inline so a host still reads their own match if the
+      function is ever revoked
+    - `match_players_select_same_match` is recreated as
+      `using (public.is_match_participant(match_players.match_id))`
+    - `supabase/tests/rls_behavior.sql` passes all 21 assertions against the live
+      project, and both SQL fixtures run twice in either order leaving `public`
+      clean
+  guardrails:
+    - this is the **only** `security definer` function in the schema. The
+      `0001_init.sql` guardrail forbidding one stands for every other case; this
+      is the amendment that opens it, narrowly, for one boolean about the caller
+    - a definer function that resolves names through the caller's `search_path`
+      is how a definer function becomes a hole — the pin is not optional
+  risk: **this was not a hypothetical.** As written in `0001`, each policy asked
+        the participation question directly and the question is circular, so
+        Postgres answered `infinite recursion detected in policy for relation
+        "match_players"` and refused the read outright — no player could open a
+        match at all, host included. `schema_invariants.sql` passed on the broken
+        schema, because RLS was on and every table carried a policy, and both are
+        true of a policy that can never return. Existence is not behaviour
+  difficulty: low to write, and it took a behaviour fixture to find
+  status: done
+
+## Decided — Sign in with Apple is postponed, 2026-08-25
+
+**Nate's call.** The paid Apple Developer membership is not being taken out this
+round, so `com.apple.developer.applesignin` cannot be added to
+`Willagrams.entitlements` and no real Apple sign-in can be built or tested.
+
+This is a **postponement, not a contract change.** `BackendClient` keeps
+`signInWithApple(idToken:nonce:)` as its only route to a session, and
+`FakeBackend` implements it end to end. Nothing in the protocol, the row types,
+or the schema moves.
+
+What it means for each remaining lane, stated here so no lane discovers it:
+
+- **`online`** is not blocked. Every call below the session — profiles,
+  friendships, match creation, join, the realtime transport — is reachable with
+  a session obtained any way, and the whole lane is testable against
+  `FakeBackend` plus the live project's SQL fixtures. The one item it may not
+  finish is the concrete `signInWithApple` on the real client: it may be written
+  against the SDK, but it cannot be run. That item sits **below the stop marker**.
+- **`account`** keeps its profile page, display-name editing and stats, all of
+  which need only a user id. Its Sign in with Apple **screen** sits below the
+  stop marker: the button and its nonce plumbing can be built, the flow cannot
+  be exercised on a device.
+- **`friends`** is unaffected. It reads the current user from `account` and the
+  friend tables from `online`, and neither needs the entitlement.
+- **`launch`** cannot close. App Store submission needs the membership, so the
+  store items stay parked until it is taken out. This is the lane the
+  postponement actually stops.
+
+`Willagrams.entitlements` therefore stays empty this round, and its comment
+already says why. Adding the key is a one-line Reviewer edit the day the
+membership is active — not an amendment, because this entry is the amendment.
+
+## Amendment — join by invite code (written and applied live 2026-09-01)
+
+Found during `/lane online`, before any item ran. `matches` is readable only by
+its host or a row in `match_players`, and joining is what creates that row — so
+a player holding a six-character invite code cannot resolve it to a match and
+cannot join. `docs/schema.md` said "the invite code is the capability" and
+nothing let a non-participant spend it. `BackendClient.joinMatch(inviteCode:)`
+was unimplementable against the schema as frozen.
+
+Nothing in the frozen shape moves. No table, column, constraint or row type
+changes; `BackendContracts.swift` is untouched. One policy does change:
+`match_players_insert_self` is tightened so a direct insert is only the host
+seating itself in its own lobby — as `0001` wrote it, any signed-in player
+could seat themselves in any match by id and walk around `join_match`'s
+lobby and cap guards. The `0002` guardrail —
+"this is the **only** `security definer` function" — is widened to two, each
+narrowly scoped: one boolean about the caller, and one join that reads a match
+by code only after seating the caller in it.
+
+- task: Let a non-participant join a lobby match by its invite code
+  done when:
+    - `supabase/migrations/0003_join_match.sql` declares
+      `public.join_match(code text) returns public.matches`, `language plpgsql`,
+      `security definer`, `set search_path = public, pg_temp`; execute revoked
+      from `public`, granted to `authenticated`
+    - it raises `42501` with no signed-in caller, `P0002` when no `lobby` match
+      carries `upper(code)` (a started match and a nonexistent code are
+      deliberately indistinguishable), `P0005` when six players are already
+      seated; otherwise it inserts the caller's `match_players` row and returns
+      the match, and a repeat call returns the same row without a second insert
+    - `match_players_insert_self` is recreated with `auth.uid() = player_id`
+      and the target match hosted by the caller, in `lobby`, holding fewer than
+      six players; a non-host self-insert into any match raises, and so does a
+      host self-insert once its match is `playing`
+    - the lobby row is locked `for update` so two callers racing for the last
+      seat cannot both count five
+    - `supabase/tests/rls_behavior.sql` asserts all of the above as a stranger
+      (33 assertions), and both SQL fixtures run twice in either order leaving
+      `public` clean — verified locally against the runbook in `docs/schema.md`
+    - the migration is applied to the live project and both fixtures pass there
+  guardrails:
+    - this function is the only thing in the schema that reads `matches` by
+      `invite_code`; no policy does, and none is to be added — a readable
+      six-character space is an oracle the anon key can walk
+    - the literal `6` is `MatchLimits.players.upperBound` duplicated on purpose,
+      in both the function and the insert policy; the three move together or
+      not at all
+    - `P0004` is `assert_failure`, which a plpgsql `when others` does not catch,
+      so it is never used as a contract code
+  risk: without this, the `online` lane ships a host nobody can reach — every
+        `FakeBackend` test stays green and the first real invite returns
+        `notFound`
+  difficulty: low — the `0002` pattern, one function
+  status: done — applied to `ynkayuwwrifluhhqnrjc` by psql over the us-west-2 session pooler (the project has no `supabase_migrations` ledger; 0001 and 0002 were applied the same way), both fixtures pass there five runs alternating; `join_match` also revoked from `anon`, which Supabase's default privileges had granted
+
+The error contract the Swift client maps: `42501` → `notAuthenticated`,
+`P0002` → `notFound`, `P0005` → `matchFull`.

@@ -23,6 +23,37 @@ begin
     raise exception 'INVARIANT NOT ENFORCED: % was accepted', label;
 end $$;
 
+-- Anything a previous run of this file, or of `rls_behavior.sql`, left behind.
+-- This fixture used to assume an empty scratch database. It does not any more:
+-- both files now run against the shared project, and its own seed is not
+-- removed at the end — the cascade test near the bottom deletes Alan on
+-- purpose and leaves Ada and Grace standing. A second run then died on a
+-- duplicate key before it asserted anything.
+delete from public.match_players
+ where player_id in ('11111111-1111-1111-1111-111111111111',
+                     '22222222-2222-2222-2222-222222222222',
+                     '33333333-3333-3333-3333-333333333333');
+delete from public.matches
+ where invite_code = 'ABC123'
+    or host_id in ('11111111-1111-1111-1111-111111111111',
+                   '22222222-2222-2222-2222-222222222222',
+                   '33333333-3333-3333-3333-333333333333');
+delete from public.friendships
+ where requester_id in ('11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '33333333-3333-3333-3333-333333333333')
+    or addressee_id in ('11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222',
+                        '33333333-3333-3333-3333-333333333333');
+delete from public.profiles
+ where id in ('11111111-1111-1111-1111-111111111111',
+              '22222222-2222-2222-2222-222222222222',
+              '33333333-3333-3333-3333-333333333333');
+delete from auth.users
+ where id in ('11111111-1111-1111-1111-111111111111',
+              '22222222-2222-2222-2222-222222222222',
+              '33333333-3333-3333-3333-333333333333');
+
 -- Two players to hang everything off.
 insert into auth.users (id) values
     ('11111111-1111-1111-1111-111111111111'),

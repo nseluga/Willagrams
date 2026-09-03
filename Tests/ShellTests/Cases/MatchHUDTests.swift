@@ -105,8 +105,13 @@ struct MatchHUDTests {
 
         // Two loose letters: two clusters, not drawable.
         #expect(wiring.canDraw == false)
+        // Live, not disabled: the press is how the player asks why, and the
+        // refusal is the answer. A disabled control swallows the press and the
+        // flash never fires. `isDrawPressable` is the gate the button reads —
+        // `isDrawEnabled` folds the board in and is false here on purpose.
+        #expect(hud.isDrawPressable)
         #expect(hud.isDrawEnabled == false)
-        // Unavailable, not ignored: the press does nothing and says so.
+        // Refused, not ignored: the press does nothing and says so.
         let before = MatchBoardTests.custody(wiring, session, "before a refused draw")
         #expect(hud.draw() == false)
         #expect(MatchBoardTests.custody(wiring, session, "after a refused draw") == before)
@@ -285,14 +290,19 @@ struct MatchHUDTests {
 
     // MARK: - The win claim
 
-    /// The claim is gated on exactly what Draw is gated on, refuses through the
-    /// same counter, and — refused — leaves the player in the match.
+    /// The claim is refused through the same counter as Draw and — refused —
+    /// leaves the player in the match.
+    ///
+    /// It is NOT gated on what Draw is gated on. Draw needs a pool; the win
+    /// call needs an empty one. On an opening board the pool is full, so
+    /// `MatchHUD` does not offer the control at all — and `claimWin()` refuses
+    /// anyway, so a direct caller cannot get round the gate the view reads.
     @Test("A refused claim flashes the board and ends nothing")
     func refusedClaimChangesNoRoute() async throws {
         let (solo, _, shell, hud) = try await Self.hud()
 
         #expect(hud.winLabel == Terminology.winCall)
-        #expect(hud.isWinEnabled == false, "a spaced opening is claimable")
+        #expect(hud.isWinEnabled == false, "the claim was offered while the pool was still full")
         #expect(hud.claimWin() == false)
         #expect(hud.completionAttempts == 1, "a refused claim explained nothing")
         #expect(hud.claimWin() == false)
@@ -343,6 +353,100 @@ struct MatchHUDTests {
         #expect(shell.route == .results(winner: session.localPlayerID))
 
         session.leave()
+    }
+
+    /// The win call must not be derived from Draw's gate again.
+    ///
+    /// `isWinEnabled` was `{ isDrawEnabled }`, which reads as tidy and is
+    /// exactly backwards: Draw is disabled once the pool is out, so the control
+    /// for ending the match was live for the whole match and dead at the one
+    /// moment it could ever have been pressed. Every model test above passed
+    /// throughout.
+    @Test("The win call is not derived from the Draw gate")
+    func theWinGateIsItsOwnQuestion() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(!text.contains("isWinEnabled: Bool { isDrawEnabled }"),
+                "the win call reads Draw's gate again — it is live when it cannot work")
+        #expect(text.contains("&& session.poolIsExhausted"),
+                "the win call no longer waits for the pool to run out")
+    }
+
+    /// The disable that made the flash unreachable. Folding `board.canDraw`
+    /// into the gate the *button* reads swallows the very press the refusal
+    /// exists to answer — and every test above still passes, because they call
+    /// the model directly. A source check, because the gate is read in a
+    /// SwiftUI file the macOS test target cannot compile.
+    ///
+    /// Two halves, because the split is what makes it safe: the view must read
+    /// `isDrawPressable`, and `isDrawPressable` must not consult the board.
+    @Test("The completion gate does not disable the control")
+    func theGateLeavesTheControlLive() throws {
+        let view = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
+        #expect(view.contains(".disabled(!hud.isDrawPressable)"),
+                "the Draw button reads the board's gate — the refusal press is swallowed")
+        let model = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(model.contains("public var isDrawPressable: Bool {\n        !session.isMatchOver"),
+                "isDrawPressable gates on the board again — the refusal press is swallowed")
+    }
+
+    /// A rule the host refuses for the whole match is not a disabled control.
+    ///
+    /// `swapEnabled: false` means every swap request is refused from the deal
+    /// to the last tile, so a Swap button gated on ``isSwapEnabled`` alone would
+    /// sit greyed out the entire game, inviting a press that can never land.
+    @Test("Swap is not offered at all when the rules turn it off")
+    func swapIsAbsentWhenTheRulesSayNoSwap() async throws {
+        let dictionary = EnableWordList(words: ["GO"])
+        var noSwap = MatchOptions.standard
+        noSwap.swapEnabled = false
+
+        let (_, off) = try await MatchBoardTests.guest(
+            handSize: 2, dictionary: dictionary, options: noSwap
+        )
+        let shell = ShellModel(route: .match(Self.setup))
+        let hidden = MatchHUDModel(
+            shell: shell, session: off, board: MatchBoard(session: off, dictionary: dictionary)
+        )
+        #expect(hidden.isSwapOffered == false, "the control is offered under rules that refuse it")
+
+        // The standard rules still have a swap in them, so this is a rule being
+        // read and not a control that went away.
+        let (_, on) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let shown = MatchHUDModel(
+            shell: ShellModel(route: .match(Self.setup)),
+            session: on, board: MatchBoard(session: on, dictionary: dictionary)
+        )
+        #expect(shown.isSwapOffered, "the standard rules lost their swap")
+    }
+
+    /// The gate is read in a SwiftUI file the macOS test target cannot compile,
+    /// so the button's absence is checked against the bytes on disk. `if`, not
+    /// `.disabled`: a greyed-out control for a rule that never changes is the
+    /// thing this exists to prevent.
+    @Test("The HUD omits the Swap button rather than disabling it")
+    func theHUDOmitsSwapUnderNoSwapRules() throws {
+        let text = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
+        #expect(text.contains("if hud.isSwapOffered {"),
+                "the Swap button is not gated on the rules — it renders under rules that refuse it")
+    }
+
+    /// The endgame gate. Below ``Pool/swapSize`` the host refuses every swap,
+    /// so the control has to go dead — but the press must still LAND, or the
+    /// player learns nothing from a button that stopped working. Same split as
+    /// Draw, and checked the same way: the view's `.disabled` against the
+    /// pressable predicate, and the model's rule against the pool's own number
+    /// rather than a second copy of the `3`.
+    @Test("Swap goes dead on a pool too small to answer it, but the press still lands")
+    func swapIsGatedOnAPoolThatCanAnswer() throws {
+        let view = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
+        #expect(view.contains(".disabled(!hud.isSwapPressable)"),
+                "Swap is disabled on the wrong predicate — a refused press never lands")
+
+        let model = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
+        #expect(model.contains("remaining >= Pool.swapSize"),
+                "the swap gate does not read the pool's own swap size")
+        #expect(model.contains("isSwapPressable && swappableTile != nil && poolCanServeASwap"),
+                "isSwapEnabled no longer folds the pool rule in")
     }
 
     /// `MatchView` is a SwiftUI file the macOS test target cannot compile, so
@@ -405,5 +509,85 @@ struct MatchHUDTests {
             "a refused draw lit nothing, which is the silence this fixes"
         )
         solo.leave()
+    }
+
+    @Test("A tile peeled to you is takeable while your own board is unfinished")
+    func anOwedTileIsTakeableWithAnUnfinishedBoard() async throws {
+        let (solo, wiring, _, hud) = try await Self.hud()
+        defer { solo.leave() }
+
+        let before = solo.session.state.hand.count
+        #expect(wiring.canDraw == false, "an opening deal is not a finished board")
+
+        // The far end presses Draw. A peel takes one tile per player at once,
+        // so this device is handed a tile it never asked for and cannot refuse.
+        #expect(solo.bot.session.draw())
+        try await SoloMatchTests.waitUntil("a tile waiting behind Draw") {
+            solo.session.hasPendingDraw
+        }
+        #expect(hud.drawLabel.contains("1"), "nothing on screen says a tile is waiting")
+
+        // The press that reopens the board. Gated on `canDraw` this was refused,
+        // and refused permanently: `place` throws `.drawPending` while a tile
+        // waits, so the board could never become finished, so the tile could
+        // never be taken. The pool went down and no letter ever arrived.
+        #expect(hud.isDrawEnabled)
+        #expect(hud.draw())
+        #expect(solo.session.hasPendingDraw == false)
+        #expect(solo.session.state.hand.count == before + 1)
+        #expect(hud.drawLabel == Terminology.draw)
+    }
+
+    // MARK: - One press, one tile, laid on the press
+
+    @Test("Each press lays its own tile while the rest of the queue still waits")
+    func everyPressLaysItsTileWithMoreStillQueued() async throws {
+        let dictionary = EveryWordIsReal()
+        let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        wiring.viewport = MatchBoardTests.viewport
+        let shell = ShellModel(route: .match(Self.setup))
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+
+        try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
+        try await SoloMatchTests.waitUntil("the opening on the board") {
+            wiring.board.placementList.count == 2
+        }
+
+        // Three peels this device never asked for. It now owes three presses,
+        // and the queue is what makes this different from the single-tile case
+        // already covered: with tiles still behind it, a press used to take a
+        // letter it could not lay, and the whole queue then landed at once on
+        // the last press.
+        let owed = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
+        try await MatchBoardTests.grant(owed, from: host)
+        try await SoloMatchTests.waitUntil("three tiles waiting behind Draw") {
+            session.pendingDrawTiles.count == 3
+        }
+
+        for (pressed, tile) in owed.enumerated() {
+            #expect(hud.isDrawEnabled, "press \(pressed + 1) was not offered")
+            #expect(hud.draw(), "press \(pressed + 1) did nothing")
+
+            // The tile this press took is on the board before the next press,
+            // and it is on the board because the wiring laid it — no test calls
+            // `sync()` here.
+            try await SoloMatchTests.waitUntil("press \(pressed + 1)'s tile on the board") {
+                wiring.board.placementList.count == 3 + pressed
+            }
+            #expect(
+                wiring.board.placementList.contains { $0.tile.id == tile.id },
+                "press \(pressed + 1) took a tile it never laid"
+            )
+            #expect(session.state.hand.isEmpty, "press \(pressed + 1) left its tile in the rack")
+            // One per press, never the queue.
+            #expect(session.pendingDrawTiles.count == owed.count - pressed - 1)
+            _ = MatchBoardTests.custody(wiring, session, "after press \(pressed + 1)")
+        }
+
+        #expect(session.hasPendingDraw == false)
+        #expect(wiring.board.placementList.count == 5)
+
+        session.leave()
     }
 }

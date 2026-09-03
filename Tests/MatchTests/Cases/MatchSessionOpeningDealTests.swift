@@ -138,8 +138,9 @@ struct MatchSessionOpeningDealTests {
         #expect(guest.pendingDrawTiles.map(\.id) == drawn.map(\.id))
         #expect(guest.state.hand.map(\.id) == dealt.map(\.id))
 
-        // And the obligation still resolves the way it always did.
-        #expect(guest.draw())
+        // And the obligation still resolves the way it always did, one press
+        // per waiting tile.
+        while guest.hasPendingDraw { #expect(guest.draw()) }
         #expect(guest.pendingDrawTiles.isEmpty)
         #expect(guest.state.hand.count == 4)
     }

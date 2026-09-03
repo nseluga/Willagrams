@@ -22,52 +22,98 @@ public struct BotDifficulty: Sendable, Equatable {
     ///
     /// `0` extend · `1` repair · `2` rebuild · `3` swap. All four exist. Rung
     /// 3 is the only one that speaks to the host rather than moving tiles, and
-    /// it is reached from this number alone — the stall floor below cannot
-    /// grant it, so a bot at depth 2 or less never asks to swap.
+    /// it is the only rung this number is not the last word on: a bot below
+    /// depth 3 never *searches* for a swap, but ``stallFloorTicks`` will hand a
+    /// tile back on its behalf once it is demonstrably stuck.
+    ///
+    /// Rungs 1 and 2 are also where the bot may lay a whole word at once
+    /// rather than one tile at a time, which is what makes a tile with no
+    /// two-letter word — a `Q`, with no `QI` in the list — placeable at all.
+    /// A depth-0 bot cannot do that and will sit on such a tile until the
+    /// floor swaps it away.
     public var ladderDepth: Int
 
-    /// The pause between placements. The bot is not slow — it is *paced*, so a
-    /// human can watch tiles land instead of a board appearing at once.
+    /// The pause between placements, before pacing stretches or squeezes it.
+    /// The bot is not slow — it is *paced*, so a human can watch tiles land
+    /// instead of a board appearing at once.
+    ///
+    /// Read it as the *middle* of the bot's rhythm rather than its speed: the
+    /// brain multiplies this by a factor drawn from ``pacing`` on every tick,
+    /// so what a player actually sees swings either side of it.
     ///
     /// Also the tick interval when the brain finds nothing to do. A test drives
-    /// the brain with `.zero` here; nothing else in the lane sleeps.
+    /// the brain with `.zero` here; nothing else in the lane sleeps. Zero times
+    /// any factor is still zero, so pacing costs a test nothing.
     public var thinkDelay: Duration
+
+    /// How far either side of ``thinkDelay`` a single pause may land.
+    ///
+    /// A bot that pauses the same number of milliseconds every time reads as a
+    /// metronome, and a metronome reads as a machine no matter how well it
+    /// plays. The brain widens the gap when a tick found nothing and narrows it
+    /// while tiles are going down, so the variation is *earned* — the player is
+    /// watching an opponent get stuck and then get going again, not watching a
+    /// random number. This range is only the clamp on how far that can go.
+    public var pacing: ClosedRange<Double>
 
     /// How many consecutive ticks the brain may place nothing before the stall
     /// floor fires — granting it one attempt at one rung above ``ladderDepth``,
-    /// clamped to rung 2, after which the count resets. A bot already at rung 2
-    /// gains nothing from the floor: rung 3 is deliberately out of its reach.
+    /// clamped to rung 2, after which the count resets. Once enough of those
+    /// grants have come back with nothing changed, the floor takes its own
+    /// separate door to rung 3 and hands a tile back. That is an escape, never
+    /// a promotion: the bot gains the swap and none of the searching rungs
+    /// above its own, so being stuck never makes it a better player.
     ///
     /// This is the floor under every difficulty: an easy bot is allowed to be
     /// bad, not to sit on an unplayable rack for the rest of the match, which
     /// from the player's side of the screen looks exactly like a broken bot.
     public var stallFloorTicks: Int
 
-    public init(ladderDepth: Int, thinkDelay: Duration, stallFloorTicks: Int) {
+    public init(
+        ladderDepth: Int,
+        thinkDelay: Duration,
+        stallFloorTicks: Int,
+        pacing: ClosedRange<Double> = 0.45...4.0
+    ) {
         self.ladderDepth = ladderDepth
         self.thinkDelay = thinkDelay
         self.stallFloorTicks = stallFloorTicks
+        self.pacing = pacing
     }
 
     /// Extend only, slowly, and patient about being stuck.
+    ///
+    /// The slowest clock of the three, and the length of a whole easy match is
+    /// not the reason. Easy is long because it reaches rung 0 only and spends
+    /// most of its ticks finding nothing; the clock is here so the row a player
+    /// picks to go easy on themselves also *looks* unhurried tile by tile.
+    /// Nobody plays an easy match to the last tile anyway — the player claims
+    /// the win first, which ends it.
     public static let easy = BotDifficulty(
         ladderDepth: 0,
-        thinkDelay: .milliseconds(1200),
+        thinkDelay: .milliseconds(2600),
         stallFloorTicks: 12
     )
 
-    /// Extend, repair and rebuild, at a conversational pace.
+    /// Extend, repair and rebuild — so it rearranges the board and lays whole
+    /// words — at a conversational pace.
     public static let medium = BotDifficulty(
         ladderDepth: 2,
-        thinkDelay: .milliseconds(600),
+        thinkDelay: .milliseconds(1900),
         stallFloorTicks: 6
     )
 
     /// The whole ladder, swap included, and quick to give up on a bad rack.
-    /// The only preset that ever hands a tile back.
+    /// The only preset that hands a tile back *by choice*; the others reach it
+    /// only through the stall floor, and only once nothing else is left.
+    /// Quick, but never instant. This number is tuned against the length of a
+    /// whole match, not against one pause: at 900ms hard cleared a 72-tile board
+    /// in five minutes, which no person does, and the pool fell so steadily that
+    /// the far end read as a script. The ladder is what makes this bot hard; the
+    /// clock only made it inhuman.
     public static let hard = BotDifficulty(
         ladderDepth: 3,
-        thinkDelay: .milliseconds(250),
+        thinkDelay: .milliseconds(1800),
         stallFloorTicks: 3
     )
 }

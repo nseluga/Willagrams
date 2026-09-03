@@ -197,9 +197,30 @@ public actor FakeBackend: BackendClient {
         return match
     }
 
+    /// The row as this fake holds it, with no membership or status gate.
+    ///
+    /// A read a test needs and the protocol has no method for: "the `matches`
+    /// row still reads `lobby`" cannot be asserted through `joinMatch`, which
+    /// refuses on exactly that status and so cannot tell the two apart.
+    public func matchRecord(_ id: UUID) -> MatchRecord? { matches[id] }
+
     public func players(inMatch matchID: UUID) async throws -> [MatchPlayerRow] {
         guard let rows = memberships[matchID] else { throw BackendError.notFound }
         return rows
+    }
+
+    /// What ``transport(for:as:)`` hands back, when a caller wants to choose.
+    ///
+    /// The stock endpoint below throws its peer away, so nothing a test does to
+    /// the far end is observable and no send can be counted. A caller that needs
+    /// either — the `online` façade's lobby and its "a refused start sends
+    /// nothing" rule — supplies its own endpoint here.
+    private var transportFactory: (@Sendable (MatchRecord, PlayerID) -> any MatchTransport)?
+
+    public func setTransportFactory(
+        _ factory: @escaping @Sendable (MatchRecord, PlayerID) -> any MatchTransport
+    ) {
+        transportFactory = factory
     }
 
     public func transport(
@@ -207,6 +228,7 @@ public actor FakeBackend: BackendClient {
         as player: PlayerID
     ) async throws -> any MatchTransport {
         guard matches[match.id] != nil else { throw BackendError.notFound }
+        if let transportFactory { return transportFactory(match, player) }
         // A live endpoint with a synthetic peer on the other side. Enough for
         // `account` and `friends`, which never send a MatchMessage; `online`
         // replaces this with a real channel, and the match lane's own tests

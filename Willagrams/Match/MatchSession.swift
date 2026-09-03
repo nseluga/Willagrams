@@ -702,9 +702,16 @@ public final class MatchSession {
 
     /// The Draw button.
     ///
-    /// With a tile waiting this *takes* it and nothing goes on the wire —
+    /// With a tile waiting this *takes one* and nothing goes on the wire —
     /// accepting the obligation is not a new request. Otherwise it asks for a
     /// round.
+    ///
+    /// One tile per press, always, however many are waiting. A player who fell
+    /// six tiles behind presses six times. The button is the only place a tile
+    /// enters a hand, so letting one press empty a queue of six would drop six
+    /// letters into the rack at once with no way to take them one at a time and
+    /// play between them — and it would hide how far behind they are behind a
+    /// single tap.
     ///
     /// Not gated on ``canDraw``: that predicate is the button's enabled state,
     /// and gating here would be a second, weaker copy of a check the shell
@@ -715,8 +722,7 @@ public final class MatchSession {
     public func draw() -> Bool {
         guard !isLocked else { return false }
         if !pendingDrawTiles.isEmpty {
-            state.hand.append(contentsOf: pendingDrawTiles)
-            pendingDrawTiles = []
+            state.hand.append(pendingDrawTiles.removeFirst())
             return true
         }
         // An empty pool can only answer with the same broadcast again, and each
@@ -761,7 +767,25 @@ public final class MatchSession {
         // the tile down and read `hasPendingDraw`, `isMatchOver` and
         // `peerPresence` to find out which — so this reuses the one refusal
         // this type has rather than growing a case per reason.
-        guard !isLocked, pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        guard pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        try lay(tileID: tileID, at: coord)
+    }
+
+    /// Lays a tile this session itself just handed over, without waiting for the
+    /// rest of the obligation to be taken.
+    ///
+    /// The obligation is a rule about *playing*, not about a tile appearing.
+    /// Draw takes one waiting tile per press, so gating this the way ``place``
+    /// is gated meant a press with two tiles still queued behind it took a tile
+    /// that could not be laid: the press did nothing visible, and the whole
+    /// queue then arrived at once on the last one. Every press now puts its
+    /// tile down where the player can see it, and ``place`` — the player's own
+    /// moves — stays frozen until the queue is empty, which is where the
+    /// obligation actually bites.
+    ///
+    /// Still refused outright by a finished match or an absent peer.
+    public func lay(tileID: UUID, at coord: Coord) throws(BoardActionError) {
+        guard !isLocked else { throw BoardActionError.drawPending }
         do {
             try state.place(tileID: tileID, at: coord)
         } catch {
@@ -773,7 +797,15 @@ public final class MatchSession {
     ///
     /// - Throws: ``BoardActionError/drawPending`` while a tile is waiting.
     public func recall(from coord: Coord) throws(BoardActionError) {
-        guard !isLocked, pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        guard pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        try unlay(from: coord)
+    }
+
+    /// ``recall(from:)``'s half of the same exemption: the roll-back path for a
+    /// delivery that was refused part way. A delivery that could be laid must be
+    /// undoable on the same terms, or half of it is stranded on the board.
+    public func unlay(from coord: Coord) throws(BoardActionError) {
+        guard !isLocked else { throw BoardActionError.drawPending }
         state.recall(from: coord)
     }
 

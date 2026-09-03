@@ -253,7 +253,9 @@ struct MatchSessionTerminalTests {
         let tiles = [Tile(letter: "W"), Tile(letter: "I"), Tile(letter: "N")]
         wire.deliver(.grant(player: bob, tiles: tiles))
         try await waitUntil("the tiles to be offered") { guest.pendingDrawTiles.count == 3 }
-        #expect(guest.draw())
+        // One tile per press, so three tiles is three presses. The board stays
+        // shut until the last of them is taken.
+        while guest.hasPendingDraw { #expect(guest.draw()) }
         try guest.place(tileID: tiles[0].id, at: Coord(row: 0, col: 0))
         return tiles
     }

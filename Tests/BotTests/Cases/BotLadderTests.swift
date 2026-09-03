@@ -459,4 +459,45 @@ struct BotLadderTests {
             #expect(writes.isEmpty, "\(file.lastPathComponent) writes session state: \(writes)")
         }
     }
+
+    @Test("A tile with no two-letter word goes down inside a whole word, or not at all")
+    func aStrandedTileIsLaidAsPartOfAWord() async throws {
+        // The shape that stranded the bot in a real match, reduced: `Q` spells
+        // nothing with one neighbour, so no sequence of single legal placements
+        // ever reaches `QAT` — `QA` is not a word, and the board is invalid the
+        // instant the second tile lands. The whole run has to go down together.
+        let x = Tile(letter: "X"), y = Tile(letter: "Y")
+        let q = Tile(letter: "Q"), a = Tile(letter: "A"), t = Tile(letter: "T")
+        let board = Board(placements: [
+            Coord(row: 0, col: 0): x, Coord(row: 0, col: 1): y,
+        ])
+        // No two-letter word touches Q, and nothing in the rack extends `XY`.
+        let list = ListedWordList(accepted: ["XY", "QAT"], counter: nil)
+        let match = BotMatch(dictionary: list, sleepFor: { _ in })
+        defer { match.leave() }
+        let brain = BotBrain(session: match.session, dictionary: list, difficulty: .medium)
+        let snapshot = BotBrain.Snapshot(hand: [q, a, t], board: board, options: .standard)
+
+        // Rung 0 has one tile to spend and no legal cell for it. Rung 1 would
+        // have to pull the whole board, which it refuses. An easy bot lives
+        // here, and this tile is why it will sit until the stall floor swaps.
+        #expect(await brain.plan(on: snapshot, depth: 0) == nil)
+        #expect(await brain.plan(on: snapshot, depth: 1) == nil)
+
+        // Rung 2 tears the board down, and on the empty board it opens with a
+        // word rather than a tile — which is the only move that places the Q.
+        let plan = try #require(await brain.plan(on: snapshot, depth: 2))
+        #expect(plan.recalls == [Coord(row: 0, col: 0), Coord(row: 0, col: 1)])
+        #expect(plan.moves.count == 3)
+        #expect(plan.moves.contains { $0.tileID == q.id }, "the stranded tile is still stranded")
+
+        // Replayed: the three tiles spell the word, contiguously and in order.
+        var replay = Board()
+        for move in plan.moves {
+            let tile = try #require([q, a, t].first { $0.id == move.tileID })
+            try replay.place(tile, at: move.coord)
+        }
+        #expect(replay.validate(against: list).invalidWords.isEmpty)
+        #expect(replay.words().map(\.text).sorted() == ["QAT"])
+    }
 }

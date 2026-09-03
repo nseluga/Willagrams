@@ -116,10 +116,28 @@ public final class MatchHUDModel {
 
     // MARK: - Draw
 
-    public var drawLabel: String { Terminology.draw }
+    /// Local chrome around a protected term, the way ``unknownValue`` is: the
+    /// count is not game vocabulary, and `Terminology` is the IP fence.
+    ///
+    /// A peel takes one tile per player at once, so the opponent's press is
+    /// what puts a tile behind this button — nothing the player did. With the
+    /// label unchanged there is no sign anywhere on screen that a tile is
+    /// waiting, and the board is frozen until it is taken: the game reads as
+    /// broken at exactly the moment it is waiting on one press.
+    public var drawLabel: String {
+        guard owesATile else { return Terminology.draw }
+        return "\(Terminology.draw) (\(session.pendingDrawTiles.count))"
+    }
 
-    /// Whether Draw does anything, which is the same question as whether it is
-    /// tappable — see ``draw()``.
+    /// Whether Draw is *tappable*. NOT the same question as whether it does
+    /// anything — see ``draw()``.
+    ///
+    /// The three states in which drawing is meaningless, and only those. An
+    /// unfinished board deliberately leaves the control live: pressing it is
+    /// how the player asks why, and the refusal flashes the runs that are the
+    /// answer. Disabling on `board.canDraw` swallowed that press, so the flash
+    /// `MatchHUDModel` counts and `BoardView` draws could never fire from the
+    /// app — only from a test calling ``draw()`` directly.
     ///
     /// The board's own published answer, AND-ed with the three states in which
     /// drawing is meaningless. The shell never checks a board or a word itself.
@@ -167,6 +185,14 @@ public final class MatchHUDModel {
     @discardableResult
     public func draw() -> Bool {
         resignArmed = false
+        // No `board.canDraw` here. ``isDrawEnabled`` already carries it, and
+        // carries it in the one form that is correct: `owesATile || canDraw`.
+        // Repeating the bare clause on this line re-imposed it on the owed-tile
+        // branch too, and that branch exists precisely because the board is
+        // unfinished — `place` throws `.drawPending` while a tile waits, so the
+        // player could not finish the board, and could not take the tile that
+        // would let them. The pool went down by two, no letter arrived, and
+        // nothing could ever move again.
         guard isDrawEnabled, session.draw() else { return refuse() }
         return true
     }
@@ -204,7 +230,7 @@ public final class MatchHUDModel {
     @discardableResult
     public func claimWin() -> Bool {
         resignArmed = false
-        guard isWinEnabled, session.claimWin() else { return refuse() }
+        guard isWinEnabled, board.canDraw, session.claimWin() else { return refuse() }
         shell.matchEnded(winner: session.winner)
         return true
     }
@@ -216,6 +242,14 @@ public final class MatchHUDModel {
     /// The tile Swap would return: the one the player has selected on the
     /// board. Nothing is chosen on the player's behalf — with no selection, or
     /// more than one, there is nothing to swap.
+    /// The Swap button's whole press: take what is selected, or refuse in a way
+    /// the player can see. The view holds no rule about which of those it is.
+    @discardableResult
+    public func swapPressed() -> Bool {
+        guard let tile = swappableTile else { resignArmed = false; return refuse() }
+        return swap(tile)
+    }
+
     public var swappableTile: Tile? {
         guard board.model.selected.count == 1,
               let coord = board.model.selected.first
@@ -223,12 +257,43 @@ public final class MatchHUDModel {
         return board.board.tile(at: coord)
     }
 
+    /// Whether Swap is part of this game at all.
+    ///
+    /// Not the same question as ``isSwapEnabled``, which asks whether a press
+    /// would land right now. This asks whether the rules ever allow one: the
+    /// host refuses every swap for the whole match when `swapEnabled` is off,
+    /// so a control gated on it would sit greyed out from the deal to the last
+    /// tile, inviting a press that can never work. `MatchHUD` does not draw it.
+    public var isSwapOffered: Bool { session.options.swapEnabled }
+
     public var isSwapEnabled: Bool {
-        swappableTile != nil
+        isSwapPressable && swappableTile != nil && poolCanServeASwap
+    }
+
+    /// Whether a Swap press should land, as opposed to whether it should work.
+    ///
+    /// The same split Draw makes, for the same reason: a press that is refused
+    /// has to reach ``swap(_:)``, or the refusal is never shown and the player
+    /// is left pressing a dead control with no idea why. What is left out is
+    /// everything the player can fix by looking at the board — no tile picked,
+    /// a pool too small — which is exactly what the refusal explains.
+    public var isSwapPressable: Bool {
+        isSwapOffered
             && !session.isMatchOver
             && session.peerPresence == .present
             && !session.hasPendingDraw
-            && !session.poolIsExhausted
+    }
+
+    /// Whether the pool still holds enough to answer a swap.
+    ///
+    /// A swap takes ``Pool/swapSize`` and gives one back, and the host refuses
+    /// it as a unit — so below that the control cannot work, however many tiles
+    /// are left. `nil` is a guest, which cannot see the count and must not
+    /// guess one: it keeps the old, weaker test and learns the truth from the
+    /// host's refusal.
+    public var poolCanServeASwap: Bool {
+        guard let remaining = session.poolRemaining else { return !session.poolIsExhausted }
+        return remaining >= Pool.swapSize
     }
 
     /// Returns one tile and takes three.
@@ -246,7 +311,14 @@ public final class MatchHUDModel {
     @discardableResult
     public func swap(_ tile: Tile) -> Bool {
         resignArmed = false
-        guard isSwapEnabled else { return false }
+        // Flashed, not silent: the reason is off the board — the pool ran too
+        // low to answer — so nothing about the grid explains the refusal, and
+        // an unexplained dead button reads as a broken one. The tile the player
+        // picked is what flashes, because that is what they aimed at.
+        guard isSwapEnabled else {
+            if let coord = board.model.selected.first { board.model.flash([coord]) }
+            return refuse()
+        }
 
         let coord = session.state.board.placementList.first { $0.tile.id == tile.id }?.coord
         if let coord {

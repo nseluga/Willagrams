@@ -119,12 +119,18 @@ public final class MatchBoard {
     /// safe to call from an observation callback that fires for every change to
     /// the session, most of which are not arrivals.
     public func sync() {
-        // The session refuses `place` in all three of these states, and a
-        // refusal part way through a delivery is what loses a tile. Nothing is
-        // marked laid, so the arrival waits in the hand and the change that
-        // lifts the block re-arms this.
-        guard !session.hasPendingDraw,
-              !session.isMatchOver,
+        // The session refuses `lay` in both of these states, and a refusal part
+        // way through a delivery is what loses a tile. Nothing is marked laid,
+        // so the arrival waits in the hand and the change that lifts the block
+        // re-arms this.
+        //
+        // `hasPendingDraw` is deliberately not here. Draw takes one waiting tile
+        // per press, so a press with more still queued behind it would otherwise
+        // take a tile this could not lay — a press that did nothing, and then
+        // the whole queue landing at once on the last one. The obligation is
+        // still enforced, in ``mirror()``: the player cannot move anything until
+        // the queue is empty.
+        guard !session.isMatchOver,
               session.peerPresence == .present
         else { return }
 
@@ -142,14 +148,14 @@ public final class MatchBoard {
         var mirrored: [Coord] = []
         for placement in laid.placementList where arriving.contains(placement.tile.id) {
             do {
-                try session.place(tileID: placement.tile.id, at: placement.coord)
+                try session.lay(tileID: placement.tile.id, at: placement.coord)
                 mirrored.append(placement.coord)
             } catch {
                 // The rules refused a placement `BoardLayout` chose, which means
                 // the session's board and this one have diverged. Every tile
                 // this loop moved goes back to the hand it came from and the
                 // delivery is dropped, leaving the count exactly where it was.
-                for coord in mirrored { try? session.recall(from: coord) }
+                for coord in mirrored { try? session.unlay(from: coord) }
                 return
             }
         }
