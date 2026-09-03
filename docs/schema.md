@@ -10,34 +10,29 @@ a working one until bad data arrives — and `supabase/tests/rls_behavior.sql`,
 which reads and writes as an actual player, because a wrong policy returns zero
 rows rather than an error.
 
-    createdb willagrams_schema_check
-    psql -q -d willagrams_schema_check <<'SQL'
-    create schema auth;
-    create table auth.users (id uuid primary key);
-    create function auth.uid() returns uuid language sql stable as $$
-      select (nullif(current_setting('request.jwt.claims', true), '')::json->>'sub')::uuid $$;
-    create role authenticated;
-    SQL
-    for f in 0001_init 0002_participant_lookup 0003_join_match 0004_record_outcome; do
-      psql -v ON_ERROR_STOP=1 -d willagrams_schema_check -f supabase/migrations/$f.sql
-    done
-    psql -q -d willagrams_schema_check <<'SQL'
-    grant usage on schema public to authenticated;
-    grant select, insert, update, delete on all tables in schema public to authenticated;
-    SQL
-    psql -v ON_ERROR_STOP=1 -d willagrams_schema_check -f supabase/tests/schema_invariants.sql
-    psql -v ON_ERROR_STOP=1 -d willagrams_schema_check -f supabase/tests/rls_behavior.sql
-    dropdb willagrams_schema_check
+    ./scripts/scratch-verify.sh
 
-The `auth` block and the grants are the stub Supabase provides for real; neither
-is part of a migration. Two details matter and cost an afternoon each if they
-are wrong. `auth.uid()` must read `request.jwt.claims` as JSON, which is what
-Supabase actually sets and what `rls_behavior.sql` sets — the older stub here
-read a `request.jwt.claim.sub` GUC that nothing writes, so `auth.uid()` was null
-for every reader and every policy assertion would have been meaningless. And
-`authenticated` needs table grants: RLS narrows privileges, it does not confer
-them, so without the grants every read fails with `permission denied` before a
-policy is ever consulted.
+That builds a throwaway database, applies every migration in order, then runs
+both fixtures twice in either order and reports how many assertions ran (45) and
+whether `public` was left empty. Run it before proposing any migration.
+
+The script's `auth` block and its grants are the stub Supabase provides for
+real; neither is part of a migration. Two details matter and cost an afternoon
+each if they are wrong, which is why the script owns them rather than each
+person retyping them. `auth.uid()` must read `request.jwt.claims` as JSON, which
+is what Supabase actually sets and what `rls_behavior.sql` sets — a stub that
+reads only the `request.jwt.claim.sub` GUC gets null for every reader, so every
+policy assertion passes on nothing. And the API roles need table grants: RLS
+narrows privileges, it does not confer them, so without the grants every read
+fails with `permission denied` before a policy is ever consulted. `0001_init.sql`
+carries no grants of its own because on Supabase they arrive by default
+privilege.
+
+`rls_behavior.sql` also runs against the live project, which holds real rows from
+every online test run. Assertions are therefore scoped to the rows the fixture
+itself seeds rather than counting whole tables — `select 1 from public.profiles`
+is correct only on an empty database, because `profiles_select_any_authenticated`
+is `using (true)`. `scripts/apply-0004-live.sh` is the live runner.
 
 Both files clean up after themselves and may be run repeatedly in either order.
 Last run: 17 illegal writes rejected, `ALL SCHEMA INVARIANTS ENFORCED`; 45

@@ -197,8 +197,18 @@ select pg_temp.acting_as('33333333-3333-3333-3333-333333333333');
 
 -- Deliberately public: a friend code is looked up by someone who is not yet a
 -- friend. If this ever returns zero, friend-code search silently finds nobody.
+--
+-- Named by id rather than counted over the whole table. `select 1 from
+-- public.profiles` was the obvious form and it is only correct on an empty
+-- database: the policy is `using (true)`, so against the real project it counts
+-- every profile the live tests have ever left behind. Restricting to the
+-- fixture's own three keeps the whole of the assertion's force — under a
+-- reader-scoped policy Alan, who is none of them, would see zero.
 select pg_temp.must_see(
-    $$select 1 from public.profiles$$, 3,
+    $$select 1 from public.profiles
+       where id in ('11111111-1111-1111-1111-111111111111',
+                    '22222222-2222-2222-2222-222222222222',
+                    '33333333-3333-3333-3333-333333333333')$$, 3,
     'a stranger reads every profile');
 
 select pg_temp.must_see(
