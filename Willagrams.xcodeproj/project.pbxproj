@@ -15,6 +15,7 @@
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000004 /* Willagrams.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Willagrams.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000014 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Config/Secrets.xcconfig; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* Willagrams.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Willagrams.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -42,6 +43,7 @@
 			children = (
 				AA000000000000000000000F /* Willagrams */,
 				AA0000000000000000000013 /* Willagrams.entitlements */,
+				AA0000000000000000000014 /* Secrets.xcconfig */,
 				AA0000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -192,7 +194,9 @@
 		};
 		AA000000000000000000000D /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000000000000000000014 /* Secrets.xcconfig */;
 			buildSettings = {
+				INFOPLIST_FILE = Config/Info.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Willagrams.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -217,7 +221,9 @@
 		};
 		AA000000000000000000000E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000000000000000000014 /* Secrets.xcconfig */;
 			buildSettings = {
+				INFOPLIST_FILE = Config/Info.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Willagrams.entitlements;
 				CODE_SIGN_STYLE = Automatic;
