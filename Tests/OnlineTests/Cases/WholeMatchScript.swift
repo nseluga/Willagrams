@@ -91,7 +91,14 @@ enum WholeMatchScript {
     /// a count.
     static func placeTiles(_ count: Int, on session: MatchSession) throws {
         for col in 0 ..< count {
-            try session.place(tileID: session.state.hand[0].id, at: Coord(row: 0, col: col))
+            // An empty rack means the deal never reached this device. Record it
+            // and leave: subscripting here traps, and a trap takes down the whole
+            // test process, hiding every case that would have run after it.
+            guard let tile = session.state.hand.first else {
+                Issue.record("the rack was empty after \(col) of \(count) placements")
+                return
+            }
+            try session.place(tileID: tile.id, at: Coord(row: 0, col: col))
         }
         #expect(session.state.board.placements.count == count)
     }
@@ -443,4 +450,19 @@ struct WholeMatchOfflineTests {
         #expect(f.creator.recorder?.lastError == nil)
         #expect(f.guest.recorder?.lastError == nil)
     }
+
+    /// A rack can be empty when the deal never reached this device — a live
+    /// failure, never an offline one. `placeTiles` has to name it and return:
+    /// subscripting an empty rack traps, and a trap ends the whole test
+    /// process, taking every case that would have run after it.
+    @Test("Placing from an empty rack records an issue instead of trapping")
+    func emptyRackIsRecordedNotTrapped() async throws {
+        let pair = try await MatchOutcomeRecorderTests.playingPair(handSize: 0)
+        #expect(WholeMatchScript.tilesHeld(pair.host) == 0)
+
+        withKnownIssue("the rack is empty by construction") {
+            try WholeMatchScript.placeTiles(2, on: pair.host)
+        }
+    }
+
 }

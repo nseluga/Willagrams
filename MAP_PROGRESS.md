@@ -38,10 +38,10 @@ line per lane.
 | 2026-08-25 | Map and foundation refresh before the last lanes. `0002_participant_lookup.sql` entered the `FOUNDATION.md` amendment log — it had landed as a Reviewer fix and existed only as a crossing row here, which left the amendment log no longer the record of the schema. **Sign in with Apple postponed** on the paid Apple Developer membership, written up per lane: `online` and `account` keep a stop marker over their sign-in items, `friends` is unaffected, `launch` is the lane it actually stops. MAP gained "Decided — what the `audio` lane is and is not": the seam's missing call sites are shell's, mute is sound-only, the mute control is settings'. | `MAP.md`, `MAP_PROGRESS.md`, `FOUNDATION.md`. Reviewer pass, not a lane. |
 | 2026-09-01 | `0003_join_match.sql` — join by invite code. `join_match` is security definer because a stranger cannot read `matches` under RLS, so no client-side join was possible. Review of the migration found `match_players_insert_self` still let any authenticated user insert into any match by UUID, bypassing the lobby and cap guards; the same migration tightens it to host-into-own-lobby-under-cap. The runbook's `auth.uid()` stub was also wrong (`request.jwt.claim.sub` GUC instead of the JSON claims), which had made every prior RLS assertion run as `null`. | `supabase/migrations/0003_join_match.sql`, `supabase/tests/rls_behavior.sql`, `docs/schema.md`, `FOUNDATION.md`. Foundation amendment, not a lane. |
 
-Suite on `integration` after PR #3: **833 tests, nine packages** — rules 53 ·
+Suite on `integration` after PR #3: **834 tests, nine packages** — rules 53 ·
 Board 253 · Match 125 · Style 30 · Shell 125 · Settings 36 · Audio 19 ·
-Online 124 · Bot 68, and `xcodebuild` BUILD SUCCEEDED. Counted by running every
-package, not carried forward. 22 of the 124 Online cases are gated live cases
+Online 125 · Bot 68, and `xcodebuild` BUILD SUCCEEDED. Counted by running every
+package, not carried forward. 22 of the 125 Online cases are gated live cases
 that skip without a key. Two tests are wall-clock flaky under a full parallel
 run and pass alone: the BotTests pacing case and ShellTests' countdown overlay.
 
