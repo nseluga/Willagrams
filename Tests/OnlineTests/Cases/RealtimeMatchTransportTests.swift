@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import Realtime
 import Testing
 import WillagramsRules
 
@@ -547,5 +548,24 @@ struct RealtimeMatchTransportTests {
         #expect(
             SupabaseMatchChannel.envelope(
                 from: .init(sender: "host", payload: "not base64!!")) == nil)
+    }
+
+    @Test("A broadcast message carries the frame under `payload`, not at the top level")
+    func broadcastMessageShape() throws {
+        let envelope = WireEnvelope(sender: hostID, payload: Data([0x01, 0x02]))
+        let frame = SupabaseMatchChannel.payload(for: envelope)
+        // Exactly what the SDK hands `onBroadcast` — proven against the live
+        // project on 2026-09-02, when decoding the top level dropped every message.
+        let message: JSONObject = [
+            "type": "broadcast", "event": "wire",
+            "payload": ["sender": .string(frame.sender), "payload": .string(frame.payload)],
+        ]
+        let decoded = try #require(SupabaseMatchChannel.envelope(fromBroadcast: message))
+        #expect(decoded.sender == envelope.sender)
+        #expect(decoded.payload == envelope.payload)
+        #expect(
+            SupabaseMatchChannel.envelope(
+                fromBroadcast: ["sender": .string(frame.sender), "payload": .string(frame.payload)])
+                == nil)
     }
 }

@@ -48,12 +48,21 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
 
     func onWire(_ handler: @escaping @Sendable (WireEnvelope) -> Void) {
         retain(
-            channel.onBroadcast(event: Self.wireEvent) { payload in
-                guard let frame = try? payload.decode(as: Frame.self),
-                    let envelope = Self.envelope(from: frame)
-                else { return }
+            channel.onBroadcast(event: Self.wireEvent) { message in
+                guard let envelope = Self.envelope(fromBroadcast: message) else { return }
                 handler(envelope)
             })
+    }
+
+    /// The broadcast callback gets the whole `{type, event, payload}` message;
+    /// the frame is under `payload`. Proven live 2026-09-02 — decoding the
+    /// message itself as a `Frame` dropped every wire message on the floor,
+    /// and the offline suite could not see it because the fake channel hands
+    /// the transport a `WireEnvelope` directly.
+    static func envelope(fromBroadcast message: JSONObject) -> WireEnvelope? {
+        guard let frame = try? (message["payload"]?.objectValue ?? [:]).decode(as: Frame.self)
+        else { return nil }
+        return envelope(from: frame)
     }
 
     func onPresence(_ handler: @escaping @Sendable ([PlayerID], [PlayerID]) -> Void) {
