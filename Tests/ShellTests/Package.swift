@@ -7,16 +7,39 @@ let package = Package(
     // `name:` is load-bearing: a path dependency's identity is otherwise its
     // directory name, so the bare `.package(path:)` MatchTests uses resolves to
     // "shell-r1" in a worktree and the product lookup below fails.
-    dependencies: [.package(name: "Willagrams", path: "../..")],
+    dependencies: [
+        .package(name: "Willagrams", path: "../.."),
+    ],
     targets: [
         // The app compiles `Willagrams/Match` into the same module as the shell;
         // here it is a separate one, which is what the `#if canImport(Match)`
         // in `SoloMatch.swift` exists for. Symlinked, not copied — this lane
         // consumes those files and never edits them.
+        //
+        // The two SDK-free `Willagrams/Online` files join it rather than forming
+        // a target of their own: the app compiles Match and Online into one
+        // module, so those files carry no `import Match`, and a second target
+        // would need imports the app does not want. `BackendClient`, `Profile`
+        // and `FakeBackend` therefore arrive through `import Match` here, and
+        // through no import at all in the app. The rest of Online needs the
+        // Supabase SDK and stays out — `Tests/OnlineTests` owns it.
         .target(
             name: "Match",
+            dependencies: [
+                .product(name: "WillagramsRules", package: "Willagrams"),
+            ],
+            path: ".",
+            sources: ["MatchSrc", "OnlineSrc/BackendContracts.swift", "OnlineSrc/FakeBackend.swift"]
+        ),
+        // `SystemAudioPlayer` imports AVFoundation and UIKit and cannot build
+        // for macOS; the seam, the catalogue and the settings can.
+        .target(name: "Audio", path: "AudioSrc", exclude: ["SystemAudioPlayer.swift"]),
+        // Only the model half: both files under `Views` are SwiftUI.
+        .target(
+            name: "Settings",
             dependencies: [.product(name: "WillagramsRules", package: "Willagrams")],
-            path: "MatchSrc"
+            path: "SettingsSrc",
+            exclude: ["Views/MatchOptionsView.swift", "Views/RulesInForceView.swift"]
         ),
         // One file, symlinked in: `Terminology` is the frozen IP fence and the
         // countdown's title comes from it. The rest of `Willagrams/Style` is
@@ -46,7 +69,7 @@ let package = Package(
         ),
         .target(
             name: "Shell",
-            dependencies: ["Match", "Style", "BoardKit", "Bot", .product(name: "WillagramsRules", package: "Willagrams")],
+            dependencies: ["Match", "Style", "BoardKit", "Bot", "Audio", "Settings", .product(name: "WillagramsRules", package: "Willagrams")],
             path: "ShellSrc",
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
@@ -57,6 +80,10 @@ let package = Package(
                 "HowToPlayView.swift", "SoloSetupView.swift",
             ]
         ),
-        .testTarget(name: "ShellTests", dependencies: ["Shell", "Match", "Style", "BoardKit", "Bot"], path: "Cases"),
+        .testTarget(
+            name: "ShellTests",
+            dependencies: ["Shell", "Match", "Style", "BoardKit", "Bot", "Audio", "Settings"],
+            path: "Cases"
+        ),
     ]
 )

@@ -1,6 +1,9 @@
 #if canImport(Bot)
 import Bot
 #endif
+#if canImport(Match)
+import Match
+#endif
 
 import Observation
 import WillagramsRules
@@ -59,6 +62,39 @@ public final class ShellModel {
     @ObservationIgnored private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
     @ObservationIgnored private let seedSource: @MainActor () -> UInt64
 
+    /// The backend, player and settings store the root built. Screens read them
+    /// from here; none of them constructs its own.
+    @ObservationIgnored public let services: ShellServices
+
+    /// The signed-in player, once sign-in lands. Nil until then, and for the
+    /// whole run of a build that carries no sign-in.
+    public private(set) var currentProfile: Profile?
+
+    /// One line saying why the menu's online actions are off, or nil when they
+    /// work. The copy is derived here rather than in a view: a view holds no
+    /// branch that changes what the app says.
+    public private(set) var onlineUnavailableReason: String?
+
+    /// Owned here so it can be cancelled when this model goes away; never
+    /// awaited on the launch path, so the menu draws while it is still running.
+    /// Readable so a test can await the launch sign-in instead of polling for
+    /// it; nothing in the app reads it.
+    @ObservationIgnored private(set) var signInTask: Task<Void, Never>?
+
+    public static let signingInReason = "Signing in…"
+    public static let noSignInReason = "Online play is unavailable in this build."
+
+    /// A `BackendError` as one line a player can read. Pure, so the copy is
+    /// testable without a model and without a view.
+    public static func onlineUnavailableReason(for error: any Error) -> String {
+        switch error as? BackendError {
+        case .offline: "You're offline. Reconnect to play a friend."
+        case .permissionDenied: "This account can't play online."
+        case .notAuthenticated, .notFound, .alreadyExists, .blocked, .matchFull, .none:
+            "Couldn't sign in. Reopen the app to try again."
+        }
+    }
+
     public init(
         route: AppRoute = .menu,
         dictionary: @escaping @MainActor () -> any WordList = {
@@ -73,13 +109,36 @@ public final class ShellModel {
         },
         seedSource: @escaping @MainActor () -> UInt64 = {
             UInt64.random(in: UInt64.min ... UInt64.max)
-        }
+        },
+        services: ShellServices = ShellServices()
     ) {
         self.route = route
         self.dictionary = dictionary
         self.sleepFor = sleepFor
         self.seedSource = seedSource
+        self.services = services
+
+        guard let signIn = services.signIn else {
+            onlineUnavailableReason = Self.noSignInReason
+            return
+        }
+        onlineUnavailableReason = Self.signingInReason
+        signInTask = Task { @MainActor [weak self] in
+            do {
+                let profile = try await signIn.signIn()
+                guard !Task.isCancelled, let self else { return }
+                currentProfile = profile
+                onlineUnavailableReason = nil
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                onlineUnavailableReason = Self.onlineUnavailableReason(for: error)
+            }
+        }
     }
+
+    /// Cancels the sign-in the model started. A failed or cancelled sign-in is
+    /// a disabled menu with a reason — never a retry, never an alert.
+    deinit { signInTask?.cancel() }
 
     /// Whether `generation` is still the live one. Read by a
     /// ``MatchRun/results(board:)`` screen's closures, which must decline once

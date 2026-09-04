@@ -64,7 +64,14 @@ struct SoloSetupTests {
 
     @Test("Starting from the screen plays the match that was configured")
     func startUsesTheChoices() throws {
-        let shell = ShellModel(dictionary: { SoloMatchTests.EveryWordIsReal() })
+        // `sleepFor` injected as every other solo test does. Every assertion
+        // below runs before the first suspension, so the clock changes nothing
+        // this test measures — but a default `ShellModel` leaves a wall-clock
+        // countdown ticking past the end of the test, and the session
+        // cancelling that sleep as it is torn down aborts the whole process.
+        let shell = ShellModel(
+            dictionary: { SoloMatchTests.EveryWordIsReal() }, sleepFor: { _ in }
+        )
         shell.showSoloSetup()
         shell.soloSetup.difficulty = BotDifficulty.hard
         shell.soloSetup.handSize = 9

@@ -99,7 +99,10 @@ struct ShellRootViewTests {
     @MainActor
     @Test("The route advances only when startSoloPractice reports it did")
     func routeFollowsTheReturnValue() {
-        let shell = ShellModel()
+        // `sleepFor` injected as every other solo test does: the assertion runs
+        // before the first suspension, and a default `ShellModel` would leave a
+        // wall-clock countdown ticking past the end of the test.
+        let shell = ShellModel(sleepFor: { _ in })
         let started = shell.startSoloPractice(seed: 7)
         #expect(started == (shell.route != .menu))
     }
