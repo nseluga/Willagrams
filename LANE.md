@@ -211,7 +211,7 @@ below the stop marker on the Apple Developer membership.
     - `startSoloPractice` succeeds while sign-in is still pending
     - A Release configuration compiles with no reference to `signInAnonymously` anywhere under `Willagrams/`
     - `swift test --package-path Tests/ShellTests` and the iOS `xcodebuild` build pass
-  status: not started
+  status: done
 
 - task: |
     Let `MatchRun` run a match it did not build.
