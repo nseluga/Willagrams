@@ -55,3 +55,23 @@ Items done: 1 of 12. Items blocked: none.
 2. `JoinView`'s `TextField` transiently renders characters the sanitiser rejects (a typed `-` showed as `M24Z-`). SwiftUI does not re-sync the field when `didSet` normalises to a value equal to the last observed one. The *model* clamp held — the live join used exactly `M24Z8A` — so the guardrail is intact; display-only, one-line polish fix.
 3. `HostLobbyModel.message(for: .permissionDenied)` reads "You can't host a match right now." — host-voiced copy now shown on the guest's join screen. Reusing that mapping was mandated by item 4's prompt, so it was left as-is.
 4. The Join button renders at full primary strength while `disabled(!canJoin)` — no disabled affordance.
+
+### Item 5 — Reconnecting overlay, end on gone, online results home (`d68bc41` + `dc03b70`, 1 attempt, engineer-only)
+
+- **`MatchHUDModel` is fenced against `peerPlayerID`** by `MatchHUDTests.hudNamesNoOpponent`. The item's literal wording ("the match-side model") pointed there, but putting the overlay on `MatchBoard` instead satisfied it without editing an existing assertion. **Put peer-identity work on `MatchBoard`, not the HUD.**
+- **A protocol requirement with a default beat both a stored flag and an `is OnlineOpponent` cast.** `MatchOpponent.offersRematch: Bool` (default `true`, `false` on `OnlineOpponent`) lets `MatchRun.results()` omit the rematch closure while keeping item 2's fence that `MatchRun` never learns its concrete opponent type.
+- **"No new stored state" guardrails are invisible to behaviour tests by construction.** Mirroring presence into a stored `MatchBoard.overlay` refreshed from `track()` passed all 159 tests — the "presence is read, never stored again in Shell" guardrail was unpinned. Closed with a falsifiable source-shape test asserting the *computed* spellings are present; the mutation then went red. This is the third run of the same lesson: a fence needs its own test that asserts what it greps is actually there.
+- **A new overlay view inside an already-excluded View file needs no new `exclude:` entry** — `ReconnectingOverlay` landed inside `MatchView.swift`, already excluded. Check before adding one.
+- The Swift 6.3.3 `MatchSession` toolchain limit was **not** tripped — MatchTests stayed at 125.
+- **Counts:** ShellTests 153→160, root 53, MatchTests 125, OnlineTests 126 (+1 pre-existing known issue), xcodebuild BUILD SUCCEEDED. 9 mutation checks, all restored byte-identical.
+
+**Contract for later items:**
+```
+MatchOpponent.offersRematch: Bool — default true; false from any far end that
+  cannot be rebuilt from the end screen. MatchRun.results() omits the rematch
+  closure when it is false.
+MatchBoard.overlay: MatchOverlay? (.reconnecting(peer: String)),
+MatchBoard.inputLocked: Bool, MatchBoard.reconnectingTitle
+  — all computed off MatchSession; do not store presence.
+ResultsModel.noWinnerHeadline == "Opponent left"
+```
