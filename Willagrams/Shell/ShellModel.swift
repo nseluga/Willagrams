@@ -117,6 +117,7 @@ public final class ShellModel {
         self.sleepFor = sleepFor
         self.seedSource = seedSource
         self.services = services
+        self.soloSetup = SoloSetup(store: services.settings)
 
         guard let signIn = services.signIn else {
             onlineUnavailableReason = Self.noSignInReason
@@ -180,13 +181,16 @@ public final class ShellModel {
 
     /// What the next solo match will be played with. Lives here rather than on
     /// the screen that edits it, so choices survive backing out to the menu.
-    public let soloSetup = SoloSetup()
+    public let soloSetup: SoloSetup
 
     /// Menu → solo setup. Only from the menu, for the same reason the rules
     /// screen is: a live match must not be yanked out from under the player by
     /// a stray tap on a stale control.
     public func showSoloSetup() {
         guard case .menu = route else { return }
+        // Entry is where the stored rules are read, so the screen opens on what
+        // was last chosen — here or in a host lobby — rather than on defaults.
+        soloSetup.loadOptions()
         route = .soloSetup
     }
 
@@ -289,12 +293,17 @@ public final class ShellModel {
         let candidate = explicit ?? seedSource()
         let fresh = candidate == seed ? candidate &+ 1 : candidate
 
+        // Start is where the rules are written back, so the next launch and the
+        // next host lobby open on what this match is about to be played under.
+        let chosen = (options ?? soloSetup.options).validated
+        soloSetup.saveOptions(chosen)
+
         startMatch(
             MatchSetup(
                 seed: fresh,
                 startingHandSize: handSize ?? soloSetup.handSize,
                 countdownSeconds: Self.soloCountdownSeconds,
-                options: options ?? soloSetup.options
+                options: chosen
             )
         )
         return install { setup, dictionary, generation in

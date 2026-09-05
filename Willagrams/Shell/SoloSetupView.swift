@@ -67,8 +67,14 @@ struct SoloSetupView: View {
     /// How narrow a column may get before the two stop sitting side by side.
     private static let columnWidth: CGFloat = 340
 
-    /// What the match itself is played under. The bounds are `SoloSetup`'s and
-    /// the engine's — this column names none of its own.
+    /// What the match itself is played under: the starting hand, which is this
+    /// screen's own, and then the settings lane's own options screen, embedded
+    /// as it ships. There is no second copy of those rows here — the toggle and
+    /// the length control are `MatchOptionsView`'s, bound straight to the
+    /// `MatchOptionsForm` `SoloSetup` loaded on the way in.
+    ///
+    /// The form is nil only when the bundled word list failed to read, which is
+    /// the model's state to hold, not a decision this view takes.
     private func rules(setup: SoloSetup) -> some View {
         @Bindable var setup = setup
         return VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
@@ -77,15 +83,9 @@ struct SoloSetupView: View {
                 value: $setup.handSize,
                 in: SoloSetup.handSizeRange
             )
-            stepper(
-                SoloSetup.minimumWordLengthLabel,
-                value: $setup.minimumWordLength,
-                in: MatchOptions.lengthRange
-            )
-            Toggle(SoloSetup.swapLabel, isOn: $setup.swapEnabled)
-                .font(DesignTokens.Typography.body)
-                .foregroundStyle(DesignTokens.Palette.textPrimary)
-                .tint(DesignTokens.Palette.accent)
+            if let form = Binding($setup.optionsForm) {
+                MatchOptionsView(form: form)
+            }
         }
     }
 

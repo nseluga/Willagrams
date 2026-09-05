@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import WillagramsRules
 @testable import Match
+import Settings
 @testable import Shell
 
 /// Hosting a match from the menu: the code, the roster, Start and Cancel.
@@ -97,7 +98,8 @@ struct HostLobbyTests {
     /// real assertion rather than a coin toss. `FakeBackend` derives a stable
     /// id from the token, so the search is deterministic run to run.
     static func make(
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in }
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in },
+        settings: SettingsStore? = nil
     ) async throws -> Fixture {
         let backend = FakeBackend()
         let host = try await backend.signInWithApple(idToken: hostToken, nonce: hostToken)
@@ -116,7 +118,7 @@ struct HostLobbyTests {
         let shell = ShellModel(
             dictionary: { EveryWordIsReal() },
             sleepFor: sleepFor,
-            services: ShellServices(backend: backend, signIn: backend)
+            services: ShellServices(backend: backend, settings: settings, signIn: backend)
         )
         await shell.signInTask?.value
         #expect(shell.currentProfile?.id == host.id)
