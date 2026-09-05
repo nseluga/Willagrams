@@ -429,6 +429,40 @@ struct InviteTests {
         shell.returnToMenu()
     }
 
+    /// The `.accepted` half of the sender check, which the stranger case above
+    /// structurally cannot reach: a stranger has no friendship row at all, so
+    /// relaxing `status == .accepted` to "any row" still drops them and the
+    /// case stays green. A pending sender is the only shape that isolates the
+    /// status predicate — and it matters more than a pending row suggests,
+    /// because declining a request leaves the counterpart `.blocked` rather
+    /// than deleting the row.
+    @Test("A sender who is only pending, or blocked, publishes nothing")
+    func aPendingSenderIsDropped() async throws {
+        let (shell, bus, me, accepted) = try await Self.lone()
+        let backend = try #require(shell.services.backend as? FakeBackend)
+
+        // A second player who has asked and not been answered.
+        let pending = try await backend.signInWithApple(
+            idToken: "invite-pending", nonce: "invite")
+        _ = try await backend.requestFriend(addresseeID: me.id)
+        // Back to the session the shell reads its friendships on.
+        _ = try await backend.signIn()
+
+        try await bus.channel(for: pending.id).send(
+            Self.invite(from: pending.id, name: "Pending"), to: me.id)
+        await JoinTests.until("the pending sender's invite landed") { bus.delivered == 1 }
+        for _ in 0..<200 { await Task.yield() }
+        #expect(shell.inviteBanner == nil, "a sender who was never accepted bannered this player")
+
+        // The positive twin, same shell and same bus: the accepted one lands.
+        try await bus.channel(for: accepted.id).send(
+            Self.invite(from: accepted.id, name: "Accepted"), to: me.id)
+        await JoinTests.until("the accepted sender's invite") { shell.inviteBanner != nil }
+        #expect(shell.inviteBanner?.hostName == "Accepted")
+
+        shell.returnToMenu()
+    }
+
     // MARK: - One banner at a time
 
     @Test("A second invite does not replace the banner being answered")
