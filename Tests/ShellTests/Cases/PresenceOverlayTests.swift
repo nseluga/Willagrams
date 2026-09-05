@@ -281,6 +281,45 @@ struct PresenceOverlayTests {
         shell.returnToMenu()
     }
 
+    // MARK: - The guardrail: presence is read, never stored again
+
+    /// Presence lives in `MatchSession` and nowhere else.
+    ///
+    /// Behaviourally invisible, and that is the point: a `MatchBoard` that
+    /// mirrored `presence(of:)` into a stored property and refreshed it from
+    /// its own observation callback passes every other case in this file. It is
+    /// still the defect the lane's toolchain rule is about — a second copy of
+    /// presence that can disagree with the session's, on the one path the
+    /// Swift 6.3.3 limit already makes fragile — so it is fenced here, against
+    /// the bytes on disk.
+    ///
+    /// Falsifiable: the computed spellings it requires must be present, so
+    /// renaming `overlay` or dropping the `presence(of:)` read fails here
+    /// rather than passing vacuously.
+    @Test("The overlay is computed off the session, never mirrored into the shell")
+    func presenceIsNeverStoredInTheShell() throws {
+        let text = try String(
+            contentsOf: MatchHUDTests.shellSource("MatchBoard.swift"), encoding: .utf8)
+        let code = text.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") && !$0.isEmpty }
+
+        // Computed — the brace on the declaration is what says so — and read
+        // straight off the session every time it is asked.
+        #expect(code.contains { $0 == "public var overlay: MatchOverlay? {" })
+        #expect(code.contains { $0.contains("session.presence(of: player)") })
+        #expect(code.contains { $0 == "public var inputLocked: Bool { overlay != nil }" })
+
+        // Nothing ever writes it, so there is no copy to go stale.
+        let writes = code.filter { $0.hasPrefix("overlay =") || $0.contains("self.overlay =") }
+        #expect(writes.isEmpty, "presence is mirrored into stored state: \(writes)")
+        // And no stored declaration of it in any spelling.
+        let stored = code.filter {
+            $0.contains("var overlay") && !$0.hasSuffix("{")
+        }
+        #expect(stored.isEmpty, "overlay is stored rather than computed: \(stored)")
+    }
+
     /// The other half of the lock: the model's answer has to reach the surface.
     ///
     /// `MatchView` is SwiftUI and the macOS test target cannot compile it, so
