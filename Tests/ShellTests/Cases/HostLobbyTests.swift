@@ -235,6 +235,39 @@ struct HostLobbyTests {
         }
     }
 
+    /// The guardrail's *ordering* half, which the cancel case above cannot see:
+    /// both halves land in one main-actor turn, so only an observer woken by the
+    /// route change can tell whether the channel was already gone when it moved.
+    ///
+    /// `withObservationTracking`'s `onChange` fires on `willSet` — the instant
+    /// before `route` becomes `.menu` — so a teardown that ran after the route
+    /// assignment would be caught here with `hasLeft` still false.
+    @Test("The channel is gone before the route leaves the lobby")
+    func teardownPrecedesTheRouteMove() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        nonisolated(unsafe) var leftWhenTheRouteMoved: Bool?
+        nonisolated(unsafe) var lobbyWhenTheRouteMoved: HostLobbyModel?
+        let wire = f.wire
+        let shell = f.shell
+        withObservationTracking {
+            _ = shell.route
+        } onChange: {
+            leftWhenTheRouteMoved = wire.hasLeft
+            lobbyWhenTheRouteMoved = MainActor.assumeIsolated { shell.hostLobby }
+        }
+
+        lobby.cancel()
+
+        #expect(leftWhenTheRouteMoved == true)
+        #expect(lobbyWhenTheRouteMoved == nil)
+        #expect(f.shell.route == .menu)
+    }
+
     // MARK: - The error copy
 
     @Test("Every lobby failure is one line of copy, never an error and never a silent exit")
