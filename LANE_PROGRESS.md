@@ -5,9 +5,9 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** round 3 in progress — items 1–7 of 12 done, none blocked. Online host and join are live-proven on two simulators.
-- **Next:** item 8 (the friends list), then item 9. Items 7–9 run one at a time, not in parallel: each one touches the same menu and routing files.
-- **Blockers:** none.
+- **Status:** round 3 in progress — items 1–8 of 12 done, none blocked. Online host and join are live-proven on two simulators.
+- **Next:** item 9 (add a friend by code, open a friend's profile), then item 10. Items 7–9 run one at a time, not in parallel: each one touches the same menu and routing files.
+- **Blockers:** none. One amendment for a later round: declining a friend request currently blocks the person, and nothing can undo it.
 - **Last updated:** 2026-09-05
 
 ## Round 3 — every screen reachable, against the live backend
@@ -21,7 +21,7 @@ LANE.md wins for scope.
 | Show reconnecting, end on gone, and give online results a way home | done — When your opponent drops out the board dims, names them and stops taking taps until they are back; if they leave for good the game ends on a screen that says the opponent left rather than naming a winner, and an online game offers only Main Menu instead of a rematch that could not work. |
 | Present the settings lane's options view and persist the choice | done — Solo setup now shows the real options screen instead of its own duplicate controls, and whatever you pick is remembered for next launch and used when you host a game for a friend. |
 | The profile screen | done — The menu now opens your profile, showing your display name, your friend code with a Copy button, and your four match statistics exactly as the server reports them; you can rename yourself and it saves, and a name that is empty or too long is refused before anything is sent. |
-| The friends list | not started |
+| The friends list | done — The menu now opens a Friends screen listing the people you have added, the requests waiting on you and the ones you have sent, each with the person's real name; you can accept, decline or block from the list, and blocked players disappear from all three sections. Proven against the real database with two separate accounts, so the server's own permission rules are what allow each side to see the other. |
 | Add a friend by code, and open a friend's profile | not started |
 | Invite a friend to play, in-app | not started |
 | Give every sound cue a call site | not started |

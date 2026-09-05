@@ -113,3 +113,33 @@ ProfileModel(profile:isEditable:backend:pasteboard:) — draftName, trimmedDraft
 Item 9 reuses it read-only: ProfileModel(profile: friend, isEditable: false).
 ProfileView(model:) takes its onward action as a closure — the view holds no route.
 ```
+
+### Item 8 — The friends list (`b80db6a` + `f0f1f9a` + `1b3737f`, 4 attempts, **`caution: true`** — full engineer + QA + review team)
+
+QA VERDICT **PASS** at attempt 3 (mutation-tested, no surviving mutant, live gate confirmed load-bearing). Re-review closed all five prior Important findings and raised one new Important — a missing `generation == mine` check on the `friendships()` catch branch — fixed in `1b3737f` and pinned with a mutation-RED regression case. Final review: 0 Critical, 0 open Important, 6 Minor.
+
+- **A live-gated RLS test proves nothing unless you also run the gate-off control.** RLS refuses by returning zero rows, never an error, so a fake-only pass and a real pass look identical. QA confirmed the gate was load-bearing by checking that gate-off skips exactly the four live cases. Verified independently at the merge commit: gate on, 29 tests in 1.93 s; gate off, the same 29 pass in 0.019 s with those four skipped.
+- **Three separate vacuously-green tests shipped in this item before mutation testing caught them.** (1) A `sorted(by:)` was deletable because the fake returned rows already in name order — fixed by renaming a fixture friend so row order and name order disagree. (2) A guardrail scanning the whole of `MenuView.swift` for `.disabled(...)` was already satisfied by a pre-existing row — fixed by bounding the scan to the Friends row and asserting the scoping held. (3) A spinner assertion armed only the write gate and so never observed the write→reload seam. **Grepping a whole file for a string is not a guardrail; scope the scan and assert the scope.**
+- **`.timeLimit` cannot interrupt a parked `withCheckedContinuation`** — a swift-testing case that waits on a gate hangs forever rather than failing. Bound it with an arrival-count poll and a ceiling.
+- **`withObservationTracking` re-armed inside its own `onChange` fires in `willSet`**, which is the only way to pin an ordering guardrail between two synchronous statements. It was the sole killer of the `end(); await load(); begin()` mutant.
+- **A stale-publish guard applied to the success path and not the failure path is a live bug**: the losing load's error message overwrites the winner's sections. Guard every branch that publishes, including `catch`.
+- **`Tests/FriendsTests` had to diverge from the `Tests/AccountTests` layout**: the live cases need `SupabaseBackend.signInAnonymously()` and therefore the Supabase SDK, so it follows OnlineTests' declaration (and does carry a `Package.resolved`) while keeping the module named `Match` so `#if canImport(Match)` still resolves.
+- **Correction to an earlier note:** `ProfileView` does *not* call a `showFriends()` closure — it takes only `onBack`. Friends is reachable from the menu only.
+- **Counts:** FriendsTests 29/5 (new, live), ShellTests 173→182, AccountTests 15, OnlineTests 126, root 53, xcodebuild BUILD SUCCEEDED. Anon key absent from every commit; `supabase/**` byte-identical to `6c49764`.
+
+**AMENDMENT REQUEST (reported, not fixed — `supabase/migrations/**` is protected):** `respondToFriendRequest(accept: false)` sets `status = blocked` in both `FakeBackend` and `rls_behavior.sql`, and no seam call unblocks. **Declining a request therefore permanently blocks the person.** This needs either an unblock seam call or a `declined` status distinct from `blocked`, via `/foundation`.
+
+**Two caveats for a human:** `profilesAreReadTogether` polls `Gate.arrivalCount` with a 2 s ceiling — the one timing-dependent case in the suite. And the profile cache never expires within a screen visit, so a name changed elsewhere mid-visit shows stale; bounded, because `ShellModel` builds and tears down a `FriendsModel` per visit.
+
+**Contract for later items:**
+```
+AppRoute.friends · ShellModel.friends: FriendsModel? · showFriends() — menu action
+  "Friends", enabled when currentProfile != nil; torn down in returnToMenu()
+  before the route moves.
+FriendsModel publishes three sections (accepted / incoming pending / outgoing
+  pending), resolves each counterpart through profile(id:), and writes only
+  through respondToFriendRequest(requesterID:accept:) and block(_:) — no
+  client-side status arithmetic. Blocked players are hidden from every section.
+FriendsView holds no route; onward actions are closures. Item 9 adds lookup by
+  code and opens ProfileModel(profile:isEditable: false) from a row.
+```

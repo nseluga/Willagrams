@@ -123,7 +123,7 @@ below the stop marker on the Apple Developer membership.
   `Tests/StyleTests` (30), `Tests/ShellTests` (125), `Tests/SettingsTests`
   (36), `Tests/BotTests` (68, ~5 min), `Tests/OnlineTests` (126),
   `Tests/AudioTests` (19), `Tests/AccountTests` (15), `Tests/FriendsTests`
-  (new). Two cases are wall-clock flaky under a full parallel run and pass
+  (29; 4 live cases gated on `WILLAGRAMS_LIVE_TESTS=1` and `SUPABASE_ANON_KEY`). Two cases are wall-clock flaky under a full parallel run and pass
   alone: BotTests' pacing case and ShellTests' countdown overlay.
 - **`swift test` never compiles SwiftUI.** Only
   `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build`
@@ -394,7 +394,7 @@ below the stop marker on the Apple Developer membership.
     - Live: two fresh anonymous users request and accept, and each side's `FriendsModel` lists the other as accepted; a blocked user appears in neither list
     - `swift test --package-path Tests/FriendsTests` passes with `WILLAGRAMS_LIVE_TESTS=1`, and the iOS `xcodebuild` build passes
   caution: true
-  status: not started
+  status: done
   parallel-group: a
 
 - task: |
