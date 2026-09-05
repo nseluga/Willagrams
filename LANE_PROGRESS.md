@@ -5,9 +5,9 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** round 3 in progress — items 1–9 of 12 done, none blocked. Online host and join are live-proven on two simulators.
-- **Next:** item 10 (invite a friend to play, in-app), then items 11 and 12 (sound).
-- **Blockers:** none. One amendment for a later round: declining a friend request currently blocks the person, and nothing can undo it.
+- **Status:** round 3 in progress — items 1–10 of 12 done, none blocked. Online host and join are live-proven on two simulators.
+- **Next:** items 11 and 12 (give every sound cue a call site, then the mute control).
+- **Blockers:** none. Three things a person still owes before this ships: invites need a hands-on check on two devices, because nothing here can tap a button on a simulator; anyone who learns your friend code can currently listen in on your game invitations, which needs a database change this round was not allowed to make; and declining a friend request still blocks that person permanently, with no way to undo it.
 - **Last updated:** 2026-09-05
 
 ## Round 3 — every screen reachable, against the live backend
@@ -23,7 +23,7 @@ LANE.md wins for scope.
 | The profile screen | done — The menu now opens your profile, showing your display name, your friend code with a Copy button, and your four match statistics exactly as the server reports them; you can rename yourself and it saves, and a name that is empty or too long is refused before anything is sent. |
 | The friends list | done — The menu now opens a Friends screen listing the people you have added, the requests waiting on you and the ones you have sent, each with the person's real name; you can accept, decline or block from the list, and blocked players disappear from all three sections. Proven against the real database with two separate accounts, so the server's own permission rules are what allow each side to see the other. |
 | Add a friend by code, and open a friend's profile | done — The Friends screen now has a box for a friend's code: type one and it shows you who it belongs to with a Request button, and your own code is refused before anything is sent. Tapping someone you are already friends with opens their profile with their statistics, read-only, and Back returns to the friends list rather than the menu. |
-| Invite a friend to play, in-app | not started |
+| Invite a friend to play, in-app | done — An accepted friend now has an "Invite to play" button that opens a game and sends them the code, and on their side a banner says who wants to play, with a Join button that takes them straight in. Stale and duplicate invites are ignored, and an invite that arrives mid-game waits rather than interrupting. Proven against the real service between two accounts in about a second; the last step, actually tapping through it on two devices, still needs a person. |
 | Give every sound cue a call site | not started |
 | The mute control | not started |
 | Sign in with Apple | skipped — below stop marker |

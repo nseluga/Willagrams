@@ -120,10 +120,10 @@ below the stop marker on the Apple Developer membership.
 - **Each nested test package needs its own literal `--package-path` command.**
   A shell variable does not word-split. The eleven after this round: `.` (53),
   `Tests/BoardTests` (253, XCTest — "Executed N"), `Tests/MatchTests` (125),
-  `Tests/StyleTests` (30), `Tests/ShellTests` (125), `Tests/SettingsTests`
-  (36), `Tests/BotTests` (68, ~5 min), `Tests/OnlineTests` (126),
+  `Tests/StyleTests` (30), `Tests/ShellTests` (207), `Tests/SettingsTests`
+  (36), `Tests/BotTests` (68, ~5 min), `Tests/OnlineTests` (132),
   `Tests/AudioTests` (19), `Tests/AccountTests` (15), `Tests/FriendsTests`
-  (41; 4 live cases gated on `WILLAGRAMS_LIVE_TESTS=1` and `SUPABASE_ANON_KEY`). Two cases are wall-clock flaky under a full parallel run and pass
+  (43; 4 live cases gated on `WILLAGRAMS_LIVE_TESTS=1` and `SUPABASE_ANON_KEY`). Two cases are wall-clock flaky under a full parallel run and pass
   alone: BotTests' pacing case and ShellTests' countdown overlay.
 - **`swift test` never compiles SwiftUI.** Only
   `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build`
@@ -450,7 +450,7 @@ below the stop marker on the Apple Developer membership.
     - Live, on two simulators signed in as friends: A taps Invite, B's banner appears within five seconds, B joins, A starts, and both reach the match screen
   after: online
   caution: true
-  status: not started
+  status: done  # criteria 1-3 met and the transport is live-proven; criterion 4 (two-simulator tap-through) is UNRUN — no XCUITest target exists and simctl has no tap primitive, so it is a manual check a human owes before ship
 
 - task: |
     Give every sound cue a call site.

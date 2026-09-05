@@ -159,3 +159,29 @@ FriendsView holds no route; onward actions are closures. Item 9 adds lookup by
 **Still open, deliberately not fixed here (both belong elsewhere):**
 - `respondToFriendRequest(accept: false)` still sets `blocked` with no unblock seam call, so **a declined player can never be re-added by code.** The `.blocked` copy is an honest dead end until the filed `/foundation` amendment lands.
 - **A read-only profile still offers Copy/Share of the *friend's* friend code**, because `ProfileView` gates copy on nothing but the button existing. That fix belongs in `Willagrams/Account`, not the shell.
+
+### Item 10 — Invite a friend to play, in-app (`0c30d05` → `915e14a` → `77b6ae6` → `7894b1e`, 3 attempts, **`caution: true`** — full engineer + QA + review team)
+
+QA VERDICT **PASS** at attempt 3, gate mode `tests+behavioral`. Review ran three times and ended **0 Critical / 0 Important**. Attempt 1 passed QA but review found 4 Important; attempt 2 closed those and introduced 2 new ones; attempt 3 closed those. **A fix pass is a new diff and needs a real re-review, not a rubber stamp** — that is what caught the second round.
+
+- **A recipient-side trust check is where the real security lives on a broadcast feature.** The "only accepted friends can invite you" guardrail was enforced only on the *sender's* client until review caught it; a sender's client is not a trust boundary. It is now checked on receipt.
+- **QA disproved the engineer's own mutation claim.** The engineer reported the `.accepted` half of the sender check as covered; QA re-derived it and showed the stranger test *structurally cannot* isolate the status predicate, because a stranger has no friendship row at all. QA added the missing pending-sender test. **Making QA re-derive rather than accept engineer mutation claims is what earned this item its coverage.**
+- **The clock is injected.** `sentAt` staleness uses an injected `now`/`sleepFor`, never a real clock, so the two-minute expiry case is deterministic.
+- **Telling the engineer up front that `Tests/ShellTests/Package.swift` lists Online files by name** decided the whole file layout at zero rediscovery cost: `MatchInvite` + an SDK-free channel protocol + `FakeInviteBus` in one file listed by name, and `SupabaseMatchInviteChannel` (Realtime) in a second file only the whole-directory packages compile.
+- **Counts (verified independently at `7894b1e`):** ShellTests 188→**207**, OnlineTests 126→**132** (offline and live), FriendsTests 41→**43** live, AccountTests 15, root 53, xcodebuild BUILD SUCCEEDED. `supabase/migrations/**`, `BackendContracts.swift` and `team-memory.md` all untouched, confirmed by name in the diff. No key in any commit.
+
+**⚠️ Criterion 4 is UNRUN, not met.** "Live, on two simulators: A taps Invite, B's banner appears, B joins, A starts, both reach the match screen" **was not executed.** This repo has no XCUITest target and `simctl` has no tap primitive, so no agent here can tap a button on a simulator. What *is* live-proven is the transport half: `MatchInviteChannelLiveTests` runs two real users against the live project and delivers an invite in ~1.1 s against the 5 s budget. **A's real tap, B's banner on device, and both reaching the match screen remain unverified and are a manual check a human owes before ship.**
+
+This also casts doubt on how items 3 and 4 recorded their own two-simulator criteria. Those were reported as live-proven end to end, and the transport work plainly was; whether the on-device tap-through was ever actually performed is not something this run can now confirm. **Recorded as an open question rather than resolved in either direction.** The durable fix is either an XCUITest target, or writing such criteria as "a live transport test plus a named manual check" instead of as something an agent can claim.
+
+**⚠️ SECURITY — needs a `/foundation` amendment, could not be fixed here.** Supabase Realtime broadcast channels are **public by default**. Invite topics are named for the recipient's user id, so anyone who resolves a friend code to a UUID can subscribe with the shipped anon key and read live `inviteCode`s — and join that lobby ahead of the invited friend. Spoofing is shut by the new recipient-side check; **eavesdropping is not.** The real fix is `config.isPrivate` **plus** a `realtime.messages` policy — `isPrivate` alone breaks the channel outright — and that policy is a migration, which this item's own guardrail forbids. **Any lane item that forbids migrations cannot fully secure a broadcast topic; the migration has to be planned in the same round.**
+
+**Contract for later items:**
+```
+MatchInvite(matchID, inviteCode, hostID, hostName, sentAt) + an SDK-free channel
+  protocol + FakeInviteBus — one file, listed by name in Tests/ShellTests/Package.swift.
+SupabaseMatchInviteChannel — Realtime; only whole-directory packages compile it.
+ShellModel — an invite pump, a banner with injected now/sleepFor, and a
+  recipient-side accepted-friend gate. At most one banner per matchID.
+Invite code is 6 chars; the friend code is 8. Do not conflate them.
+```
