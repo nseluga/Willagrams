@@ -226,3 +226,27 @@ tilePlace/tileRecall   MatchBoard.mirror()
 Disclosed survivor, kept deliberately: `ShellModel:932`'s
 `card.secondsRemaining != lastTick` guard. No test can drive it in either
 direction.
+
+### Item 12 — the mute control
+
+`ShellServices` gained `audioSettings`, defaulted to `AudioSettings(defaults: .standard)`.
+That default is production-correct rather than a hidden seam — the root already
+uses that suite — but it means **any future test that asserts on mute MUST inject
+a named `UserDefaults(suiteName:)` and `removePersistentDomain` it**, or it reads
+and writes the test host's real preferences.
+
+`ShellModel.setMuted(_:)` is the sole funnel: settings write, then player write,
+then the `.menuTap` cue. `toggleMute()` delegates to it. The only two `setMuted`
+call sites in `Willagrams/**` are that adjacent pair, so no path sets one without
+the other. `isMuted` is seeded from `services.audioSettings.isMuted` *before* the
+`guard let signIn` early return.
+
+`MenuView` is SwiftUI and therefore excluded from ShellTests, so the only
+coverage of the toggle actually being on the menu is the scoped source scan
+`ServiceFenceTests.theMenuCarriesTheMuteToggle`. Keep it in sync if the labels or
+the method name change.
+
+Mute is sound only. Suppressing haptics while muted is the concrete player's own
+behavior, documented in the protected `AudioPlayer` protocol; the one
+`services.audio.impact(.medium)` in `ShellModel` is item 11's win haptic and is
+untouched.
