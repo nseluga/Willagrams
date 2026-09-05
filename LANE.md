@@ -267,7 +267,7 @@ below the stop marker on the Apple Developer membership.
     - Live, on two simulators: the host's screen shows a code, and after the guest joins the host's roster shows the guest's display name
   after: online
   caution: false
-  status: not started
+  status: done  # criteria 1-3 verified; criterion 4 (live two-simulator) deferred to item 4 — no in-app join path exists yet
 
 - task: |
     Join a match by invite code.
