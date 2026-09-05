@@ -42,6 +42,11 @@ public struct ShellServices {
     public let audio: any AudioPlayer
     public let settings: SettingsStore?
 
+    /// Where the mute value is remembered across launches. Defaulted to the
+    /// real suite because that is what the root passes — a test that asserts
+    /// mute injects its own named scratch suite instead.
+    public let audioSettings: AudioSettings
+
     /// Nil in Release, and in any build that chooses not to offer one.
     public let signIn: (any ShellSignIn)?
 
@@ -57,12 +62,14 @@ public struct ShellServices {
         backend: (any BackendClient)? = nil,
         audio: any AudioPlayer = SilentAudioPlayer(),
         settings: SettingsStore? = nil,
+        audioSettings: AudioSettings = AudioSettings(defaults: .standard),
         signIn: (any ShellSignIn)? = nil,
         inviteChannel: (@Sendable (UUID) -> any MatchInviteChannel)? = nil
     ) {
         self.backend = backend
         self.audio = audio
         self.settings = settings
+        self.audioSettings = audioSettings
         self.signIn = signIn
         self.inviteChannel = inviteChannel
     }

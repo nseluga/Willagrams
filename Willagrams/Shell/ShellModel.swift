@@ -83,6 +83,13 @@ public final class ShellModel {
     /// from here; none of them constructs its own.
     @ObservationIgnored public let services: ShellServices
 
+    /// Whether the game's sound is off. Sound only — haptics are not muted
+    /// here; iOS already gates those through System Haptics.
+    ///
+    /// Seeded from the persisted value at init, so a relaunch comes up in the
+    /// state the player left it in.
+    public private(set) var isMuted: Bool
+
     /// The signed-in player, once sign-in lands. Nil until then, and for the
     /// whole run of a build that carries no sign-in.
     public private(set) var currentProfile: Profile?
@@ -137,6 +144,9 @@ public final class ShellModel {
         self.now = now
         self.services = services
         self.soloSetup = SoloSetup(store: services.settings)
+        // Before the early return below: a build with no sign-in still has a
+        // mute control, and an uninitialised stored property would not compile.
+        self.isMuted = services.audioSettings.isMuted
 
         guard let signIn = services.signIn else {
             onlineUnavailableReason = Self.noSignInReason
@@ -178,6 +188,20 @@ public final class ShellModel {
     /// ``MatchRun/results(board:)`` screen's closures, which must decline once
     /// the run they were built for has been replaced.
     func isLiveGeneration(_ generation: Int) -> Bool { generation == self.generation }
+
+    /// The one path that changes mute. Both writes happen here — the persisted
+    /// value and the live player — so no caller can set one without the other.
+    ///
+    /// The tap cue comes after both writes, so unmuting is audible and muting
+    /// is not. Haptics are untouched by design.
+    public func setMuted(_ muted: Bool) {
+        isMuted = muted
+        services.audioSettings.setMuted(muted)
+        services.audio.setMuted(muted)
+        services.audio.play(.menuTap)
+    }
+
+    public func toggleMute() { setMuted(!isMuted) }
 
     /// Menu → countdown. Ignored from anywhere else, so a stray tap on a stale
     /// menu button cannot yank a live match back to the start.

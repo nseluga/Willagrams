@@ -166,5 +166,34 @@ struct ServiceFenceTests {
             lines.contains { $0.contains("audio: audio") },
             "the root builds a player but does not pass it to ShellServices, so the app ships silent"
         )
+
+        // The player must come up in the state the player left it in. A rename
+        // of either symbol fails here rather than shipping a launch that
+        // forgets mute.
+        #expect(
+            built?.contains("muted: AudioSettings(defaults: .standard).isMuted") == true,
+            "the root no longer builds its player muted from AudioSettings"
+        )
+    }
+
+    /// The toggle has to be on the menu, not merely on the model. `MenuView` is
+    /// SwiftUI and so is excluded from this target's sources — the bytes on
+    /// disk are all this can check.
+    @Test("The menu carries the mute toggle")
+    func theMenuCarriesTheMuteToggle() throws {
+        let menu = Self.appSourceDirectory
+            .appendingPathComponent("Shell")
+            .appendingPathComponent("MenuView.swift")
+        let lines = try Self.text(of: menu)
+            .components(separatedBy: "\n")
+            .filter { !Self.isComment($0) }
+        #expect(lines.count > 50, "expected MenuView.swift at \(menu.path)")
+
+        for symbol in [
+            "shell.toggleMute()", "shell.isMuted", ".accessibilityLabel(",
+            "\"Sound on\"", "\"Sound off\"",
+        ] {
+            #expect(lines.contains { $0.contains(symbol) }, "MenuView.swift no longer has \(symbol)")
+        }
     }
 }
