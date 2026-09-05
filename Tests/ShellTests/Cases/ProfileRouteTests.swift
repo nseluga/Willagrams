@@ -156,6 +156,19 @@ struct ProfileRouteTests {
         #expect(root.contains("ProfileView(model: profile) { shell.returnToMenu() }"))
     }
 
+    /// The clipboard the Copy button writes through.
+    ///
+    /// Checked against the bytes because `UIPasteboard` is UIKit and this
+    /// package builds for macOS: with the closure left off, `ProfileModel`
+    /// takes its no-op default, the app's Copy button silently copies nothing,
+    /// and every executable test here still passes. Found by mutation.
+    @Test("The shell hands the screen a clipboard that really writes")
+    func shellWiresTheClipboard() throws {
+        let model = try Self.shellSource("ShellModel.swift")
+        #expect(model.contains("pasteboard: Self.pasteboard"), "showProfile hands the screen no clipboard")
+        #expect(model.contains("UIPasteboard.general.string = text"), "the clipboard closure writes nothing")
+    }
+
     private static func shellSource(_ name: String) throws -> String {
         try String(
             contentsOf: URL(fileURLWithPath: #filePath)
