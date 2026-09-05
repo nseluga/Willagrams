@@ -5,8 +5,8 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** round 3 in progress — items 1, 2 and 3 of 12 done, none blocked.
-- **Next:** item 4 — join a match by invite code (and run the deferred two-simulator check for items 3 and 4 together).
+- **Status:** round 3 in progress — items 1–4 of 12 done, none blocked. Online host and join are live-proven on two simulators.
+- **Next:** item 5 — show reconnecting, end on gone, and give online results a way home.
 - **Blockers:** none.
 - **Last updated:** 2026-09-04
 
@@ -16,8 +16,8 @@ LANE.md wins for scope.
 |------|--------|
 | Build the app's services once, at the root, and inject them | done — The app now builds its backend connection, sound player and saved settings a single time when it launches and hands them to every screen, and in a development build it signs in automatically in the background so online features can switch on without ever making the menu wait. |
 | Let `MatchRun` run a match it did not build | done — A running match is now handed its opponent from the outside instead of building one itself, so the same match screen can drive a practice game against the bot or a real person online, and the old opponent is always shut down before the next one starts. |
-| Host a match from the menu and show the invite code | done — The menu now has a "Play a Friend" button that opens a lobby showing a six-character invite code you can share, lists who has joined, and only lets you start once a second player is there; cancelling shuts the match down and returns you to the menu. The two-phone check waits for the join screen in the next item. |
-| Join a match by invite code | not started |
+| Host a match from the menu and show the invite code | done — The menu now has a "Play a Friend" button that opens a lobby showing a six-character invite code you can share, lists who has joined, and only lets you start once a second player is there; cancelling shuts the match down and returns you to the menu. Proven on two phones during the next item. |
+| Join a match by invite code | done — You can now type a friend's six-character code to join their game; the screen tells you it is waiting for them and names them, and a wrong, full or already-started code gets a plain message beside the box instead of failing silently. Proven end to end on two phones: the guest joined and both reached the game when the host pressed Start. |
 | Show reconnecting, end on gone, and give online results a way home | not started |
 | Present the settings lane's options view and persist the choice | not started |
 | The profile screen | not started |

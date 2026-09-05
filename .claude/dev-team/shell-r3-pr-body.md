@@ -42,3 +42,16 @@ Items done: 1 of 12. Items blocked: none.
 - **Criterion 4 (live, two simulators) is unverified and was not weakened.** Nothing in `Willagrams/` calls `OnlineMatch.join`, so a second simulator has no in-app path into the host's lobby. Item 3's criterion 4 and item 4's criterion 4 are the same run — do them once, together, after item 4.
 - **Open risk, not gating:** `OnlineMatch.leave()` fires the abandon as a detached `Task` with `try?`. A failed abandon is silent and the row stays `lobby`; `abandon(matchID:)` cannot report that it matched zero rows.
 - **Counts:** ShellTests 135→142, root 53, MatchTests 125, OnlineTests 126 (+1 pre-existing known issue), xcodebuild BUILD SUCCEEDED. 7 mutation checks, all restored byte-identical.
+
+### Item 4 — Join a match by invite code (`b66aafe` + `4c874d1`, 1 attempt, engineer-only)
+
+- **A test that exercises a pure mapping function is not coverage of the screen that calls it.** The error-copy test asserted only `HostLobbyModel.message(for:)` as a pure function and never drove `JoinModel` — so a probe that swallowed every non-`.notFound` error stayed green. Closed with a parameterized model-level test over `.matchFull` / `.permissionDenied` / `.offline` driven through a `RefusingJoin` decorator; the mutation then went red on all three arguments.
+- **9 mutation checks all went red**, covering every `done when:` criterion and all three guardrails, including the orphan-task and cancel-before-route ordering pair (using item 3's `withObservationTracking` technique) and the `JoinView` `exclude:` source fence.
+- **Live, two simulators — both deferred criteria MET.** Host on iPhone 17 Pro showed invite code `M24Z8A`; after the guest joined on iPhone 17 Pro Max the host roster named both players; the guest reached `Waiting for host: …` and both devices reached the match screen when the host pressed Start. This closes **item 3's criterion 4** as well as item 4's. The anon key was sourced from the gitignored `.env` only and reached no source, test, fixture or log.
+- **Counts:** ShellTests 142→153, root 53, MatchTests 125, OnlineTests 126 (+1 pre-existing known issue), xcodebuild BUILD SUCCEEDED.
+
+**Four findings the live run surfaced — no code changed, carried for later items and the lane review:**
+1. **`OnlineMatch.awaitStart()` returns as soon as `match_players` has two rows** and opens the match itself when the guest sorts as `roster[0]` — which makes the host's Start a no-op in roughly half of pairings. This is an Online-lane issue, not shell's, and **item 10 will hit it.**
+2. `JoinView`'s `TextField` transiently renders characters the sanitiser rejects (a typed `-` showed as `M24Z-`). SwiftUI does not re-sync the field when `didSet` normalises to a value equal to the last observed one. The *model* clamp held — the live join used exactly `M24Z8A` — so the guardrail is intact; display-only, one-line polish fix.
+3. `HostLobbyModel.message(for: .permissionDenied)` reads "You can't host a match right now." — host-voiced copy now shown on the guest's join screen. Reusing that mapping was mandated by item 4's prompt, so it was left as-is.
+4. The Join button renders at full primary strength while `disabled(!canJoin)` — no disabled affordance.
