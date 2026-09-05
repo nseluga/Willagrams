@@ -168,6 +168,40 @@ struct SoloSetupTests {
         shell.returnToMenu()
     }
 
+    /// The engine's own rule is the last one applied, on whatever the form — or
+    /// a caller — produced. The form clamps too, so this drives the one path
+    /// that can still hand the match options it did not build.
+    @Test("Options are validated before they reach the match, whoever produced them")
+    func optionsAreValidatedBeforeTheMatch() throws {
+        let (settings, defaults, suite) = Self.store("validated")
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let shell = ShellModel(
+            dictionary: { SoloMatchTests.EveryWordIsReal() },
+            sleepFor: { _ in },
+            services: ShellServices(settings: settings)
+        )
+        let unchecked = MatchOptions(
+            minimumWordLength: 99,
+            swapEnabled: false,
+            dictionaryID: MatchOptions.standardDictionaryID,
+            dictionaryHash: MatchOptions.standardDictionaryHash
+        )
+        #expect(unchecked != unchecked.validated, "pick options the engine would actually change")
+        #expect(shell.startSoloPractice(seed: 99, options: unchecked))
+
+        guard case let .countdown(setup) = shell.route else {
+            Issue.record("the start left the route somewhere other than the countdown")
+            return
+        }
+        #expect(setup.options == unchecked.validated)
+        #expect(setup.options.minimumWordLength == MatchOptions.lengthRange.upperBound)
+        // And what was stored is the validated form, not the raw one.
+        #expect(settings.load() == unchecked.validated)
+
+        shell.returnToMenu()
+    }
+
     /// The settings outlive the screen: backing out and coming in again shows
     /// what was chosen, not the defaults.
     @Test("Choices survive a trip back to the menu")
