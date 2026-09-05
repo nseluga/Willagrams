@@ -64,6 +64,10 @@ public enum AppRoute: Hashable, Sendable {
     /// does — whose profile it is lives on ``ShellModel/profile``, which the
     /// route exit tears down.
     case profile
+    /// The friends list. Carries nothing for the same reason `profile` does —
+    /// the three sections live on ``ShellModel/friends``, which the route exit
+    /// tears down.
+    case friends
     case countdown(MatchSetup)
     case match(MatchSetup)
     /// `winner` is nil when the match ended without one — a draw, or a peer that

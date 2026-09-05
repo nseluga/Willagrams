@@ -34,6 +34,7 @@ struct ShellRootView: View {
             case .hostLobby: hostLobby
             case .join: joinScreen
             case .profile: profileScreen
+            case .friends: friendsScreen
             case .countdown: countdown
             case .match: match
             case .results: results
@@ -65,6 +66,13 @@ struct ShellRootView: View {
     @ViewBuilder private var profileScreen: some View {
         if let profile = shell.profile {
             ProfileView(model: profile) { shell.returnToMenu() }
+        }
+    }
+
+    /// The friends list, on the same terms as the profile screen above.
+    @ViewBuilder private var friendsScreen: some View {
+        if let friends = shell.friends {
+            FriendsView(model: friends) { shell.returnToMenu() }
         }
     }
 

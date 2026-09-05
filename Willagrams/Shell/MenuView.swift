@@ -158,6 +158,15 @@ struct MenuView: View {
             .buttonStyle(.brandQuiet)
             .disabled(shell.currentProfile == nil)
 
+            // Who you play with, and who is waiting on an answer. Gated on the
+            // same signed-in row the profile is: `friendships()` is read as
+            // somebody.
+            Button { shell.showFriends() } label: {
+                Text(FriendsModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandQuiet)
+            .disabled(shell.currentProfile == nil)
+
             if let reason = shell.onlineUnavailableReason {
                 Text(reason)
                     .font(DesignTokens.Typography.caption)

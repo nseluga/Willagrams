@@ -7,6 +7,9 @@ import Match
 #if canImport(Account)
 import Account
 #endif
+#if canImport(Friends)
+import Friends
+#endif
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -206,6 +209,27 @@ public final class ShellModel {
             pasteboard: Self.pasteboard
         )
         route = .profile
+        return true
+    }
+
+    /// The friends list for this visit, or nil when it is not up. Torn down by
+    /// ``returnToMenu()`` like every other screen model, so the next visit reads
+    /// the sections again rather than showing the last visit's.
+    public private(set) var friends: FriendsModel?
+
+    /// Menu → the friends list.
+    ///
+    /// Refused without a signed-in profile, on the same terms the menu button is
+    /// disabled: `friendships()` is read as somebody, and there is nobody.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showFriends() -> Bool {
+        guard case .menu = route, let currentProfile, let backend = services.backend else {
+            return false
+        }
+        friends = FriendsModel(me: currentProfile.id, backend: backend)
+        route = .friends
         return true
     }
 
@@ -517,6 +541,10 @@ public final class ShellModel {
         // other two do: the menu is never shown over a screen model that is
         // still reachable.
         profile = nil
+        // Same rule again: no channel and no task behind it, but it is gone
+        // before the route moves so the menu is never shown over a live screen
+        // model, and a stale section list cannot reappear on the next visit.
+        friends = nil
         endSoloPractice()
         // Reaching the menu is what makes every end screen stale: the run they
         // were built for is gone and cannot come back. The bump is here rather

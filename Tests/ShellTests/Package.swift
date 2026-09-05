@@ -89,9 +89,20 @@ let package = Package(
             path: "AccountSrc",
             exclude: ["ProfileView.swift"]
         ),
+        // `Willagrams/Friends` is the friends list, and `ShellModel` builds one
+        // — so the shell cannot compile here without it. Same directory symlink
+        // and same rule as `Account`: `FriendsView` is SwiftUI and is excluded,
+        // in this manifest *and* in `Tests/FriendsTests`, which owns the
+        // guardrail over it.
+        .target(
+            name: "Friends",
+            dependencies: ["Match"],
+            path: "FriendsSrc",
+            exclude: ["FriendsView.swift"]
+        ),
         .target(
             name: "Shell",
-            dependencies: ["Match", "Style", "BoardKit", "Bot", "Audio", "Settings", "Account", .product(name: "WillagramsRules", package: "Willagrams")],
+            dependencies: ["Match", "Style", "BoardKit", "Bot", "Audio", "Settings", "Account", "Friends", .product(name: "WillagramsRules", package: "Willagrams")],
             path: "ShellSrc",
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
@@ -105,7 +116,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ShellTests",
-            dependencies: ["Shell", "Match", "Style", "BoardKit", "Bot", "Audio", "Settings", "Account"],
+            dependencies: ["Shell", "Match", "Style", "BoardKit", "Bot", "Audio", "Settings", "Account", "Friends"],
             path: "Cases"
         ),
     ]
