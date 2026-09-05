@@ -185,3 +185,44 @@ ShellModel — an invite pump, a banner with injected now/sleepFor, and a
   recipient-side accepted-friend gate. At most one banner per matchID.
 Invite code is 6 chars; the friend code is 8. Do not conflate them.
 ```
+
+### Item 11 — give every sound cue a call site
+
+**A default value on an injected dependency converts a wiring regression from a
+compile error into a silently-green one.** When a seam is injected, make the
+parameter REQUIRED and pay the mechanical call-site churn (15 sites here, all in
+tests) rather than covering it with a test. Also: at least one test per feature
+must build the object graph the way production builds it, not by hand; per-model
+tests prove the mapping and miss the wiring.
+
+This was found by mutation check M10, the most serious find of the run.
+`MatchBoard.init` and `MatchHUDModel.init` each carried
+`audio: any AudioPlayer = SilentAudioPlayer()`, so deleting both `audio:`
+arguments from `MatchRun` **muted the entire shipping match while all 216 tests
+passed** — every cue test built its models by hand, so nothing covered the
+production assembly. Fixed structurally: the defaults were removed, making it a
+compile error, and `aRealRunIsWiredToTheShellsPlayer` was added driving a real
+`MatchRun`.
+
+The same shape survived one seam further out and was closed during verification.
+`ShellServices.init` still defaults `audio:` (load-bearing —
+`ShellModel.init` takes `services: ShellServices = ShellServices()`), and the
+existing fence asserted only that `WillagramsApp.swift` *constructs* a
+`SystemAudioPlayer`, not that it *hands it over*. Deleting `audio: audio` at the
+root shipped a silent app with 218 green. `ServiceFenceTests.theRootInjectsItsPlayer`
+now asserts the argument itself; mutation-checked RED.
+
+Where the cues live — each fired from the model that owns the moment, never a
+view, and never wrapped in a `Task`:
+
+```
+countdownTick   ShellModel's countdown re-arm
+draw/swap/invalid   MatchHUDModel
+win/loss + impact(.medium)   ShellModel.matchEnded
+menuTap   six menu actions, AFTER their guards
+tilePlace/tileRecall   MatchBoard.mirror()
+```
+
+Disclosed survivor, kept deliberately: `ShellModel:932`'s
+`card.secondsRemaining != lastTick` guard. No test can drive it in either
+direction.

@@ -147,4 +147,24 @@ struct ServiceFenceTests {
             #expect(appRoot.contains(constructor), "\(root) no longer constructs \(constructor)")
         }
     }
+
+    /// Constructing the player is not the same as handing it over. `ShellServices`
+    /// defaults `audio:` to a silent player, so dropping the argument at the root
+    /// mutes the shipping app while every cue test still passes against its own
+    /// hand-built player. Assert the argument itself.
+    @Test("The root hands its player to ShellServices")
+    func theRootInjectsItsPlayer() throws {
+        let appRoot = try Self.text(
+            of: Self.appSourceDirectory
+                .appendingPathComponent("App")
+                .appendingPathComponent("WillagramsApp.swift")
+        )
+        let lines = appRoot.components(separatedBy: "\n").filter { !Self.isComment($0) }
+        let built = lines.first { $0.contains("let audio = SystemAudioPlayer(") }
+        #expect(built != nil, "the root no longer binds its player to `audio`")
+        #expect(
+            lines.contains { $0.contains("audio: audio") },
+            "the root builds a player but does not pass it to ShellServices, so the app ships silent"
+        )
+    }
 }

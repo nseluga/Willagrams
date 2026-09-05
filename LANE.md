@@ -120,7 +120,7 @@ below the stop marker on the Apple Developer membership.
 - **Each nested test package needs its own literal `--package-path` command.**
   A shell variable does not word-split. The eleven after this round: `.` (53),
   `Tests/BoardTests` (253, XCTest — "Executed N"), `Tests/MatchTests` (125),
-  `Tests/StyleTests` (30), `Tests/ShellTests` (207), `Tests/SettingsTests`
+  `Tests/StyleTests` (30), `Tests/ShellTests` (218), `Tests/SettingsTests`
   (36), `Tests/BotTests` (68, ~5 min), `Tests/OnlineTests` (132),
   `Tests/AudioTests` (19), `Tests/AccountTests` (15), `Tests/FriendsTests`
   (43; 4 live cases gated on `WILLAGRAMS_LIVE_TESTS=1` and `SUPABASE_ANON_KEY`). Two cases are wall-clock flaky under a full parallel run and pass
@@ -477,7 +477,7 @@ below the stop marker on the Apple Developer membership.
     - Each menu action records one `menuTap`
     - `swift test --package-path Tests/ShellTests` and the iOS `xcodebuild` build pass
   after: audio
-  status: not started
+  status: done
 
 - task: |
     The mute control.
