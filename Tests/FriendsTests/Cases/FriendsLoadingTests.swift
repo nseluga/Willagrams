@@ -20,7 +20,7 @@ struct FriendsLoadingTests {
         let f = try await FriendsFixture.make()
         let gate = Gate()
         let backend = GatedBackend(inner: f.backend, friendshipsGate: gate)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
 
         #expect(!model.isLoading)
         let load = Task { await model.load() }
@@ -39,7 +39,7 @@ struct FriendsLoadingTests {
         let f = try await FriendsFixture.make()
         let gate = Gate()
         let backend = GatedBackend(inner: f.backend, writeGate: gate)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
         await model.load()
         #expect(!model.isLoading)
 
@@ -61,7 +61,7 @@ struct FriendsLoadingTests {
         let f = try await FriendsFixture.make()
         let gate = Gate()
         let backend = GatedBackend(inner: f.backend, friendshipsGate: gate)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
 
         // The first load reads the rows as they are now, then parks holding them.
         let first = Task { await model.load() }
@@ -96,7 +96,7 @@ struct FriendsLoadingTests {
         let f = try await FriendsFixture.make()
         let gate = Gate()
         let backend = GatedBackend(inner: f.backend, friendshipsGate: gate)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
 
         let first = Task { await model.load() }
         await gate.waitForArrivals(1)
@@ -133,7 +133,7 @@ struct FriendsLoadingTests {
         let f = try await FriendsFixture.make()
         let gate = Gate()
         let backend = GatedBackend(inner: f.backend, friendshipsGate: gate)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
 
         let first = Task { await model.load() }
         await gate.waitForArrivals(1)
@@ -161,7 +161,7 @@ struct FriendsLoadingTests {
     func profilesAreReadOnceAndKept() async throws {
         let f = try await FriendsFixture.make()
         let backend = GatedBackend(inner: f.backend)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
         await model.load()
 
         let afterLoad = await backend.profileCalls
@@ -186,7 +186,7 @@ struct FriendsLoadingTests {
         let f = try await FriendsFixture.make()
         let gate = Gate()
         let backend = GatedBackend(inner: f.backend, profileGate: gate)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
 
         let load = Task { await model.load() }
         var parked = 0
@@ -208,7 +208,7 @@ struct FriendsLoadingTests {
     func partialLoadsSaySo() async throws {
         let f = try await FriendsFixture.make()
         let backend = GatedBackend(inner: f.backend, failingProfiles: [f.friend.id])
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
         await model.load()
 
         #expect(model.accepted.isEmpty, "the unreadable row is dropped")
@@ -297,7 +297,7 @@ struct FriendsSpinnerTests {
         let writes = Gate()
         let reads = Gate()
         let backend = GatedBackend(inner: f.backend, friendshipsGate: reads, writeGate: writes)
-        let model = FriendsModel(me: f.me.id, backend: backend)
+        let model = FriendsModel(me: f.me, backend: backend)
 
         // The opening load, let through one read at a time so the gate stays
         // shut for the reload the action triggers.
@@ -335,7 +335,7 @@ struct FriendsSpinnerTests {
     @Test("The spinner goes down after an action that fails")
     func failedActionsPutTheSpinnerAway() async throws {
         let f = try await FriendsFixture.make()
-        let model = FriendsModel(me: f.me.id, backend: f.backend)
+        let model = FriendsModel(me: f.me, backend: f.backend)
         await model.load()
         let request = try #require(model.incoming.first)
 

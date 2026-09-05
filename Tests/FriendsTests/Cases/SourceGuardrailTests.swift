@@ -172,7 +172,9 @@ struct SourceGuardrailTests {
 
         // Presence: the three calls really are the ones being made.
         for call in ["backend.friendships()", "backend.profile(id: id)",
-                     "respondToFriendRequest(", "block(entry.profile.id)"] {
+                     "respondToFriendRequest(", "block(entry.profile.id)",
+                     "backend.profile(friendCode: code)",
+                     "requestFriend(addresseeID: profile.id)"] {
             #expect(model.contains(call), "FriendsModel no longer calls \(call)")
         }
 

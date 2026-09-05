@@ -55,19 +55,19 @@ struct FriendsLiveTests {
 
         // Before the request there is nothing to see, so the assertions below
         // cannot be reading somebody else's leftovers.
-        let aBefore = FriendsModel(me: a.id, backend: aBackend)
+        let aBefore = FriendsModel(me: a, backend: aBackend)
         await aBefore.load()
         #expect(!aBefore.accepted.contains { $0.profile.id == b.id })
 
         _ = try await aBackend.requestFriend(addresseeID: b.id)
 
         // The pending state, seen from both ends: one row, opposite sections.
-        let aPending = FriendsModel(me: a.id, backend: aBackend)
+        let aPending = FriendsModel(me: a, backend: aBackend)
         await aPending.load()
         #expect(aPending.outgoing.contains { $0.profile.id == b.id }, "the asker sees it as outgoing")
         #expect(!aPending.incoming.contains { $0.profile.id == b.id })
 
-        let bPending = FriendsModel(me: b.id, backend: bBackend)
+        let bPending = FriendsModel(me: b, backend: bBackend)
         await bPending.load()
         #expect(bPending.incoming.contains { $0.profile.id == a.id },
                 "the addressee cannot see the request RLS is meant to show them")
@@ -80,7 +80,7 @@ struct FriendsLiveTests {
         #expect(bPending.incoming.isEmpty)
 
         // The other end, read fresh: this is the RLS proof.
-        let aAfter = FriendsModel(me: a.id, backend: aBackend)
+        let aAfter = FriendsModel(me: a, backend: aBackend)
         await aAfter.load()
         #expect(aAfter.accepted.contains { $0.profile.id == b.id },
                 "the requester cannot see the accepted row")
@@ -104,7 +104,7 @@ struct FriendsLiveTests {
 
         _ = try await cBackend.requestFriend(addresseeID: a.id)
 
-        let aModel = FriendsModel(me: a.id, backend: aBackend)
+        let aModel = FriendsModel(me: a, backend: aBackend)
         await aModel.load()
         // Presence: the request really arrived, so the filter below fires
         // rather than passing over an empty list.
@@ -125,7 +125,7 @@ struct FriendsLiveTests {
         #expect(rows.first?.status == .blocked)
 
         // And the far end, freshly read, does not list the blocker either.
-        let cModel = FriendsModel(me: c.id, backend: cBackend)
+        let cModel = FriendsModel(me: c, backend: cBackend)
         await cModel.load()
         for section in [cModel.accepted, cModel.incoming, cModel.outgoing] {
             #expect(!section.contains { $0.profile.id == a.id })
@@ -145,7 +145,7 @@ struct FriendsLiveTests {
         _ = try await aBackend.requestFriend(addresseeID: b.id)
         _ = try await bBackend.respondToFriendRequest(requesterID: a.id, accept: true)
 
-        let aModel = FriendsModel(me: a.id, backend: aBackend)
+        let aModel = FriendsModel(me: a, backend: aBackend)
         await aModel.load()
         let friend = try #require(aModel.accepted.first { $0.profile.id == b.id })
 
@@ -153,7 +153,7 @@ struct FriendsLiveTests {
         #expect(aModel.message == nil, "blocking failed against the live project")
         #expect(!aModel.accepted.contains { $0.profile.id == b.id })
 
-        let bModel = FriendsModel(me: b.id, backend: bBackend)
+        let bModel = FriendsModel(me: b, backend: bBackend)
         await bModel.load()
         #expect(!bModel.accepted.contains { $0.profile.id == a.id },
                 "the blocked player still lists the blocker as a friend")
@@ -175,7 +175,7 @@ struct FriendsLiveTests {
         _ = try await aBackend.requestFriend(addresseeID: b.id)
         _ = try await bBackend.respondToFriendRequest(requesterID: a.id, accept: true)
 
-        let model = FriendsModel(me: stranger.id, backend: strangerBackend)
+        let model = FriendsModel(me: stranger, backend: strangerBackend)
         await model.load()
         #expect(model.isEmpty, "a fresh stranger's friends list must be empty")
     }

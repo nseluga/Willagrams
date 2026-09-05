@@ -60,19 +60,25 @@ struct ShellRootView: View {
         }
     }
 
-    /// The local player's profile, on the same terms as the two screens above:
-    /// absent when `ShellModel` has already torn it down. `returnToMenu()` is
-    /// the way out — the screen itself knows nothing about routes.
+    /// The local player's profile *or* a friend's — one screen, opened from two
+    /// places, on the same terms as the two screens above: absent when
+    /// `ShellModel` has already torn it down. `dismissProfile()` is the way out
+    /// because Back means the screen this one was opened from; the screen itself
+    /// still knows nothing about routes.
     @ViewBuilder private var profileScreen: some View {
         if let profile = shell.profile {
-            ProfileView(model: profile) { shell.returnToMenu() }
+            ProfileView(model: profile) { shell.dismissProfile() }
         }
     }
 
-    /// The friends list, on the same terms as the profile screen above.
+    /// The friends list, on the same terms as the profile screen above. Tapping
+    /// a friend is a transition, so it goes to the shell rather than being
+    /// decided here.
     @ViewBuilder private var friendsScreen: some View {
         if let friends = shell.friends {
-            FriendsView(model: friends) { shell.returnToMenu() }
+            FriendsView(model: friends) { shell.returnToMenu() } onOpen: { entry in
+                shell.showFriendProfile(entry)
+            }
         }
     }
 

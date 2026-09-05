@@ -153,7 +153,10 @@ struct ProfileRouteTests {
     func rootRendersTheScreen() throws {
         let root = try Self.shellSource("ShellRootView.swift")
         #expect(root.contains("case .profile:"))
-        #expect(root.contains("ProfileView(model: profile) { shell.returnToMenu() }"))
+        // `dismissProfile()`, not `returnToMenu()`: this screen is opened from
+        // the menu and from the friends list, and Back means the one it came
+        // from. `FriendProfileRouteTests` owns the scoped check of both halves.
+        #expect(root.contains("ProfileView(model: profile) { shell.dismissProfile() }"))
     }
 
     /// The clipboard the Copy button writes through.

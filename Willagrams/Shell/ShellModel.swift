@@ -193,6 +193,12 @@ public final class ShellModel {
     /// name cannot survive a trip to the menu and reappear.
     public private(set) var profile: ProfileModel?
 
+    /// Where ``dismissProfile()`` goes. The profile screen is reached from two
+    /// places and Back means "the screen I came from", not "the menu" — and
+    /// `ProfileView` itself takes only a closure and holds no route, so the
+    /// answer has to be remembered here.
+    @ObservationIgnored private var profileReturn: AppRoute = .menu
+
     /// Menu → the local player's profile, with editing on.
     ///
     /// Refused without a signed-in profile, on the same terms the menu button
@@ -208,8 +214,43 @@ public final class ShellModel {
             backend: services.backend,
             pasteboard: Self.pasteboard
         )
+        profileReturn = .menu
         route = .profile
         return true
+    }
+
+    /// Friends → that friend's profile, read-only.
+    ///
+    /// The very screen ``showProfile()`` opens, with `isEditable` off: a
+    /// second read-only profile view would be a second copy of the stats rules.
+    /// Only from `.friends`, like every other transition here, so a stale tap
+    /// cannot open a profile over a live match.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showFriendProfile(_ entry: FriendEntry) -> Bool {
+        guard case .friends = route else { return false }
+        profile = ProfileModel(
+            profile: entry.profile,
+            isEditable: false,
+            backend: services.backend,
+            pasteboard: Self.pasteboard
+        )
+        profileReturn = .friends
+        route = .profile
+        return true
+    }
+
+    /// Back out of the profile screen, to whichever screen opened it.
+    ///
+    /// Returning to the friends list nils `profile` and nothing else:
+    /// ``returnToMenu()`` also drops `friends`, and using it here would leave
+    /// the route on a list with no model behind it.
+    public func dismissProfile() {
+        guard case .profile = route else { return }
+        profile = nil
+        guard case .friends = profileReturn, friends != nil else { return returnToMenu() }
+        route = .friends
     }
 
     /// The friends list for this visit, or nil when it is not up. Torn down by
@@ -228,7 +269,7 @@ public final class ShellModel {
         guard case .menu = route, let currentProfile, let backend = services.backend else {
             return false
         }
-        friends = FriendsModel(me: currentProfile.id, backend: backend)
+        friends = FriendsModel(me: currentProfile, backend: backend)
         route = .friends
         return true
     }

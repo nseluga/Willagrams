@@ -69,11 +69,21 @@ actor GatedBackend: BackendClient {
 
     let inner: FakeBackend
     let friendshipsGate: Gate?
+    /// Holds `profile(friendCode:)`, so two lookups can be parked at once and
+    /// finished in the order the test chooses.
+    let lookupGate: Gate?
     let profileGate: Gate?
     let writeGate: Gate?
 
     private let failingProfiles: Set<UUID>
     private(set) var profileCalls: [UUID] = []
+
+    /// Every friend-code lookup and every request that reached the seam.
+    ///
+    /// Counted rather than inferred: "the model refused without calling" is only
+    /// provable by a double that would have recorded the call it never got.
+    private(set) var friendCodeLookups: [String] = []
+    private(set) var requestCalls: [UUID] = []
 
     /// Whether a `friendships()` call *released from the gate* throws.
     ///
@@ -83,15 +93,21 @@ actor GatedBackend: BackendClient {
     /// one that fails.
     private var friendshipsFail = false
 
+    /// Whether a lookup *released from the gate* throws. Flipped between two
+    /// releases, it is what makes the *older* of two lookups the failing one.
+    private var lookupFail = false
+
     init(
         inner: FakeBackend,
         friendshipsGate: Gate? = nil,
+        lookupGate: Gate? = nil,
         profileGate: Gate? = nil,
         writeGate: Gate? = nil,
         failingProfiles: Set<UUID> = []
     ) {
         self.inner = inner
         self.friendshipsGate = friendshipsGate
+        self.lookupGate = lookupGate
         self.profileGate = profileGate
         self.writeGate = writeGate
         self.failingProfiles = failingProfiles
@@ -101,6 +117,10 @@ actor GatedBackend: BackendClient {
     struct FriendshipsRefused: Error {}
 
     func setFriendshipsFailing(_ failing: Bool) { friendshipsFail = failing }
+
+    func setLookupFailing(_ failing: Bool) { lookupFail = failing }
+
+    struct LookupRefused: Error {}
 
     var currentUserID: UUID? {
         get async { await inner.currentUserID }
@@ -120,7 +140,10 @@ actor GatedBackend: BackendClient {
     }
 
     func profile(friendCode: String) async throws -> Profile? {
-        try await inner.profile(friendCode: friendCode)
+        friendCodeLookups.append(friendCode)
+        await lookupGate?.pass()
+        if lookupFail { throw LookupRefused() }
+        return try await inner.profile(friendCode: friendCode)
     }
 
     func updateDisplayName(_ name: String) async throws -> Profile {
@@ -135,7 +158,8 @@ actor GatedBackend: BackendClient {
     }
 
     func requestFriend(addresseeID: UUID) async throws -> Friendship {
-        try await inner.requestFriend(addresseeID: addresseeID)
+        requestCalls.append(addresseeID)
+        return try await inner.requestFriend(addresseeID: addresseeID)
     }
 
     func respondToFriendRequest(requesterID: UUID, accept: Bool) async throws -> Friendship {

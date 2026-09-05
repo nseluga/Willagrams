@@ -13,7 +13,7 @@ import Testing
 struct FriendsModelTests {
 
     private static func loaded(_ f: FriendsFixture) async -> FriendsModel {
-        let model = FriendsModel(me: f.me.id, backend: f.backend)
+        let model = FriendsModel(me: f.me, backend: f.backend)
         await model.load()
         return model
     }
@@ -126,7 +126,7 @@ struct FriendsModelTests {
     func emptyIsEmpty() async throws {
         let backend = FakeBackend()
         let me = try await backend.signIn("lonely")
-        let model = FriendsModel(me: me.id, backend: backend)
+        let model = FriendsModel(me: me, backend: backend)
         await model.load()
 
         #expect(model.accepted.isEmpty)

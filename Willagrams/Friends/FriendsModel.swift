@@ -63,10 +63,18 @@ public final class FriendsModel {
     /// One line saying why the last thing failed, or nil.
     public private(set) var message: String?
 
-    /// The signed-in player. Every row is read from their end — which side of
-    /// `Friendship` they are on is what tells an incoming request from an
-    /// outgoing one.
-    @ObservationIgnored private let me: UUID
+    /// The signed-in player — the whole row, not just the id.
+    ///
+    /// Every friendship is read from their end, which is what tells an incoming
+    /// request from an outgoing one; and their own `friendCode` is what lets
+    /// ``lookup(code:)`` refuse itself without a round trip. An id alone could
+    /// not answer that question without asking the backend who the code belongs
+    /// to, which is the one call the refusal exists to avoid.
+    @ObservationIgnored private let me: Profile
+
+    /// The signed-in player's id. Named apart from ``me`` so the section rules
+    /// below read the same as they did when `me` was the id.
+    private var myID: UUID { me.id }
     @ObservationIgnored private let backend: any BackendClient
 
     /// Counterparts already resolved, for the life of this screen. An action
@@ -87,7 +95,7 @@ public final class FriendsModel {
     /// list would otherwise open one connection per friend.
     private static let profileFetchLimit = 8
 
-    public init(me: UUID, backend: any BackendClient) {
+    public init(me: Profile, backend: any BackendClient) {
         self.me = me
         self.backend = backend
     }
@@ -131,14 +139,14 @@ public final class FriendsModel {
             // `status != .blocked` guard above this would make the `.blocked`
             // arm dead code, and dead code is a rule no test can break.
             let section: Section?
-            switch (row.status, row.requesterID == me) {
+            switch (row.status, row.requesterID == myID) {
             case (.accepted, _): section = .accepted
             case (.pending, true): section = .outgoing
             case (.pending, false): section = .incoming
             case (.blocked, _): section = nil
             }
 
-            guard let section, let them = row.other(than: me) else { continue }
+            guard let section, let them = row.other(than: myID) else { continue }
             placed.append((section, row, them))
         }
 
@@ -261,10 +269,12 @@ public final class FriendsModel {
     /// The re-read is the whole point: nothing here edits a `Friendship` it is
     /// holding, so the sections after an action are the database's answer rather
     /// than this client's guess at it.
+    @discardableResult
     private func perform(
         failure: String,
+        map: (any Error) -> String? = { _ in nil },
         _ write: (any BackendClient) async throws -> Void
-    ) async {
+    ) async -> Bool {
         // Held across the write *and* its reload, so the spinner never blinks
         // off between the two and the empty state never flashes in the gap.
         begin()
@@ -272,10 +282,124 @@ public final class FriendsModel {
         do {
             try await write(backend)
         } catch {
-            message = failure
-            return
+            // The mapper gets first refusal so a seam error the screen has real
+            // words for is not flattened into the generic line.
+            message = map(error) ?? failure
+            return false
         }
         await load()
+        return true
+    }
+
+
+    // MARK: - Adding by code
+
+    /// What the code field holds, always normalized. Private setter because the
+    /// clamp is the model's rule: a view that could assign a raw string would be
+    /// a second, looser copy of it.
+    public private(set) var lookupCode = ""
+
+    /// The player the last lookup found, or nil. The view draws a result row off
+    /// this and decides nothing about whether there is one.
+    public private(set) var lookupResult: Profile?
+
+    /// Bumped by every lookup, for the reason ``generation`` is bumped by every
+    /// load: two overlapping lookups can finish in either order and the older
+    /// one's answer is stale whichever order that is.
+    @ObservationIgnored private var lookupGeneration = 0
+
+    /// How many characters a friend code is. The same eight the `profiles`
+    /// column holds and the same eight the backend matches on.
+    public static let codeLength = 8
+
+    /// A typed code as the backend would see it: uppercase, `A–Z0–9` only, and
+    /// no longer than a code. Pure, so the field and ``lookup(code:)`` cannot
+    /// clamp differently.
+    public static func normalize(_ raw: String) -> String {
+        String(
+            raw.uppercased()
+                .filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+                .prefix(codeLength)
+        )
+    }
+
+    /// What the field's binding writes through, so the clamp lives here.
+    public func setLookupCode(_ raw: String) {
+        lookupCode = Self.normalize(raw)
+    }
+
+    /// Whether ``lookup(code:)`` would reach the backend at all. Asked here so
+    /// the button can disable itself without holding the rule.
+    public var canLookup: Bool { lookupCode.count == Self.codeLength }
+
+    /// Looks a stranger up by the code they gave you.
+    ///
+    /// The player's own code is refused *before* the seam is touched: asking the
+    /// backend who owns a code this model already holds would be a round trip
+    /// whose answer is known, and a request that followed it would be refused by
+    /// the database anyway.
+    public func lookup(code raw: String) async {
+        let code = Self.normalize(raw)
+        lookupCode = code
+        lookupResult = nil
+
+        guard code.count == Self.codeLength else {
+            message = Self.codeLengthMessage
+            return
+        }
+        guard code != Self.normalize(me.friendCode) else {
+            message = Self.ownCodeMessage
+            return
+        }
+
+        lookupGeneration += 1
+        let mine = lookupGeneration
+        begin()
+        defer { end() }
+
+        do {
+            let found = try await backend.profile(friendCode: code)
+            guard !Task.isCancelled, lookupGeneration == mine else { return }
+            lookupResult = found
+            message = found == nil ? Self.noSuchCodeMessage : nil
+        } catch {
+            // Same guard as the publish above, and for the same reason: an
+            // overtaken lookup's failure must not stamp an error over a result a
+            // newer one just published.
+            guard !Task.isCancelled, lookupGeneration == mine else { return }
+            message = Self.lookupFailedMessage
+        }
+    }
+
+    /// Asks `profile` to be friends, then re-reads the sections.
+    ///
+    /// Refuses the local player without a call, on the same terms
+    /// ``lookup(code:)`` does — a player cannot be their own friend, and the
+    /// only thing asking would buy is a round trip to be told so.
+    public func request(_ profile: Profile) async {
+        guard profile.id != myID else {
+            message = Self.ownCodeMessage
+            return
+        }
+        let sent = await perform(failure: Self.requestFailedMessage, map: Self.requestMessage(for:)) {
+            _ = try await $0.requestFriend(addresseeID: profile.id)
+        }
+        // Cleared only on success: a refused request leaves the row up, with the
+        // reason beside it, so the player is not left retyping a code to find
+        // out what happened.
+        guard sent else { return }
+        lookupResult = nil
+        lookupCode = ""
+    }
+
+    /// The two seam refusals this screen has real words for. Everything else is
+    /// the generic line — a player cannot act on an RLS refusal.
+    public static func requestMessage(for error: any Error) -> String? {
+        switch error as? BackendError {
+        case .alreadyExists: alreadyKnownMessage
+        case .blocked: blockedMessage
+        default: nil
+        }
     }
 
     // MARK: - Copy
@@ -300,6 +424,18 @@ public final class FriendsModel {
     public static let acceptFailedMessage = "Couldn't accept that request. Try again."
     public static let declineFailedMessage = "Couldn't decline that request. Try again."
     public static let blockFailedMessage = "Couldn't block that player. Try again."
+    public static let addSectionTitle = "Add a friend"
+    public static let codeFieldLabel = "Friend code"
+    public static let codeFieldPrompt = "8 characters"
+    public static let lookupLabel = "Look up"
+    public static let requestLabel = "Request"
+    public static let codeLengthMessage = "A friend code is 8 characters."
+    public static let ownCodeMessage = "That's your own friend code."
+    public static let noSuchCodeMessage = "No player has that friend code."
+    public static let lookupFailedMessage = "Couldn't look up that code. Try again."
+    public static let requestFailedMessage = "Couldn't send that request. Try again."
+    public static let alreadyKnownMessage = "You've already asked that player, or you're already friends."
+    public static let blockedMessage = "You can't add that player."
 
     /// Whether the screen has nothing at all to draw — asked here so the view
     /// holds no branch of its own.

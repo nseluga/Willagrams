@@ -18,6 +18,16 @@ struct FriendsView: View {
     let model: FriendsModel
     let onBack: () -> Void
 
+    /// Where a tap on an accepted friend goes. The screen reports it and the
+    /// shell decides what it means, exactly as `onBack` works.
+    let onOpen: (FriendEntry) -> Void
+
+    /// The code field, written through the model so the `A–Z0–9` clamp is the
+    /// model's one rule rather than a second copy of it here.
+    private var code: Binding<String> {
+        Binding(get: { model.lookupCode }, set: { model.setLookupCode($0) })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             ScreenHeader(
@@ -35,6 +45,8 @@ struct FriendsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                    addByCode
+
                     // Requests first: the only rows on this screen that are
                     // waiting on the player are the ones they can answer.
                     section(FriendsModel.incomingSectionTitle, model.incoming) { entry in
@@ -58,7 +70,11 @@ struct FriendsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    section(FriendsModel.acceptedSectionTitle, model.accepted) { entry in
+                    section(
+                        FriendsModel.acceptedSectionTitle,
+                        model.accepted,
+                        onOpen: onOpen
+                    ) { entry in
                         Button(FriendsModel.blockLabel) {
                             Task { await model.block(entry) }
                         }
@@ -95,11 +111,53 @@ struct FriendsView: View {
         .task { await model.load() }
     }
 
+    /// Adding a friend by the code they gave you. One field and one button, plus
+    /// the row the lookup found — every decision on it (is the code long enough,
+    /// is it mine, did it match anyone) is the model's.
+    @ViewBuilder private var addByCode: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+            Text(FriendsModel.addSectionTitle).monoLabel()
+
+            HStack(spacing: DesignTokens.Space.m) {
+                TextField(FriendsModel.codeFieldPrompt, text: code)
+                    .textFieldStyle(.plain)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .accessibilityLabel(FriendsModel.codeFieldLabel)
+
+                Button(FriendsModel.lookupLabel) {
+                    Task { await model.lookup(code: model.lookupCode) }
+                }
+                .buttonStyle(.brandQuiet)
+                .disabled(!model.canLookup || model.isLoading)
+            }
+
+            if let found = model.lookupResult {
+                HStack(spacing: DesignTokens.Space.m) {
+                    Text(found.displayName)
+                        .font(DesignTokens.Typography.body)
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
+
+                    Spacer(minLength: DesignTokens.Space.m)
+
+                    Button(FriendsModel.requestLabel) {
+                        Task { await model.request(found) }
+                    }
+                    .buttonStyle(.brandPrimary)
+                }
+                .disabled(model.isLoading)
+            }
+        }
+    }
+
     /// One titled section, or nothing at all when it is empty — an empty heading
     /// is a promise of rows that are not there.
     @ViewBuilder private func section<Actions: View>(
         _ title: String,
         _ entries: [FriendEntry],
+        onOpen: ((FriendEntry) -> Void)? = nil,
         @ViewBuilder actions: @escaping (FriendEntry) -> Actions
     ) -> some View {
         if !entries.isEmpty {
@@ -108,9 +166,18 @@ struct FriendsView: View {
 
                 ForEach(entries) { entry in
                     HStack(spacing: DesignTokens.Space.m) {
-                        Text(entry.profile.displayName)
-                            .font(DesignTokens.Typography.body)
-                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                        if let onOpen {
+                            Button { onOpen(entry) } label: {
+                                Text(entry.profile.displayName)
+                                    .font(DesignTokens.Typography.body)
+                                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Text(entry.profile.displayName)
+                                .font(DesignTokens.Typography.body)
+                                .foregroundStyle(DesignTokens.Palette.textPrimary)
+                        }
 
                         Spacer(minLength: DesignTokens.Space.m)
 
