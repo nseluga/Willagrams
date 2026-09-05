@@ -123,7 +123,7 @@ below the stop marker on the Apple Developer membership.
   `Tests/StyleTests` (30), `Tests/ShellTests` (125), `Tests/SettingsTests`
   (36), `Tests/BotTests` (68, ~5 min), `Tests/OnlineTests` (126),
   `Tests/AudioTests` (19), `Tests/AccountTests` (15), `Tests/FriendsTests`
-  (29; 4 live cases gated on `WILLAGRAMS_LIVE_TESTS=1` and `SUPABASE_ANON_KEY`). Two cases are wall-clock flaky under a full parallel run and pass
+  (41; 4 live cases gated on `WILLAGRAMS_LIVE_TESTS=1` and `SUPABASE_ANON_KEY`). Two cases are wall-clock flaky under a full parallel run and pass
   alone: BotTests' pacing case and ShellTests' countdown overlay.
 - **`swift test` never compiles SwiftUI.** Only
   `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build`
@@ -415,7 +415,7 @@ below the stop marker on the Apple Developer membership.
     - On a `FakeBackend` with a seeded profile, looking up its code publishes that profile, and requesting it creates a pending outgoing friendship in the list
     - Looking up the local player's own code publishes a refusal and makes no backend call
     - Tapping an accepted friend moves the route to a read-only profile whose stats are that friend's row, and Back returns to `.friends`
-  status: not started
+  status: done
 
 - task: |
     Invite a friend to play, in-app.

@@ -143,3 +143,19 @@ FriendsModel publishes three sections (accepted / incoming pending / outgoing
 FriendsView holds no route; onward actions are closures. Item 9 adds lookup by
   code and opens ProfileModel(profile:isEditable: false) from a row.
 ```
+
+### Item 9 — Add a friend by code, and open a friend's profile (`08e3490`, 1 attempt, engineer-only + 7 orchestrator mutation checks)
+
+**The first item in this lane where no check stayed green under mutation** — 7 independent orchestrator mutations on top of the engineer's 14, all caught, all restored byte-identical per `diff -q`. Two of the three `done when:` criteria were refusals ("cannot request themself", "makes no backend call"), which look identical to a clean run once they stop firing, so a green suite alone would have proved nothing about them.
+
+- **The pattern that made the refusals provable: every "refuses / makes no call" assertion is paired with a positive test asserting the same recorder is non-empty**, so the recorder itself cannot silently stop recording. Mutation MY-3 neutered `GatedBackend.friendCodeLookups.append` and turned the positive cases red, which is what proves the `.isEmpty` no-call assertions are load-bearing rather than vacuous.
+- **`FriendsModel.init` takes the whole `Profile`, not `me: UUID`.** The own-code refusal is impossible without the code client-side; 21 test call sites was the cheap price.
+- **Scoping a source fence to one `@ViewBuilder private var` body** via a `body(of:in:)` helper, with `#require` on the property being found, caught both a wiring change (MY-6) and a rename (MY-7). This is the corrected form of item 8's whole-file grep.
+- **`ProfileView` reused unchanged**, no new View file, so no `exclude:` change. Back-destination is carried by a private `profileReturn: AppRoute` on `ShellModel` plus `dismissProfile()`, not by the view.
+- **`ProfileRouteTests.rootRendersTheScreen` legitimately went red** because it asserted the old `returnToMenu()` wiring; it was updated to `dismissProfile()` rather than weakened.
+- **Counts:** ShellTests 182→188, FriendsTests 29→41 (live gate on), AccountTests 15, root 53, xcodebuild BUILD SUCCEEDED. Verified independently at the merge commit. One ShellTests run failed with a single issue and three subsequent runs passed at 188 — consistent with the wall-clock flakiness this file already documents for the countdown overlay case, not a regression from this item.
+- **Bookkeeping note:** the agent committed its team-memory entry to `.claude/dev-team/team-memory.md` (`da55379`). Lane mode forbids that on a lane branch — `/merge-lane` appends from this PR body in merge order, and a shared file written per-lane conflicts on every merge. Reverted in `2cafdb6`; the entry lives here instead.
+
+**Still open, deliberately not fixed here (both belong elsewhere):**
+- `respondToFriendRequest(accept: false)` still sets `blocked` with no unblock seam call, so **a declined player can never be re-added by code.** The `.blocked` copy is an honest dead end until the filed `/foundation` amendment lands.
+- **A read-only profile still offers Copy/Share of the *friend's* friend code**, because `ProfileView` gates copy on nothing but the button existing. That fix belongs in `Willagrams/Account`, not the shell.
