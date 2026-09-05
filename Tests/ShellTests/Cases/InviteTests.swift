@@ -55,7 +55,10 @@ struct InviteTests {
     /// `FakeBackend` holds one session, so the order below is load-bearing — the
     /// friendship is seeded from each end in turn, and B's shell signs in before
     /// A's so the session this fixture hands back is A's, which is who hosts.
-    static func make(accepted: Bool = true) async throws -> Two {
+    static func make(
+        accepted: Bool = true,
+        hostChannel: (@Sendable (UUID) -> any MatchInviteChannel)? = nil
+    ) async throws -> Two {
         let backend = FakeBackend()
         let bus = FakeInviteBus()
 
@@ -101,7 +104,7 @@ struct InviteTests {
             services: ShellServices(
                 backend: backend,
                 signIn: TokenSignIn(backend: backend, token: hostToken),
-                inviteChannel: bus.factory
+                inviteChannel: hostChannel ?? bus.factory
             )
         )
         await shellA.signInTask?.value
@@ -645,4 +648,110 @@ struct InviteTests {
             hostName: "Ada Lovelace", sentAt: Date())
         #expect(ordinary.hostName == "Ada Lovelace")
     }
+
+    // MARK: - What an unwanted frame costs the recipient
+
+    /// A lone signed-in shell with the backend behind it in hand, so a case can
+    /// count what an arriving frame costs in round trips.
+    static func counted() async throws
+        -> (shell: ShellModel, backend: FakeBackend, bus: FakeInviteBus, me: Profile, sender: Profile) {
+        let backend = FakeBackend()
+        let bus = FakeInviteBus()
+        let sender = try await Self.acceptedFriend(on: backend)
+        let shell = ShellModel(
+            dictionary: { EveryWordIsReal() },
+            sleepFor: { _ in },
+            services: ShellServices(backend: backend, signIn: backend, inviteChannel: bus.factory)
+        )
+        await shell.signInTask?.value
+        let me = try #require(shell.currentProfile, "the shell never signed in")
+        await JoinTests.until("the shell is listening") { bus.isListening(me.id) }
+        return (shell, backend, bus, me, sender)
+    }
+
+    @Test("A flood of frames from a stranger costs one friend-list read, not one each")
+    func aFloodCostsOneRoundTrip() async throws {
+        let (shell, backend, bus, me, sender) = try await Self.counted()
+        // A sender's endpoint: `send` only needs the bus, so this need not be
+        // subscribed itself.
+        let channel = bus.channel(for: UUID())
+
+        // The recorder counts: the first unwanted frame does read the list.
+        let before = await backend.friendshipsFetches
+        let stranger = UUID()
+        for _ in 0 ..< 12 {
+            try await channel.send(Self.invite(from: stranger), to: me.id)
+        }
+        await JoinTests.until("the frames were taken") { bus.delivered == 12 }
+        for _ in 0..<400 { await Task.yield() }
+        let after = await backend.friendshipsFetches
+        #expect(after == before + 1, "a stranger's flood cost \(after - before) friend-list reads")
+        #expect(shell.inviteBanner == nil, "a stranger was bannered")
+
+        // The positive twin on the same recorder: the cache does not swallow a
+        // real friend, and it is served without another read.
+        try await channel.send(Self.invite(from: sender.id, name: "Real friend"), to: me.id)
+        await JoinTests.until("the friend's banner") { shell.inviteBanner != nil }
+        #expect(shell.inviteBanner?.hostName == "Real friend")
+        let atEnd = await backend.friendshipsFetches
+        #expect(atEnd == before + 1, "the accepted friend cost a second read")
+
+        shell.returnToMenu()
+        shell.endInviteChannel()
+    }
+
+    // MARK: - A send that fails after the player has moved on
+
+    /// A channel whose `send` parks until the test lets it fail, so the failure
+    /// can be made to land after the lobby it belonged to is gone.
+    final class ParkedFailingChannel: MatchInviteChannel, @unchecked Sendable {
+        let invites: AsyncStream<MatchInvite>
+        private let continuation: AsyncStream<MatchInvite>.Continuation
+        private let lock = NSLock()
+        private var parked = false
+        private var freed = false
+
+        init() { (invites, continuation) = AsyncStream.makeStream(bufferingPolicy: .unbounded) }
+
+        var isSending: Bool { lock.withLock { parked } }
+        func release() { lock.withLock { freed = true } }
+
+        func subscribe() async throws {}
+        func send(_ invite: MatchInvite, to recipientID: UUID) async throws {
+            lock.withLock { parked = true }
+            while !lock.withLock({ freed }) { await Task.yield() }
+            throw BackendError.offline
+        }
+        func leave() { continuation.finish() }
+    }
+
+    @Test("A send that fails after the lobby is gone says nothing; one that fails in it does")
+    func aStaleSendFailureIsSilent() async throws {
+        let parked = ParkedFailingChannel()
+        let f = try await Self.make(hostChannel: { _ in parked })
+        let entry = try await Self.rowForB(f)
+
+        #expect(f.shellA.invitePlay(entry))
+        await JoinTests.until("the send to park") { parked.isSending }
+        // The player gives up on the lobby while the send is still in flight.
+        f.shellA.returnToMenu()
+        parked.release()
+        for _ in 0..<400 { await Task.yield() }
+        #expect(f.shellA.inviteMessage == nil, "a dead lobby's failure was pinned over the menu")
+
+        // The twin on the same double: the identical failure inside the lobby
+        // it belongs to is said, so the silence above is a guard and not a
+        // branch that never runs.
+        let parked2 = ParkedFailingChannel()
+        let g = try await Self.make(hostChannel: { _ in parked2 })
+        let entry2 = try await Self.rowForB(g)
+        #expect(g.shellA.invitePlay(entry2))
+        await JoinTests.until("the second send to park") { parked2.isSending }
+        parked2.release()
+        await JoinTests.until("the host to be told") {
+            g.shellA.inviteMessage == ShellModel.inviteSendFailedMessage
+        }
+        g.shellA.returnToMenu()
+    }
+
 }

@@ -95,8 +95,13 @@ public actor FakeBackend: BackendClient, MatchAbandoning {
 
     // MARK: Friendships
 
+    /// How many times ``friendships()`` has been asked. A round-trip counter,
+    /// so a caller that must not query per incoming frame can be held to it.
+    public private(set) var friendshipsFetches = 0
+
     public func friendships() async throws -> [Friendship] {
         let me = try requireUser()
+        friendshipsFetches += 1
         return friendships.filter { $0.requesterID == me || $0.addresseeID == me }
     }
 

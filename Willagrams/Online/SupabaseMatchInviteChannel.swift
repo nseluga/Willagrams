@@ -52,9 +52,13 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
         // shipped anon key and someone's id could subscribe to their invites or
         // broadcast a spoofed frame at them. `ShellModel` is the mitigation
         // that ships with this item: an invite whose `hostID` is not an
-        // accepted friend is dropped, so a spoofed frame reaches no banner and
-        // a code read off the topic still buys nothing the sender did not
-        // already have. Upgrade to `config.isPrivate = true` together with a
+        // accepted friend is dropped, so a spoofed frame reaches no banner.
+        // It does *not* cover the other half: a listener on someone else's
+        // topic reads live `inviteCode`s and can join that lobby ahead of the
+        // friend it was meant for. That is lobby griefing rather than data
+        // exposure — an invite carries a code, a name and two ids and nothing
+        // private — but it is only fixed on the server.
+        // Upgrade to `config.isPrivate = true` together with a
         // `realtime.messages` policy — which is a migration, and this item may
         // not write one. Setting `isPrivate` without the policy breaks invites.
         channel = realtime.channel(Self.topic(for: userID)) { config in

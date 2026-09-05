@@ -77,7 +77,7 @@ public struct MatchInvite: Sendable, Equatable, Identifiable {
 /// ``invites`` has exactly one consumer, like `MatchTransport`'s streams: the
 /// `ShellModel` that owns the channel. Broadcast promises no ordering, so
 /// nothing downstream may assume any.
-public protocol MatchInviteChannel: Sendable {
+public protocol MatchInviteChannel: AnyObject, Sendable {
 
     /// Invites addressed to the local user. Finishes when ``leave()`` is called.
     var invites: AsyncStream<MatchInvite> { get }

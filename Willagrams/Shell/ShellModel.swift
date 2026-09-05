@@ -341,6 +341,16 @@ public final class ShellModel {
     /// live invite, so it is dropped on the next arrival.
     @ObservationIgnored private var bannered: [UUID: Date] = [:]
 
+    /// The accepted friend ids from the last ``BackendClient/friendships()``,
+    /// against when they were read. A bound on how much work an unwanted frame
+    /// can cost, not a speed-up: see ``isAcceptedFriend(_:)``.
+    @ObservationIgnored private var acceptedFriends: (ids: Set<UUID>, at: Date)?
+
+    /// How long a read friend list answers for. Well under an invite's own
+    /// lifetime, so a friendship accepted mid-session is live before the
+    /// invite that follows it has expired.
+    static let friendListLifetime: TimeInterval = 30
+
     /// The invite whose join is in flight, or nil. A hand-typed code's failure
     /// is the join screen's own message and nothing more; only an invite's
     /// failure clears a banner.
@@ -382,11 +392,37 @@ public final class ShellModel {
     /// The sender's client already refuses to invite a stranger, but that is
     /// the attacker's own copy of the rule: the topic is named for a player id,
     /// and a friend code resolves to one. This is the half that holds.
+    ///
+    /// Answered from ``acceptedFriends`` whenever that is fresh, because a
+    /// rejected frame publishes nothing and so leaves the next frame just as
+    /// welcome: without the cache a peer spamming distinct match ids would
+    /// drive one backend query per frame from the *victim's* device.
+    ///
+    /// ponytail: a whole-list cache on a time bound, not an invalidated one —
+    /// a friendship accepted in the last ``friendListLifetime`` seconds is not
+    /// visible here yet, so that brand-new friend's first invite can be
+    /// dropped and has to be sent again. Invalidate on the friends screen's
+    /// own accept instead when that wait is worth a coupling.
     private func isAcceptedFriend(_ hostID: UUID) async -> Bool {
-        guard let backend = services.backend, let me = currentProfile else { return false }
+        guard let me = currentProfile else { return false }
         guard hostID != me.id else { return false }
-        guard let rows = try? await backend.friendships() else { return false }
-        return rows.contains { $0.status == .accepted && $0.other(than: me.id) == hostID }
+        return await acceptedFriendIDs(me: me.id).contains(hostID)
+    }
+
+    /// The accepted counterparts of every friendship row, cached.
+    private func acceptedFriendIDs(me: UUID) async -> Set<UUID> {
+        if let cached = acceptedFriends,
+           now().timeIntervalSince(cached.at) < Self.friendListLifetime {
+            return cached.ids
+        }
+        guard let backend = services.backend,
+              let rows = try? await backend.friendships() else { return [] }
+        // `.accepted` is load-bearing and not a formality: declining leaves the
+        // row behind as `.blocked` rather than deleting it, so this predicate
+        // is what keeps a blocked player off the banner.
+        let ids = Set(rows.filter { $0.status == .accepted }.compactMap { $0.other(than: me) })
+        acceptedFriends = (ids, now())
+        return ids
     }
 
     /// The four screens an invite may interrupt.
@@ -424,6 +460,9 @@ public final class ShellModel {
                     guard !Task.isCancelled else { return }
                     if attempt < Self.inviteSubscribeAttempts - 1 {
                         try? await sleepFor(backoff)
+                        // Again after the sleep: a cancel landing during the
+                        // backoff must not buy one more subscribe.
+                        guard !Task.isCancelled else { return }
                         backoff *= 2
                     }
                 }
@@ -431,7 +470,7 @@ public final class ShellModel {
             guard subscribed else {
                 // Left in a state a later sign-in can open a channel from,
                 // rather than one holding a channel that never subscribed.
-                self?.forgetInviteChannel()
+                self?.forgetInviteChannel(channel)
                 channel.leave()
                 return
             }
@@ -448,7 +487,12 @@ public final class ShellModel {
 
     /// Drops the channel reference without touching the channel — the pump
     /// closes it itself, and this is only about not holding a dead one.
-    private func forgetInviteChannel() {
+    ///
+    /// Only if it is still the one that gave up: a teardown-and-reopen while
+    /// the retries were running would otherwise have this clear a live
+    /// channel's reference, leaving invites arriving and none sendable.
+    private func forgetInviteChannel(_ channel: any MatchInviteChannel) {
+        guard inviteChannel === channel else { return }
         inviteChannel = nil
     }
 
@@ -467,6 +511,8 @@ public final class ShellModel {
         inviteMessage = nil
         joiningInvite = nil
         bannered.removeAll()
+        // The next sign-in is a different player, whose friends are not these.
+        acceptedFriends = nil
     }
 
     /// One invite off the wire. Every reason to say nothing is decided here, so
@@ -620,6 +666,11 @@ public final class ShellModel {
                         sentAt: now()),
                     to: recipient)
             } catch {
+                // The same staleness guard the success path took before the
+                // await, retaken after it: a send cannot be interrupted once
+                // parked, so by the time it throws the player may be on a
+                // countdown or in a match, and this line must not land there.
+                guard !Task.isCancelled, self.hostLobby === lobby else { return }
                 // The lobby is still good — the code is on screen and can be
                 // read out — so this says the invite did not go, and nothing
                 // more.
