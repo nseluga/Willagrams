@@ -234,20 +234,58 @@ public final class ShellModel {
                 options: options ?? soloSetup.options
             )
         )
+        return install { setup, dictionary, generation in
+            MatchRun(
+                shell: self,
+                setup: setup,
+                dictionary: dictionary,
+                generation: generation,
+                difficulty: difficulty ?? self.soloSetup.difficulty,
+                sleepFor: self.sleepFor
+            )
+        }
+    }
+
+    /// Menu → countdown over an opponent the caller built — a lobby's
+    /// `OnlineMatch`, or a test's double.
+    ///
+    /// The opponent arrives as a closure rather than as a value so the same
+    /// down-before-up order solo has is kept for a caller who cannot see it: the
+    /// previous run is torn down, and only then is the next opponent made. A
+    /// built value in an argument would be constructed before this call is even
+    /// entered, with two far ends live at once for as long as that took.
+    @discardableResult
+    public func startMatch(
+        _ setup: MatchSetup,
+        opponent makeOpponent: @MainActor () -> any MatchOpponent
+    ) -> Bool {
+        // Down before up, exactly as in `startSoloPractice`.
+        returnToMenu()
+        startMatch(setup)
+        return install { setup, dictionary, generation in
+            MatchRun(
+                shell: self,
+                setup: setup,
+                dictionary: dictionary,
+                generation: generation,
+                opponent: makeOpponent()
+            )
+        }
+    }
+
+    /// Builds the run for the countdown the route is already on, arms it and
+    /// opens it. The one place a run becomes *the* run, so solo and online
+    /// cannot arm different things.
+    private func install(
+        _ build: (MatchSetup, any WordList, Int) -> MatchRun
+    ) -> Bool {
         // `startMatch` only moves from `.menu`, so this is the assertion that
         // the route really did advance rather than silently no-op.
         guard case .countdown(let setup) = route else { return false }
 
-        seed = fresh
+        seed = setup.seed
         generation &+= 1
-        let built = MatchRun(
-            shell: self,
-            setup: setup,
-            dictionary: loadedDictionary(),
-            generation: generation,
-            difficulty: difficulty ?? soloSetup.difficulty,
-            sleepFor: sleepFor
-        )
+        let built = build(setup, loadedDictionary(), generation)
         run = built
         // Armed BEFORE the deal: `start()` is what sets the count running, and a
         // tracker armed after it would miss a status change that landed in
