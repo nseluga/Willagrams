@@ -78,9 +78,20 @@ let package = Package(
             path: "BotSrc",
             exclude: ["BotDifficultyView.swift"]
         ),
+        // `Willagrams/Account` is the profile screen, and `ShellModel` builds
+        // one — so the shell cannot compile here without it. Same directory
+        // symlink and same rule as every other: `ProfileView` is SwiftUI and is
+        // excluded, in this manifest *and* in `Tests/AccountTests`, which owns
+        // the guardrail over it.
+        .target(
+            name: "Account",
+            dependencies: ["Match"],
+            path: "AccountSrc",
+            exclude: ["ProfileView.swift"]
+        ),
         .target(
             name: "Shell",
-            dependencies: ["Match", "Style", "BoardKit", "Bot", "Audio", "Settings", .product(name: "WillagramsRules", package: "Willagrams")],
+            dependencies: ["Match", "Style", "BoardKit", "Bot", "Audio", "Settings", "Account", .product(name: "WillagramsRules", package: "Willagrams")],
             path: "ShellSrc",
             // The macOS test build has no SwiftUI. Every view file in
             // `Willagrams/Shell` must be listed here, and `SourceGuardrailTests`
@@ -94,7 +105,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ShellTests",
-            dependencies: ["Shell", "Match", "Style", "BoardKit", "Bot", "Audio", "Settings"],
+            dependencies: ["Shell", "Match", "Style", "BoardKit", "Bot", "Audio", "Settings", "Account"],
             path: "Cases"
         ),
     ]

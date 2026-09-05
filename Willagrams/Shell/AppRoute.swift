@@ -60,6 +60,10 @@ public enum AppRoute: Hashable, Sendable {
     /// match. Carries nothing for the same reason `hostLobby` does — the state
     /// lives on ``ShellModel/join``, which owns a live `OnlineMatch`.
     case join
+    /// One player's profile. Carries nothing for the same reason `hostLobby`
+    /// does — whose profile it is lives on ``ShellModel/profile``, which the
+    /// route exit tears down.
+    case profile
     case countdown(MatchSetup)
     case match(MatchSetup)
     /// `winner` is nil when the match ended without one — a draw, or a peer that

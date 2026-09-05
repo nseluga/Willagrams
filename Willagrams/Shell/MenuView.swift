@@ -149,6 +149,15 @@ struct MenuView: View {
             .buttonStyle(.brandQuiet)
             .disabled(!shell.canPlayOnline)
 
+            // Your own row: a name to change and the code a friend needs. Off
+            // on the same terms as the two above — there is no profile to show
+            // until sign-in lands.
+            Button { shell.showProfile() } label: {
+                Text(ProfileModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandQuiet)
+            .disabled(shell.currentProfile == nil)
+
             if let reason = shell.onlineUnavailableReason {
                 Text(reason)
                     .font(DesignTokens.Typography.caption)

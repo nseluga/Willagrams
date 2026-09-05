@@ -4,6 +4,12 @@ import Bot
 #if canImport(Match)
 import Match
 #endif
+#if canImport(Account)
+import Account
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 import Observation
 import WillagramsRules
@@ -177,6 +183,40 @@ public final class ShellModel {
         )
         route = .join
         return true
+    }
+
+    /// The profile screen for this visit, or nil when it is not up. Torn down
+    /// by ``returnToMenu()`` like every other screen model, so a stale draft
+    /// name cannot survive a trip to the menu and reappear.
+    public private(set) var profile: ProfileModel?
+
+    /// Menu → the local player's profile, with editing on.
+    ///
+    /// Refused without a signed-in profile, on the same terms the menu button
+    /// is disabled: there is no row to render and nobody to save as.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showProfile() -> Bool {
+        guard case .menu = route, let currentProfile else { return false }
+        profile = ProfileModel(
+            profile: currentProfile,
+            isEditable: true,
+            backend: services.backend,
+            pasteboard: Self.pasteboard
+        )
+        route = .profile
+        return true
+    }
+
+    /// Putting the friend code on the clipboard. Here rather than in
+    /// `Willagrams/Account` because `UIPasteboard` is UIKit and that directory
+    /// is compiled for macOS by two test packages; a no-op there is correct,
+    /// since nothing on macOS renders the button that calls it.
+    static let pasteboard: @MainActor (String) -> Void = { text in
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
     }
 
     /// What the next solo match will be played with. Lives here rather than on
@@ -472,6 +512,11 @@ public final class ShellModel {
         // its channel closed before the menu is shown over them.
         join?.teardown()
         join = nil
+        // No channel and no task behind this one — dropping it is the whole
+        // teardown — but it goes before the route moves for the same reason the
+        // other two do: the menu is never shown over a screen model that is
+        // still reachable.
+        profile = nil
         endSoloPractice()
         // Reaching the menu is what makes every end screen stale: the run they
         // were built for is gone and cannot come back. The bump is here rather

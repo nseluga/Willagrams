@@ -33,6 +33,7 @@ struct ShellRootView: View {
             case .howToPlay: HowToPlayView(shell: shell)
             case .hostLobby: hostLobby
             case .join: joinScreen
+            case .profile: profileScreen
             case .countdown: countdown
             case .match: match
             case .results: results
@@ -55,6 +56,15 @@ struct ShellRootView: View {
     @ViewBuilder private var joinScreen: some View {
         if let join = shell.join {
             JoinView(shell: shell, join: join)
+        }
+    }
+
+    /// The local player's profile, on the same terms as the two screens above:
+    /// absent when `ShellModel` has already torn it down. `returnToMenu()` is
+    /// the way out — the screen itself knows nothing about routes.
+    @ViewBuilder private var profileScreen: some View {
+        if let profile = shell.profile {
+            ProfileView(model: profile) { shell.returnToMenu() }
         }
     }
 
