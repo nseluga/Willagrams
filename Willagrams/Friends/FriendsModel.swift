@@ -115,7 +115,11 @@ public final class FriendsModel {
         do {
             rows = try await backend.friendships()
         } catch {
-            guard !Task.isCancelled else { return }
+            // Same guard as the publish below, for the same reason: a load that
+            // has been cancelled or overtaken owns nothing on this screen, and
+            // its failure must not stamp an error over sections a newer load
+            // just published correctly.
+            guard !Task.isCancelled, generation == mine else { return }
             message = Self.loadFailedMessage
             return
         }
@@ -144,11 +148,15 @@ public final class FriendsModel {
         let unresolved = Set(placed.map(\.them)).subtracting(profiles.keys)
         let (fetched, failures) = await Self.fetch(unresolved, from: backend)
 
+        // Kept even by a load that is about to lose: a `Profile` is keyed by id
+        // and says nothing about which load read it, so throwing these away
+        // would only make the winner pay for the same reads again.
+        profiles.merge(fetched) { _, new in new }
+
         // Nothing below this line runs for a load that has been cancelled or
         // overtaken: a cancelled load's rows are truncated and an overtaken
         // one's are stale, and either would be assigned over good sections.
         guard !Task.isCancelled, generation == mine else { return }
-        profiles.merge(fetched) { _, new in new }
 
         var accepted: [FriendEntry] = []
         var incoming: [FriendEntry] = []

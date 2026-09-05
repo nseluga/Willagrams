@@ -88,6 +88,46 @@ struct FriendsLoadingTests {
         #expect(!model.isLoading)
     }
 
+    /// The failure branch of a load is a publish too — of a message. An older
+    /// load whose read blips must not stamp "Couldn't load your friends" over a
+    /// screen the newer load just filled correctly.
+    @Test("An overtaken load that fails does not put its error over the newer one's sections")
+    func theOvertakenLoadsFailureIsNotShown() async throws {
+        let f = try await FriendsFixture.make()
+        let gate = Gate()
+        let backend = GatedBackend(inner: f.backend, friendshipsGate: gate)
+        let model = FriendsModel(me: f.me.id, backend: backend)
+
+        let first = Task { await model.load() }
+        await gate.waitForArrivals(1)
+
+        // The database moves on, then the newer load reads it and parks too.
+        _ = try await f.backend.respondToFriendRequest(requesterID: f.asker.id, accept: true)
+        let second = Task { await model.load() }
+        await gate.waitForArrivals(2)
+
+        // The newer one finishes first and owns the screen.
+        await gate.release(1)
+        await second.value
+        #expect(model.accepted.contains { $0.profile.id == f.asker.id })
+        #expect(model.message == nil)
+
+        // Only the older, already-overtaken read fails.
+        await backend.setFriendshipsFailing(true)
+        await gate.release(0)
+        await first.value
+
+        #expect(
+            model.message == nil,
+            "the overtaken load's failure clobbered the newer load's screen with an error"
+        )
+        #expect(
+            model.accepted.contains { $0.profile.id == f.asker.id },
+            "the sections the newer load published must still be on screen"
+        )
+        #expect(!model.isLoading)
+    }
+
     @Test("A cancelled load does not assign its rows over the sections")
     func cancelledLoadsPublishNothing() async throws {
         let f = try await FriendsFixture.make()

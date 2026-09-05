@@ -75,6 +75,14 @@ actor GatedBackend: BackendClient {
     private let failingProfiles: Set<UUID>
     private(set) var profileCalls: [UUID] = []
 
+    /// Whether a `friendships()` call *released from the gate* throws.
+    ///
+    /// Checked after the gate, not before, so a test that has two loads parked
+    /// can decide which of them fails by flipping this between two releases —
+    /// which is the only way to make the *older* of two overlapping loads be the
+    /// one that fails.
+    private var friendshipsFail = false
+
     init(
         inner: FakeBackend,
         friendshipsGate: Gate? = nil,
@@ -90,6 +98,9 @@ actor GatedBackend: BackendClient {
     }
 
     struct ProfileRefused: Error {}
+    struct FriendshipsRefused: Error {}
+
+    func setFriendshipsFailing(_ failing: Bool) { friendshipsFail = failing }
 
     var currentUserID: UUID? {
         get async { await inner.currentUserID }
@@ -119,6 +130,7 @@ actor GatedBackend: BackendClient {
     func friendships() async throws -> [Friendship] {
         let rows = try await inner.friendships()
         await friendshipsGate?.pass()
+        if friendshipsFail { throw FriendshipsRefused() }
         return rows
     }
 
