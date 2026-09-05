@@ -125,9 +125,10 @@ struct InviteTests {
     /// arrives rather than who sent it.
     static func lone(
         now: @escaping @MainActor () -> Date = { Date() }
-    ) async throws -> (shell: ShellModel, bus: FakeInviteBus, me: Profile) {
+    ) async throws -> (shell: ShellModel, bus: FakeInviteBus, me: Profile, sender: Profile) {
         let backend = FakeBackend()
         let bus = FakeInviteBus()
+        let sender = try await Self.acceptedFriend(on: backend)
         let shell = ShellModel(
             dictionary: { EveryWordIsReal() },
             sleepFor: { _ in },
@@ -137,16 +138,31 @@ struct InviteTests {
         await shell.signInTask?.value
         let me = try #require(shell.currentProfile, "the shell never signed in")
         await JoinTests.until("the shell is listening") { bus.isListening(me.id) }
-        return (shell, bus, me)
+        return (shell, bus, me, sender)
+    }
+
+    /// One accepted friend of whoever `FakeBackend: ShellSignIn` signs in as.
+    ///
+    /// Every `lone` case needs one: an invite from a player this one has not
+    /// accepted is dropped on arrival now, so a fixture without a friendship
+    /// would make every banner assertion below unfalsifiable.
+    static func acceptedFriend(on backend: FakeBackend) async throws -> Profile {
+        let me = try await backend.signIn()
+        let sender = try await backend.signInWithApple(idToken: "invite-sender", nonce: "invite")
+        _ = try await backend.requestFriend(addresseeID: me.id)
+        _ = try await backend.signIn()
+        _ = try await backend.respondToFriendRequest(requesterID: sender.id, accept: true)
+        return sender
     }
 
     static func invite(
+        from hostID: UUID,
         code: String = "ABC123",
         name: String = "Sender",
         sentAt: Date = Date()
     ) -> MatchInvite {
         MatchInvite(
-            matchID: UUID(), inviteCode: code, hostID: UUID(),
+            matchID: UUID(), inviteCode: code, hostID: hostID,
             hostName: name, sentAt: sentAt)
     }
 
@@ -202,8 +218,7 @@ struct InviteTests {
 
     @Test("An invite arriving during a match is dropped, and the same shell banners on the menu")
     func droppedDuringAMatch() async throws {
-        let (shell, bus, me) = try await Self.lone()
-        let sender = UUID()
+        let (shell, bus, me, sender) = try await Self.lone()
 
         #expect(shell.startSoloPractice())
         shell.countdownFinished()
@@ -212,7 +227,7 @@ struct InviteTests {
             return
         }
 
-        try await bus.channel(for: sender).send(Self.invite(name: "Mid-match"), to: me.id)
+        try await bus.channel(for: sender.id).send(Self.invite(from: sender.id, name: "Mid-match"), to: me.id)
         await JoinTests.until("the bus delivered it") { bus.delivered == 1 }
         for _ in 0..<200 { await Task.yield() }
         #expect(shell.inviteBanner == nil, "a banner landed over a live match")
@@ -220,7 +235,7 @@ struct InviteTests {
 
         // The positive twin: same shell, same bus, same send — on the menu.
         shell.returnToMenu()
-        try await bus.channel(for: sender).send(Self.invite(name: "On the menu"), to: me.id)
+        try await bus.channel(for: sender.id).send(Self.invite(from: sender.id, name: "On the menu"), to: me.id)
         await JoinTests.until("the menu banner") { shell.inviteBanner != nil }
         #expect(shell.inviteBanner?.hostName == "On the menu")
 
@@ -229,19 +244,19 @@ struct InviteTests {
 
     @Test("An invite older than two minutes publishes nothing, a fresh one banners")
     func staleInvitesAreDropped() async throws {
-        let (shell, bus, me) = try await Self.lone()
-        let sender = UUID()
+        let (shell, bus, me, sender) = try await Self.lone()
         let stale = Self.invite(
+            from: sender.id,
             name: "Stale",
             sentAt: Date().addingTimeInterval(-(ShellModel.inviteLifetime + 1)))
 
-        try await bus.channel(for: sender).send(stale, to: me.id)
+        try await bus.channel(for: sender.id).send(stale, to: me.id)
         await JoinTests.until("the stale invite landed") { bus.delivered == 1 }
         for _ in 0..<200 { await Task.yield() }
         #expect(shell.inviteBanner == nil, "a two-minute-old invite was shown")
         #expect(shell.inviteMessage == nil, "a stale invite that was never shown said so")
 
-        try await bus.channel(for: sender).send(Self.invite(name: "Fresh"), to: me.id)
+        try await bus.channel(for: sender.id).send(Self.invite(from: sender.id, name: "Fresh"), to: me.id)
         await JoinTests.until("the fresh invite") { shell.inviteBanner != nil }
         #expect(shell.inviteBanner?.hostName == "Fresh")
 
@@ -283,9 +298,9 @@ struct InviteTests {
             var value = Date()
         }
         let clock = Clock()
-        let (shell, bus, me) = try await Self.lone(now: { clock.value })
+        let (shell, bus, me, sender) = try await Self.lone(now: { clock.value })
 
-        try await bus.channel(for: UUID()).send(Self.invite(sentAt: clock.value), to: me.id)
+        try await bus.channel(for: UUID()).send(Self.invite(from: sender.id, sentAt: clock.value), to: me.id)
         await JoinTests.until("the banner") { shell.inviteBanner != nil }
 
         // Not yet: one second short of the lifetime.
@@ -314,7 +329,7 @@ struct InviteTests {
         let absent = UUID()
         #expect(bus.isListening(absent) == false)
 
-        try await bus.channel(for: UUID()).send(Self.invite(), to: absent)
+        try await bus.channel(for: UUID()).send(Self.invite(from: UUID()), to: absent)
         #expect(bus.dropped == 1)
         #expect(bus.delivered == 0, "an invite nobody was listening for was buffered")
 
@@ -322,7 +337,7 @@ struct InviteTests {
         let listener = bus.channel(for: absent)
         try await listener.subscribe()
         #expect(bus.isListening(absent))
-        try await bus.channel(for: UUID()).send(Self.invite(), to: absent)
+        try await bus.channel(for: UUID()).send(Self.invite(from: UUID()), to: absent)
         #expect(bus.delivered == 1)
         listener.leave()
         #expect(bus.isListening(absent) == false)
@@ -330,7 +345,7 @@ struct InviteTests {
 
     @Test("The channel is torn down with the model and does not outlive it")
     func teardownEndsTheChannel() async throws {
-        let (shell, bus, me) = try await Self.lone()
+        let (shell, bus, me, sender) = try await Self.lone()
         #expect(bus.isListening(me.id), "sign-in never subscribed")
 
 
@@ -339,7 +354,7 @@ struct InviteTests {
         #expect(shell.inviteBanner == nil)
 
         // Nothing arrives after it: the send is dropped, not queued.
-        try await bus.channel(for: UUID()).send(Self.invite(), to: me.id)
+        try await bus.channel(for: UUID()).send(Self.invite(from: sender.id), to: me.id)
         #expect(bus.dropped == 1)
         for _ in 0..<200 { await Task.yield() }
         #expect(shell.inviteBanner == nil)
@@ -376,5 +391,224 @@ struct InviteTests {
         #expect(ShellModel.showsInvites(.hostLobby) == false)
         #expect(ShellModel.showsInvites(.soloSetup) == false)
         #expect(ShellModel.showsInvites(.howToPlay) == false)
+        // The three the rule exists for: a banner over a live match, or over
+        // the count into one, is the failure this allow-list prevents.
+        #expect(ShellModel.showsInvites(.countdown(MatchBoardTests.setup)) == false)
+        #expect(ShellModel.showsInvites(.match(MatchBoardTests.setup)) == false)
+        #expect(ShellModel.showsInvites(.results(winner: nil)) == false)
+    }
+
+    // MARK: - The sender is checked here, not only on the sender's device
+
+    @Test("An invite from someone who is not an accepted friend publishes nothing")
+    func strangersAndSelfAreDropped() async throws {
+        let (shell, bus, me, sender) = try await Self.lone()
+
+        // A friend code resolves to a uuid, so a stranger can address this
+        // topic. What they cannot do is be on the friends list.
+        try await bus.channel(for: UUID()).send(
+            Self.invite(from: UUID(), name: "Stranger"), to: me.id)
+        await JoinTests.until("the stranger's invite landed") { bus.delivered == 1 }
+        for _ in 0..<200 { await Task.yield() }
+        #expect(shell.inviteBanner == nil, "a stranger bannered this player")
+
+        // Nor can they claim to be the player themself.
+        try await bus.channel(for: UUID()).send(
+            Self.invite(from: me.id, name: "Me"), to: me.id)
+        await JoinTests.until("the spoofed self-invite landed") { bus.delivered == 2 }
+        for _ in 0..<200 { await Task.yield() }
+        #expect(shell.inviteBanner == nil, "an invite claiming to be from this player bannered")
+
+        // The positive twin, same shell and same bus: the accepted friend gets
+        // through.
+        try await bus.channel(for: sender.id).send(
+            Self.invite(from: sender.id, name: "Friend"), to: me.id)
+        await JoinTests.until("the friend's invite") { shell.inviteBanner != nil }
+        #expect(shell.inviteBanner?.hostName == "Friend")
+
+        shell.returnToMenu()
+    }
+
+    // MARK: - One banner at a time
+
+    @Test("A second invite does not replace the banner being answered")
+    func aSecondInviteReplacesNothing() async throws {
+        let (shell, bus, me, sender) = try await Self.lone()
+        let channel = bus.channel(for: sender.id)
+
+        let first = Self.invite(from: sender.id, code: "FIRST1", name: "First")
+        try await channel.send(first, to: me.id)
+        await JoinTests.until("the first banner") { shell.inviteBanner != nil }
+
+        let second = Self.invite(from: sender.id, code: "SECND2", name: "Second")
+        try await channel.send(second, to: me.id)
+        await JoinTests.until("the second invite landed") { bus.delivered == 2 }
+        for _ in 0..<200 { await Task.yield() }
+        #expect(shell.inviteBanner == first, "the banner swapped under the player's finger")
+
+        // The positive twin: once the first is answered, the next one lands.
+        shell.joinInvite()
+        shell.returnToMenu()
+        let third = Self.invite(from: sender.id, code: "THIRD3", name: "Third")
+        try await channel.send(third, to: me.id)
+        await JoinTests.until("the third banner") { shell.inviteBanner != nil }
+        #expect(shell.inviteBanner == third)
+
+        shell.returnToMenu()
+    }
+
+    // MARK: - A refused subscribe is retried, not fatal
+
+    /// A channel that refuses its first `failures` subscribes, and records what
+    /// was tried. Deliberately delivers nothing on its own: an invite only
+    /// arrives when the test yields one, so "the pump is running" is never
+    /// something this double asserts for free.
+    final class FlakyInviteChannel: MatchInviteChannel, @unchecked Sendable {
+        let invites: AsyncStream<MatchInvite>
+        private let continuation: AsyncStream<MatchInvite>.Continuation
+        private let lock = NSLock()
+        private var remaining: Int
+        private var tries = 0
+        private var leaves = 0
+
+        init(failures: Int) {
+            remaining = failures
+            (invites, continuation) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
+        }
+
+        var attempts: Int { lock.withLock { tries } }
+        var hasLeft: Bool { lock.withLock { leaves > 0 } }
+
+        func subscribe() async throws {
+            let refuse = lock.withLock { () -> Bool in
+                tries += 1
+                guard remaining > 0 else { return false }
+                remaining -= 1
+                return true
+            }
+            if refuse { throw BackendError.offline }
+        }
+
+        func send(_ invite: MatchInvite, to recipientID: UUID) async throws {}
+        func deliver(_ invite: MatchInvite) { continuation.yield(invite) }
+        func leave() {
+            lock.withLock { leaves += 1 }
+            continuation.finish()
+        }
+    }
+
+    static func shell(over channel: FlakyInviteChannel) async throws -> (ShellModel, Profile, Profile) {
+        let backend = FakeBackend()
+        let sender = try await Self.acceptedFriend(on: backend)
+        let shell = ShellModel(
+            dictionary: { EveryWordIsReal() },
+            sleepFor: { _ in },
+            services: ShellServices(
+                backend: backend, signIn: backend, inviteChannel: { _ in channel })
+        )
+        await shell.signInTask?.value
+        let me = try #require(shell.currentProfile)
+        return (shell, me, sender)
+    }
+
+    @Test("A socket that refuses twice is retried, and invites still arrive")
+    func aRefusedSubscribeIsRetried() async throws {
+        // Literal, not derived from the constant: a budget of one would make
+        // "no failures to recover from" pass this case by accident.
+        #expect(ShellModel.inviteSubscribeAttempts >= 3)
+        let channel = FlakyInviteChannel(failures: 2)
+        let (shell, _, sender) = try await Self.shell(over: channel)
+
+        await JoinTests.until("the retries") { channel.attempts == 3 }
+        #expect(channel.hasLeft == false, "a channel that did subscribe was thrown away")
+
+        channel.deliver(Self.invite(from: sender.id, name: "After the retry"))
+        await JoinTests.until("the banner") { shell.inviteBanner != nil }
+        #expect(shell.inviteBanner?.hostName == "After the retry")
+
+        shell.returnToMenu()
+    }
+
+    @Test("A socket that never comes up is given up on and closed, not held open")
+    func aDeadSubscribeIsClosed() async throws {
+        let channel = FlakyInviteChannel(failures: 99)
+        let (shell, _, sender) = try await Self.shell(over: channel)
+
+        await JoinTests.until("the channel to be closed") { channel.hasLeft }
+        #expect(channel.attempts == 3, "the retry budget was not spent")
+
+        // And nothing it yields afterwards reaches a banner.
+        channel.deliver(Self.invite(from: sender.id))
+        for _ in 0..<200 { await Task.yield() }
+        #expect(shell.inviteBanner == nil)
+
+        shell.returnToMenu()
+    }
+
+    // MARK: - What the host and the guest are told
+
+    @Test("A send that fails tells the host, and one that works says nothing")
+    func aFailedSendIsSaid() async throws {
+        let f = try await Self.make()
+        let entry = try await Self.rowForB(f)
+
+        #expect(f.shellA.invitePlay(entry))
+        await JoinTests.until("the invite left A") { f.bus.delivered == 1 }
+        for _ in 0..<200 { await Task.yield() }
+        #expect(f.shellA.inviteMessage == nil, "a send that worked said something")
+        f.shellA.returnToMenu()
+
+        // No channel to send on is the same story to the player as a send that
+        // threw, and it is the reachable half offline.
+        let noChannel = try await Self.make()
+        noChannel.shellB.endInviteChannel()
+        let entryA = try await Self.rowForB(noChannel)
+        noChannel.shellA.endInviteChannel()
+        #expect(noChannel.shellA.invitePlay(entryA) == false)
+        #expect(noChannel.shellA.inviteMessage == ShellModel.inviteSendFailedMessage)
+        noChannel.shellA.returnToMenu()
+    }
+
+    @Test("The over line does not follow the player around")
+    func theOverLineIsNotPinned() async throws {
+        let f = try await Self.make()
+        let entry = try await Self.rowForB(f)
+
+        #expect(f.shellA.invitePlay(entry))
+        await JoinTests.until("B was bannered") { f.shellB.inviteBanner != nil }
+        let matchID = try #require(f.shellA.hostLobby?.match?.record.id)
+        f.shellA.returnToMenu()
+        await JoinTests.until("the row left the lobby") {
+            await f.backend.matchRecord(matchID)?.status != .lobby
+        }
+
+        _ = try await f.backend.signInWithApple(idToken: Self.guestToken, nonce: "invite")
+        #expect(f.shellB.joinInvite())
+        await JoinTests.until("the over line") {
+            f.shellB.inviteMessage == ShellModel.inviteOverMessage
+        }
+
+        // The next thing the player does clears it.
+        f.shellB.showSoloSetup()
+        f.shellB.returnToMenu()
+        #expect(f.shellB.inviteMessage == nil, "the over line was still pinned to the menu")
+    }
+
+    @Test("A host name is clamped to one short line before anything draws it")
+    func hostNamesAreClamped() {
+        let long = String(repeating: "W", count: 500)
+        let invite = MatchInvite(
+            matchID: UUID(), inviteCode: "ABC123", hostID: UUID(),
+            hostName: long + "\nsecond line", sentAt: Date())
+        #expect(invite.hostName.count == MatchInvite.hostNameLimit)
+        let hasNewline = invite.hostName.contains { $0.isNewline }
+        #expect(hasNewline == false)
+        #expect(ShellModel.inviteLine(invite).count < 80)
+
+        // The twin: an ordinary name is untouched.
+        let ordinary = MatchInvite(
+            matchID: UUID(), inviteCode: "ABC123", hostID: UUID(),
+            hostName: "Ada Lovelace", sentAt: Date())
+        #expect(ordinary.hostName == "Ada Lovelace")
     }
 }

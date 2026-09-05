@@ -46,6 +46,17 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
 
     init(realtime: RealtimeClientV2, userID: UUID) {
         self.realtime = realtime
+        // ponytail: a public channel. The topic is unguessable in practice (a
+        // user's own uuid) but not secret, and this project has no
+        // `realtime.messages` authorization policy — so a client holding the
+        // shipped anon key and someone's id could subscribe to their invites or
+        // broadcast a spoofed frame at them. `ShellModel` is the mitigation
+        // that ships with this item: an invite whose `hostID` is not an
+        // accepted friend is dropped, so a spoofed frame reaches no banner and
+        // a code read off the topic still buys nothing the sender did not
+        // already have. Upgrade to `config.isPrivate = true` together with a
+        // `realtime.messages` policy — which is a migration, and this item may
+        // not write one. Setting `isPrivate` without the policy breaks invites.
         channel = realtime.channel(Self.topic(for: userID)) { config in
             // Nobody invites themselves, and an echo would put a banner over
             // the host's own lobby.

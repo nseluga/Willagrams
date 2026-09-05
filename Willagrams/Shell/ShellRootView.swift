@@ -58,6 +58,10 @@ struct ShellRootView: View {
                     .font(DesignTokens.Typography.body)
                     .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
+                    // The length clamp is `MatchInvite`'s, not this view's.
+                    // This is the second half of it: even a clamped name must
+                    // not push Join off the screen by wrapping.
+                    .lineLimit(2)
 
                 Spacer(minLength: DesignTokens.Space.m)
 

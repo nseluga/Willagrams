@@ -332,10 +332,14 @@ public final class ShellModel {
     @ObservationIgnored private var inviteExpiry: Task<Void, Never>?
     @ObservationIgnored private var inviteSend: Task<Void, Never>?
 
-    /// Every match already offered as a banner this session. Broadcast promises
-    /// no ordering and no exactly-once, so "at most one banner per match" is a
-    /// set here rather than an assumption about the wire.
-    @ObservationIgnored private var bannered: Set<UUID> = []
+    /// Every match already offered as a banner, against when it was offered.
+    /// Broadcast promises no ordering and no exactly-once, so "at most one
+    /// banner per match" is remembered here rather than assumed of the wire.
+    ///
+    /// Dated rather than a bare set so it cannot grow for the life of the
+    /// process: an entry older than an invite's lifetime can never suppress a
+    /// live invite, so it is dropped on the next arrival.
+    @ObservationIgnored private var bannered: [UUID: Date] = [:]
 
     /// The invite whose join is in flight, or nil. A hand-typed code's failure
     /// is the join screen's own message and nothing more; only an invite's
@@ -349,9 +353,40 @@ public final class ShellModel {
     public static let inviteOverMessage = "That game is over."
     public static let inviteJoinLabel = "Join"
 
+    /// Said to the host, not the friend: the invite did not leave this device.
+    /// One line for both ways that happens — no channel to send on, and a send
+    /// that threw — because the player's next move is the same either way.
+    public static let inviteSendFailedMessage = "Could not send that invite."
+
     /// What the banner says. Pure, so the copy is testable without a model.
     public static func inviteLine(_ invite: MatchInvite) -> String {
         "\(invite.hostName) wants to play"
+    }
+
+    /// How old an invite is by the local clock, never negative.
+    ///
+    /// The clamp is the whole point: the two clocks are the sender's and the
+    /// recipient's, and a recipient running a little behind would otherwise see
+    /// every invite as arriving from the future.
+    ///
+    /// ponytail: only the future half is clamped. A recipient whose clock runs
+    /// more than two minutes *fast* still drops every invite, and nothing on
+    /// the client can tell that apart from a genuinely stale one. Upgrade when
+    /// the frame carries a server timestamp to measure against.
+    private func age(of invite: MatchInvite) -> TimeInterval {
+        max(0, now().timeIntervalSince(invite.sentAt))
+    }
+
+    /// Whether the sender is someone this player has actually accepted.
+    ///
+    /// The sender's client already refuses to invite a stranger, but that is
+    /// the attacker's own copy of the rule: the topic is named for a player id,
+    /// and a friend code resolves to one. This is the half that holds.
+    private func isAcceptedFriend(_ hostID: UUID) async -> Bool {
+        guard let backend = services.backend, let me = currentProfile else { return false }
+        guard hostID != me.id else { return false }
+        guard let rows = try? await backend.friendships() else { return false }
+        return rows.contains { $0.status == .accepted && $0.other(than: me.id) == hostID }
     }
 
     /// The four screens an invite may interrupt.
@@ -372,13 +407,49 @@ public final class ShellModel {
         guard inviteChannel == nil, let make = services.inviteChannel else { return }
         let channel = make(profile.id)
         inviteChannel = channel
+        let sleepFor = sleepFor
         inviteTask = Task { @MainActor [weak self] in
-            do { try await channel.subscribe() } catch { return }
+            // A socket that is down at sign-in is the common failure, and it is
+            // transient. Without the retry one refused subscribe would kill
+            // invites for the whole session, silently — the channel would still
+            // be non-nil and nothing else ever opens one.
+            var subscribed = false
+            var backoff = Duration.seconds(1)
+            for attempt in 0 ..< Self.inviteSubscribeAttempts {
+                do {
+                    try await channel.subscribe()
+                    subscribed = true
+                    break
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    if attempt < Self.inviteSubscribeAttempts - 1 {
+                        try? await sleepFor(backoff)
+                        backoff *= 2
+                    }
+                }
+            }
+            guard subscribed else {
+                // Left in a state a later sign-in can open a channel from,
+                // rather than one holding a channel that never subscribed.
+                self?.forgetInviteChannel()
+                channel.leave()
+                return
+            }
             for await invite in channel.invites {
                 guard !Task.isCancelled, let self else { return }
-                self.inviteArrived(invite)
+                await self.inviteArrived(invite)
             }
         }
+    }
+
+    /// How many times a refused subscribe is retried before invites are given
+    /// up on for this sign-in.
+    static let inviteSubscribeAttempts = 3
+
+    /// Drops the channel reference without touching the channel — the pump
+    /// closes it itself, and this is only about not holding a dead one.
+    private func forgetInviteChannel() {
+        inviteChannel = nil
     }
 
     /// Closes the channel and forgets everything it produced. The sign-out
@@ -400,14 +471,37 @@ public final class ShellModel {
 
     /// One invite off the wire. Every reason to say nothing is decided here, so
     /// the banner the view draws is never a view's judgement.
-    func inviteArrived(_ invite: MatchInvite) {
-        guard Self.showsInvites(route) else { return }
-        guard !bannered.contains(invite.matchID) else { return }
-        guard now().timeIntervalSince(invite.sentAt) < Self.inviteLifetime else { return }
-        bannered.insert(invite.matchID)
+    func inviteArrived(_ invite: MatchInvite) async {
+        guard canBanner(invite) else { return }
+        // The one check that cannot be made locally. Everything above it is
+        // cheap and synchronous on purpose, so a flood of junk on the topic
+        // costs no round trips.
+        guard await isAcceptedFriend(invite.hostID) else { return }
+        // Re-read after the await: the player may have started a match, or a
+        // different invite may have taken the banner, while this was in flight.
+        guard canBanner(invite) else { return }
+
+        let now = now()
+        bannered = bannered.filter { now.timeIntervalSince($0.value) < Self.inviteLifetime }
+        bannered[invite.matchID] = now
         inviteMessage = nil
         inviteBanner = invite
         armInviteExpiry(invite)
+    }
+
+    /// Every local reason to say nothing. Read twice by ``inviteArrived(_:)``,
+    /// because each of these can change while the friendship check is in
+    /// flight.
+    private func canBanner(_ invite: MatchInvite) -> Bool {
+        guard Self.showsInvites(route) else { return false }
+        // One at a time, as the doc on ``inviteBanner`` says: a second invite
+        // replaces nothing. Swapping the banner between the read and the tap
+        // would make Join enter a match the player never agreed to, and
+        // broadcast does not order its messages.
+        guard inviteBanner == nil else { return false }
+        guard bannered[invite.matchID] == nil else { return false }
+        guard age(of: invite) < Self.inviteLifetime else { return false }
+        return true
     }
 
     /// Wakes once, when this invite would be too old to answer.
@@ -417,7 +511,7 @@ public final class ShellModel {
     /// test's sleep does nothing.
     private func armInviteExpiry(_ invite: MatchInvite) {
         inviteExpiry?.cancel()
-        let remaining = Self.inviteLifetime - now().timeIntervalSince(invite.sentAt)
+        let remaining = Self.inviteLifetime - age(of: invite)
         let sleepFor = sleepFor
         inviteExpiry = Task { @MainActor [weak self] in
             try? await sleepFor(.seconds(max(0, remaining)))
@@ -430,7 +524,7 @@ public final class ShellModel {
     /// no-op on a banner that is still good.
     func expireInviteBanner() {
         guard let invite = inviteBanner else { return }
-        guard now().timeIntervalSince(invite.sentAt) >= Self.inviteLifetime else { return }
+        guard age(of: invite) >= Self.inviteLifetime else { return }
         inviteBanner = nil
         inviteMessage = Self.inviteOverMessage
     }
@@ -450,7 +544,7 @@ public final class ShellModel {
         inviteExpiry = nil
 
         // Aged out between the banner going up and the tap landing.
-        guard now().timeIntervalSince(invite.sentAt) < Self.inviteLifetime else {
+        guard age(of: invite) < Self.inviteLifetime else {
             inviteMessage = Self.inviteOverMessage
             return false
         }
@@ -496,7 +590,10 @@ public final class ShellModel {
     public func invitePlay(_ entry: FriendEntry) -> Bool {
         guard case .friends = route else { return false }
         guard entry.friendship.status == .accepted else { return false }
-        guard let channel = inviteChannel, let me = currentProfile else { return false }
+        guard let channel = inviteChannel, let me = currentProfile else {
+            inviteMessage = Self.inviteSendFailedMessage
+            return false
+        }
 
         returnToMenu()
         guard playAFriend(), let lobby = hostLobby else { return false }
@@ -509,15 +606,25 @@ public final class ShellModel {
         inviteSend = Task { @MainActor [weak self] in
             await lobby.work?.value
             guard !Task.isCancelled, let self, self.hostLobby === lobby else { return }
-            guard let code = lobby.inviteCode, let matchID = lobby.match?.record.id else { return }
-            try? await channel.send(
-                MatchInvite(
-                    matchID: matchID,
-                    inviteCode: code,
-                    hostID: me.id,
-                    hostName: me.displayName,
-                    sentAt: now()),
-                to: recipient)
+            guard let code = lobby.inviteCode, let matchID = lobby.match?.record.id else {
+                self.inviteMessage = Self.inviteSendFailedMessage
+                return
+            }
+            do {
+                try await channel.send(
+                    MatchInvite(
+                        matchID: matchID,
+                        inviteCode: code,
+                        hostID: me.id,
+                        hostName: me.displayName,
+                        sentAt: now()),
+                    to: recipient)
+            } catch {
+                // The lobby is still good — the code is on screen and can be
+                // read out — so this says the invite did not go, and nothing
+                // more.
+                self.inviteMessage = Self.inviteSendFailedMessage
+            }
         }
         return true
     }
@@ -831,6 +938,11 @@ public final class ShellModel {
         inviteSend?.cancel()
         inviteSend = nil
         joiningInvite = nil
+        // "That game is over." is about the screen the player just left. Left
+        // pinned it would sit over the menu for the rest of the session; the
+        // two callers that mean to say it — ``joinInvite()`` and
+        // ``joinFailed(_:)`` — set it after this runs.
+        inviteMessage = nil
         endSoloPractice()
         // Reaching the menu is what makes every end screen stale: the run they
         // were built for is gone and cannot come back. The bump is here rather

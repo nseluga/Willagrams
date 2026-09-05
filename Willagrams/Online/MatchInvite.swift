@@ -37,6 +37,10 @@ public struct MatchInvite: Sendable, Equatable, Identifiable {
     /// The host's display name, carried rather than looked up: the banner says
     /// who is asking, and a profile read on the way to drawing it would leave
     /// the banner nameless for as long as the round trip took.
+    ///
+    /// Clamped by ``init(matchID:inviteCode:hostID:hostName:sentAt:)`` — see
+    /// ``hostNameLimit``. Carried means attacker-chosen, and the banner is the
+    /// only thing drawn over four screens.
     public let hostName: String
 
     /// When the host sent it, by the *host's* clock. Age is decided against an
@@ -45,11 +49,20 @@ public struct MatchInvite: Sendable, Equatable, Identifiable {
 
     public var id: UUID { matchID }
 
+    /// The most of a sender's name that is ever shown. Long enough for a real
+    /// display name and short enough that no name can grow the banner over the
+    /// screen and push Join out of reach.
+    public static let hostNameLimit = 40
+
+    /// Clamps the name here rather than at the one place that draws it: every
+    /// invite — off the wire, off the fake bus, out of a test — goes through
+    /// this initialiser, and a view that owned the rule would be one screen's
+    /// opinion rather than the value's own.
     public init(matchID: UUID, inviteCode: String, hostID: UUID, hostName: String, sentAt: Date) {
         self.matchID = matchID
         self.inviteCode = inviteCode
         self.hostID = hostID
-        self.hostName = hostName
+        self.hostName = String(hostName.filter { !$0.isNewline }.prefix(Self.hostNameLimit))
         self.sentAt = sentAt
     }
 }
