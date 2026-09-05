@@ -25,9 +25,9 @@ struct FriendsModelTests {
         let f = try await FriendsFixture.make()
         let model = await Self.loaded(f)
 
-        #expect(model.accepted.map(\.id) == [f.friend.id])
-        #expect(model.incoming.map(\.id) == [f.asker.id])
-        #expect(model.outgoing.map(\.id) == [f.asked.id])
+        #expect(model.accepted.map(\.profile.id) == [f.friend.id])
+        #expect(model.incoming.map(\.profile.id) == [f.asker.id])
+        #expect(model.outgoing.map(\.profile.id) == [f.asked.id])
         #expect(model.message == nil)
         #expect(!model.isEmpty)
     }
@@ -60,8 +60,8 @@ struct FriendsModelTests {
         // renames `friend` so those two orders disagree — the accepted row is
         // the older of the pair and the later name.
         #expect(f.asker.displayName < f.friend.displayName, "the fixture's names no longer disagree with row order")
-        #expect(model.accepted.map(\.id) == [f.asker.id, f.friend.id])
-        #expect(model.outgoing.map(\.id) == [f.asked.id], "accepting must not disturb the other sections")
+        #expect(model.accepted.map(\.profile.id) == [f.asker.id, f.friend.id])
+        #expect(model.outgoing.map(\.profile.id) == [f.asked.id], "accepting must not disturb the other sections")
 
         // The move is the database's, not the model's: the row itself now reads
         // accepted when read back through the seam.
@@ -83,8 +83,8 @@ struct FriendsModelTests {
         await model.decline(request)
 
         #expect(model.incoming.isEmpty)
-        #expect(!model.accepted.contains { $0.id == f.asker.id })
-        #expect(!model.outgoing.contains { $0.id == f.asker.id })
+        #expect(!model.accepted.contains { $0.profile.id == f.asker.id })
+        #expect(!model.outgoing.contains { $0.profile.id == f.asker.id })
     }
 
     @Test("Blocking a friend takes them out of the accepted section")
@@ -96,8 +96,8 @@ struct FriendsModelTests {
         await model.block(friend)
 
         #expect(model.accepted.isEmpty)
-        #expect(model.incoming.map(\.id) == [f.asker.id], "blocking must not disturb the other sections")
-        #expect(model.outgoing.map(\.id) == [f.asked.id])
+        #expect(model.incoming.map(\.profile.id) == [f.asker.id], "blocking must not disturb the other sections")
+        #expect(model.outgoing.map(\.profile.id) == [f.asked.id])
     }
 
     // MARK: - done when: blocked players are hidden everywhere
@@ -115,8 +115,8 @@ struct FriendsModelTests {
                 == [f.blockedThem.id, f.blockedByMe.id])
 
         for section in [model.accepted, model.incoming, model.outgoing] {
-            #expect(!section.contains { $0.id == f.blockedThem.id })
-            #expect(!section.contains { $0.id == f.blockedByMe.id })
+            #expect(!section.contains { $0.profile.id == f.blockedThem.id })
+            #expect(!section.contains { $0.profile.id == f.blockedByMe.id })
         }
     }
 
@@ -149,8 +149,8 @@ struct FriendsModelTests {
         await model.load()
 
         #expect(model.message == FriendsModel.loadFailedMessage)
-        #expect(model.accepted.map(\.id) == [f.friend.id], "a failed read must not blank the list")
-        #expect(model.incoming.map(\.id) == [f.asker.id])
+        #expect(model.accepted.map(\.profile.id) == [f.friend.id], "a failed read must not blank the list")
+        #expect(model.incoming.map(\.profile.id) == [f.asker.id])
 
         // And the line goes away once a read works again, rather than sticking
         // to the screen for the rest of the visit.

@@ -157,6 +157,8 @@ struct SourceGuardrailTests {
         let view = try Self.text("FriendsView.swift")
         #expect(view.contains("let onBack: () -> Void"))
         #expect(view.contains("onBack: onBack"))
+        // The one irreversible action on the screen says so before it is tapped.
+        #expect(view.contains("FriendsModel.declineFootnote"))
     }
 
     /// The three seam calls are the only way this model touches `friendships`.
@@ -169,7 +171,7 @@ struct SourceGuardrailTests {
         let model = try Self.text("FriendsModel.swift")
 
         // Presence: the three calls really are the ones being made.
-        for call in ["backend.friendships()", "profile(id: them)",
+        for call in ["backend.friendships()", "backend.profile(id: id)",
                      "respondToFriendRequest(", "block(entry.profile.id)"] {
             #expect(model.contains(call), "FriendsModel no longer calls \(call)")
         }

@@ -92,7 +92,7 @@ struct FriendsRouteTests {
 
         // Incoming, not outgoing: the model was built for the shell's own id,
         // so the direction it read the row from is the signed-in player's.
-        #expect(screen.incoming.map(\.id) == [asker.id])
+        #expect(screen.incoming.map(\.profile.id) == [asker.id])
         #expect(screen.outgoing.isEmpty)
 
         f.shell.returnToMenu()

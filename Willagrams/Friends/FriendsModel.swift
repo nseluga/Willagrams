@@ -26,7 +26,9 @@ public struct FriendEntry: Identifiable, Sendable, Equatable {
     public let profile: Profile
     public let friendship: Friendship
 
-    public var id: UUID { profile.id }
+    /// The *row*, not the player: a pair can hold more than one row and two
+    /// entries sharing a counterpart must still be two rows in a `ForEach`.
+    public var id: String { "\(friendship.requesterID)|\(friendship.addresseeID)" }
 
     public init(profile: Profile, friendship: Friendship) {
         self.profile = profile
@@ -67,6 +69,24 @@ public final class FriendsModel {
     @ObservationIgnored private let me: UUID
     @ObservationIgnored private let backend: any BackendClient
 
+    /// Counterparts already resolved, for the life of this screen. An action
+    /// re-reads every row, and re-reading a row must not re-read a name that has
+    /// not changed since the screen opened.
+    @ObservationIgnored private var profiles: [UUID: Profile] = [:]
+
+    /// Loads and actions in flight. `isLoading` is "any of them", so a load
+    /// finishing while another runs does not put the spinner away.
+    @ObservationIgnored private var inFlight = 0
+
+    /// Bumped by every load; only the newest one publishes. Two overlapping
+    /// loads can finish in either order, and the older one's sections are stale
+    /// whichever order that is.
+    @ObservationIgnored private var generation = 0
+
+    /// How many counterpart profiles are read at once. Bounded because a long
+    /// list would otherwise open one connection per friend.
+    private static let profileFetchLimit = 8
+
     public init(me: UUID, backend: any BackendClient) {
         self.me = me
         self.backend = backend
@@ -86,20 +106,21 @@ public final class FriendsModel {
     /// either direction — whether this player blocked them or they blocked this
     /// player.
     public func load() async {
-        isLoading = true
-        defer { isLoading = false }
+        generation += 1
+        let mine = generation
+        begin()
+        defer { end() }
 
         let rows: [Friendship]
         do {
             rows = try await backend.friendships()
         } catch {
+            guard !Task.isCancelled else { return }
             message = Self.loadFailedMessage
             return
         }
 
-        var accepted: [FriendEntry] = []
-        var incoming: [FriendEntry] = []
-        var outgoing: [FriendEntry] = []
+        var placed: [(section: Section, row: Friendship, them: UUID)] = []
 
         for row in rows {
             // One place decides where a row goes, including nowhere. A second
@@ -114,13 +135,33 @@ public final class FriendsModel {
             }
 
             guard let section, let them = row.other(than: me) else { continue }
+            placed.append((section, row, them))
+        }
+
+        // Every counterpart this screen has not seen yet, once each and in
+        // parallel — one round trip per row, in series, is what makes a list of
+        // twenty friends feel like a list of twenty loads.
+        let unresolved = Set(placed.map(\.them)).subtracting(profiles.keys)
+        let (fetched, failures) = await Self.fetch(unresolved, from: backend)
+
+        // Nothing below this line runs for a load that has been cancelled or
+        // overtaken: a cancelled load's rows are truncated and an overtaken
+        // one's are stale, and either would be assigned over good sections.
+        guard !Task.isCancelled, generation == mine else { return }
+        profiles.merge(fetched) { _, new in new }
+
+        var accepted: [FriendEntry] = []
+        var incoming: [FriendEntry] = []
+        var outgoing: [FriendEntry] = []
+
+        for item in placed {
             // A counterpart whose profile cannot be read is dropped rather than
             // failing the whole list: one unreadable row must not empty a
-            // screen that has ten good ones on it.
-            guard let profile = try? await backend.profile(id: them) else { continue }
-
-            let entry = FriendEntry(profile: profile, friendship: row)
-            switch section {
+            // screen that has ten good ones on it. It is said out loud, though
+            // — a friend silently missing is worse than a slow one.
+            guard let profile = profiles[item.them] else { continue }
+            let entry = FriendEntry(profile: profile, friendship: item.row)
+            switch item.section {
             case .accepted: accepted.append(entry)
             case .incoming: incoming.append(entry)
             case .outgoing: outgoing.append(entry)
@@ -132,7 +173,44 @@ public final class FriendsModel {
         self.accepted = accepted.sorted(by: Self.byName)
         self.incoming = incoming.sorted(by: Self.byName)
         self.outgoing = outgoing.sorted(by: Self.byName)
-        message = nil
+        message = failures > 0 ? Self.partialLoadMessage : nil
+    }
+
+    /// Reads `ids` through the seam, `profileFetchLimit` at a time, and reports
+    /// how many could not be read.
+    private static func fetch(
+        _ ids: Set<UUID>,
+        from backend: any BackendClient
+    ) async -> (profiles: [UUID: Profile], failures: Int) {
+        let ids = Array(ids)
+        var profiles: [UUID: Profile] = [:]
+        var failures = 0
+
+        await withTaskGroup(of: (UUID, Profile?).self) { group in
+            var next = 0
+            func addNext() {
+                guard next < ids.count else { return }
+                let id = ids[next]
+                next += 1
+                group.addTask { (id, try? await backend.profile(id: id)) }
+            }
+            for _ in 0..<min(Self.profileFetchLimit, ids.count) { addNext() }
+            while let (id, profile) = await group.next() {
+                if let profile { profiles[id] = profile } else { failures += 1 }
+                addNext()
+            }
+        }
+        return (profiles, failures)
+    }
+
+    private func begin() {
+        inFlight += 1
+        isLoading = true
+    }
+
+    private func end() {
+        inFlight -= 1
+        if inFlight == 0 { isLoading = false }
     }
 
     private static func byName(_ a: FriendEntry, _ b: FriendEntry) -> Bool {
@@ -179,15 +257,16 @@ public final class FriendsModel {
         failure: String,
         _ write: (any BackendClient) async throws -> Void
     ) async {
-        isLoading = true
+        // Held across the write *and* its reload, so the spinner never blinks
+        // off between the two and the empty state never flashes in the gap.
+        begin()
+        defer { end() }
         do {
             try await write(backend)
         } catch {
-            isLoading = false
             message = failure
             return
         }
-        isLoading = false
         await load()
     }
 
@@ -200,11 +279,16 @@ public final class FriendsModel {
     public static let incomingSectionTitle = "Wants to be friends"
     public static let outgoingSectionTitle = "Asked"
     public static let acceptLabel = "Accept"
-    public static let declineLabel = "Decline"
+    /// Says what it does. The seam answers a decline with a block, so a button
+    /// reading "Decline" would be the one word that hides the only irreversible
+    /// thing on this screen.
+    public static let declineLabel = "Decline & block"
+    public static let declineFootnote = "Declining blocks that player. It can't be undone here."
     public static let blockLabel = "Block"
     public static let backLabel = "Done"
     public static let emptyMessage = "No friends yet. Share your friend code to add one."
     public static let loadFailedMessage = "Couldn't load your friends. Try again."
+    public static let partialLoadMessage = "Some friends couldn't be loaded. Try again."
     public static let acceptFailedMessage = "Couldn't accept that request. Try again."
     public static let declineFailedMessage = "Couldn't decline that request. Try again."
     public static let blockFailedMessage = "Couldn't block that player. Try again."

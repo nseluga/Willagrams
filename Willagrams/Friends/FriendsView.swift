@@ -49,6 +49,15 @@ struct FriendsView: View {
                         .buttonStyle(.brandQuiet)
                     }
 
+                    // Said before the tap, not after it: a decline is a block at
+                    // the seam and nothing on this screen takes one back.
+                    if !model.incoming.isEmpty {
+                        Text(FriendsModel.declineFootnote)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     section(FriendsModel.acceptedSectionTitle, model.accepted) { entry in
                         Button(FriendsModel.blockLabel) {
                             Task { await model.block(entry) }
