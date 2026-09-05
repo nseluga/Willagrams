@@ -124,9 +124,13 @@ public final class MatchRun {
         self.seed = setup.seed
         self.dictionary = dictionary
         self.opponent = opponent
-        let board = MatchBoard(session: opponent.session, dictionary: dictionary)
+        let board = MatchBoard(
+            session: opponent.session, dictionary: dictionary, audio: shell.services.audio
+        )
         self.board = board
-        self.hud = MatchHUDModel(shell: shell, session: opponent.session, board: board)
+        self.hud = MatchHUDModel(
+            shell: shell, session: opponent.session, board: board, audio: shell.services.audio
+        )
     }
 
     /// A run over a solo match this builds itself. The one path that names a

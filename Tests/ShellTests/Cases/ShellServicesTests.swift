@@ -20,15 +20,24 @@ extension FakeBackend: ShellSignIn {
 final class RecordingAudioPlayer: AudioPlayer, @unchecked Sendable {
     private let lock = NSLock()
     private var played: [SoundEffect] = []
+    /// Haptics are recorded too. `impact` is the only cue the shell fires that
+    /// makes no sound, and UIKit is not on this test host — an ignored `impact`
+    /// would make "the win buzzes and a tile does not" unassertable.
+    private var hits: [HapticStrength] = []
     private var muted: Bool
 
     init(muted: Bool = false) { self.muted = muted }
 
     var effects: [SoundEffect] { lock.withLock { played } }
+    var impacts: [HapticStrength] { lock.withLock { hits } }
     var isMuted: Bool { lock.withLock { muted } }
     func play(_ effect: SoundEffect) { lock.withLock { played.append(effect) } }
-    func impact(_ strength: HapticStrength) {}
+    func impact(_ strength: HapticStrength) { lock.withLock { hits.append(strength) } }
     func setMuted(_ muted: Bool) { lock.withLock { self.muted = muted } }
+
+    /// Empties both logs. Lets one test assert on a window of a longer run
+    /// without asserting on everything that came before it.
+    func forget() { lock.withLock { played = []; hits = [] } }
 }
 
 /// A sign-in that always fails the same way.

@@ -13,6 +13,9 @@ import Friends
 #if canImport(UIKit)
 import UIKit
 #endif
+#if canImport(Audio)
+import Audio
+#endif
 
 import Foundation
 import Observation
@@ -210,6 +213,7 @@ public final class ShellModel {
         guard case .menu = route, canPlayOnline, let backend = services.backend else {
             return false
         }
+        services.audio.play(.menuTap)
         join = JoinModel(
             shell: self,
             backend: backend,
@@ -240,6 +244,7 @@ public final class ShellModel {
     @discardableResult
     public func showProfile() -> Bool {
         guard case .menu = route, let currentProfile else { return false }
+        services.audio.play(.menuTap)
         profile = ProfileModel(
             profile: currentProfile,
             isEditable: true,
@@ -301,6 +306,7 @@ public final class ShellModel {
         guard case .menu = route, let currentProfile, let backend = services.backend else {
             return false
         }
+        services.audio.play(.menuTap)
         friends = FriendsModel(me: currentProfile, backend: backend)
         route = .friends
         return true
@@ -689,6 +695,7 @@ public final class ShellModel {
     /// a stray tap on a stale control.
     public func showSoloSetup() {
         guard case .menu = route else { return }
+        services.audio.play(.menuTap)
         // Entry is where the stored rules are read, so the screen opens on what
         // was last chosen — here or in a host lobby — rather than on defaults.
         soloSetup.loadOptions()
@@ -700,6 +707,7 @@ public final class ShellModel {
     /// is the way back.
     public func showHowToPlay() {
         guard case .menu = route else { return }
+        services.audio.play(.menuTap)
         route = .howToPlay
     }
 
@@ -726,6 +734,7 @@ public final class ShellModel {
         guard case .menu = route, canPlayOnline, let backend = services.backend else {
             return false
         }
+        services.audio.play(.menuTap)
         dropInviteBanner()
         let lobby = HostLobbyModel(
             shell: self,
@@ -901,7 +910,14 @@ public final class ShellModel {
     /// it does, so the check hops to the next main-actor turn — where the new
     /// status is readable — and re-arms there. The generation guard is what stops
     /// a superseded run's last callback yanking a newer match's route.
-    private func advanceWhenCountdownEnds(_ run: MatchRun, generation: Int) {
+    ///
+    /// It is also where the count is *heard*. The tick belongs to whatever owns
+    /// the seconds, and nothing else in the shell does: `CountdownOverlay` is a
+    /// value a view body builds — once per render, not once per second — so a
+    /// cue there would fire on every layout pass and none at all in a test.
+    /// `lastTick` rides the re-arm rather than being stored, so a second that
+    /// is merely re-read is silent and there is nothing to reset between runs.
+    private func advanceWhenCountdownEnds(_ run: MatchRun, generation: Int, lastTick: Int? = nil) {
         withObservationTracking {
             _ = run.session.state.status
             _ = run.session.isMatchOver
@@ -910,10 +926,13 @@ public final class ShellModel {
                 guard let self, self.isLiveGeneration(generation) else { return }
                 guard case .countdown = self.route else { return }
                 // A card still up means the count is still running.
-                guard CountdownOverlay(session: run.session) == nil else {
-                    return self.advanceWhenCountdownEnds(run, generation: generation)
+                guard let card = CountdownOverlay(session: run.session) else {
+                    return self.countdownFinished()
                 }
-                self.countdownFinished()
+                if card.secondsRemaining != lastTick { self.services.audio.play(.countdownTick) }
+                return self.advanceWhenCountdownEnds(
+                    run, generation: generation, lastTick: card.secondsRemaining
+                )
             }
         }
     }
@@ -947,15 +966,40 @@ public final class ShellModel {
                 // `.match`. Finishing the countdown first is what stops that
                 // ending being swallowed.
                 if case .countdown = self.route { self.countdownFinished() }
-                self.matchEnded(winner: run.session.winner)
+                self.matchEnded(
+                    winner: run.session.winner, localPlayerID: run.session.localPlayerID
+                )
             }
         }
     }
 
     /// Match → results. Only reachable from a match, so results can never show
     /// an outcome for a match that never ran.
-    public func matchEnded(winner: PlayerID?) {
+    /// - Parameter localPlayerID: who "this device" is, for the outcome the
+    ///   ending is sounded from. Defaults to the live run's, which is the only
+    ///   answer when the ending arrived from the far end; ``MatchHUDModel``
+    ///   passes its own session's, so a HUD over a session the shell did not
+    ///   build still sounds the right ending.
+    public func matchEnded(winner: PlayerID?, localPlayerID: PlayerID? = nil) {
         guard case .match = route else { return }
+        // Here, not in `ResultsModel.init`: that type is built by a factory
+        // SwiftUI calls again on every re-render, and a cue in it would replay
+        // the ending on every body. This runs once per match, on the one
+        // transition into the end screen, and reads the same mapping the screen
+        // renders from — there is no second rule about who won.
+        if let localPlayerID = localPlayerID ?? run?.session.localPlayerID {
+            switch ResultsModel.Outcome(winner: winner, localPlayerID: localPlayerID) {
+            case .localWin:
+                services.audio.play(.win)
+                // The one haptic the shell fires. Tiles have their own, from
+                // `BoardHaptics`, and nothing here doubles it.
+                services.audio.impact(.medium)
+            case .peerWin: services.audio.play(.loss)
+            // Neither a win nor a loss, so neither sound. A peer that walked
+            // away is not an outcome to celebrate or mourn.
+            case .noWinner: break
+            }
+        }
         route = .results(winner: winner)
     }
 

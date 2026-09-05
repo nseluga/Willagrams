@@ -25,6 +25,9 @@ import BoardKit
 #if canImport(Style)
 import Style
 #endif
+#if canImport(Audio)
+import Audio
+#endif
 
 import Foundation
 import Observation
@@ -76,6 +79,10 @@ public final class MatchHUDModel {
     @discardableResult
     private func refuse() -> Bool {
         completionAttempts += 1
+        // Every refusal the HUD counts is a refusal the player hears. Here
+        // rather than at the three call sites, so a fourth control that refuses
+        // cannot be added silent.
+        audio.play(.invalid)
         return false
     }
 
@@ -83,10 +90,21 @@ public final class MatchHUDModel {
     @ObservationIgnored private let session: MatchSession
     @ObservationIgnored private let board: MatchBoard
 
-    public init(shell: ShellModel, session: MatchSession, board: MatchBoard) {
+    /// The one injected player, handed down by ``MatchRun``. Held rather than
+    /// read off ``shell``: that reference is `unowned`, and a control pressed
+    /// on a HUD whose shell has gone would trap on the way to a sound.
+    @ObservationIgnored private let audio: any AudioPlayer
+
+    public init(
+        shell: ShellModel,
+        session: MatchSession,
+        board: MatchBoard,
+        audio: any AudioPlayer = SilentAudioPlayer()
+    ) {
         self.shell = shell
         self.session = session
         self.board = board
+        self.audio = audio
     }
 
     // MARK: - Pool
@@ -196,6 +214,7 @@ public final class MatchHUDModel {
         // would let them. The pool went down by two, no letter arrived, and
         // nothing could ever move again.
         guard isDrawEnabled, session.draw() else { return refuse() }
+        audio.play(.draw)
         return true
     }
 
@@ -233,7 +252,7 @@ public final class MatchHUDModel {
     public func claimWin() -> Bool {
         resignArmed = false
         guard isWinEnabled, board.canDraw, session.claimWin() else { return refuse() }
-        shell.matchEnded(winner: session.winner)
+        shell.matchEnded(winner: session.winner, localPlayerID: session.localPlayerID)
         return true
     }
 
@@ -334,6 +353,7 @@ public final class MatchHUDModel {
             }
             return false
         }
+        audio.play(.swap)
         return true
     }
 
@@ -364,7 +384,7 @@ public final class MatchHUDModel {
         guard resignArmed else { return false }
         resignArmed = false
         guard session.resign() else { return false }
-        shell.matchEnded(winner: session.winner)
+        shell.matchEnded(winner: session.winner, localPlayerID: session.localPlayerID)
         return true
     }
 }
