@@ -235,7 +235,7 @@ below the stop marker on the Apple Developer membership.
     - A `MatchRun` built from a test-double `MatchOpponent` walks countdown → match → results the same way the solo path does, proven by the existing route-transition tests run against the double
     - Rematching three times through the solo path still leaves exactly one live match
     - `swift test --package-path Tests/ShellTests` passes
-  status: not started
+  status: done
 
 - task: |
     Host a match from the menu and show the invite code.

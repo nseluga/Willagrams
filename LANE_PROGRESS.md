@@ -5,8 +5,8 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** round 3 in progress — item 1 of 12 done, none blocked. Run paused after item 1 at the user's request.
-- **Next:** item 2 — let `MatchRun` run a match it did not build (the `MatchOpponent` seam).
+- **Status:** round 3 in progress — items 1 and 2 of 12 done, none blocked.
+- **Next:** item 3 — host a match from the menu and show the invite code.
 - **Blockers:** none.
 - **Last updated:** 2026-09-04
 
@@ -15,7 +15,7 @@ LANE.md wins for scope.
 | Item | Status |
 |------|--------|
 | Build the app's services once, at the root, and inject them | done — The app now builds its backend connection, sound player and saved settings a single time when it launches and hands them to every screen, and in a development build it signs in automatically in the background so online features can switch on without ever making the menu wait. |
-| Let `MatchRun` run a match it did not build | not started |
+| Let `MatchRun` run a match it did not build | done — A running match is now handed its opponent from the outside instead of building one itself, so the same match screen can drive a practice game against the bot or a real person online, and the old opponent is always shut down before the next one starts. |
 | Host a match from the menu and show the invite code | not started |
 | Join a match by invite code | not started |
 | Show reconnecting, end on gone, and give online results a way home | not started |
