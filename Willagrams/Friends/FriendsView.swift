@@ -22,6 +22,12 @@ struct FriendsView: View {
     /// shell decides what it means, exactly as `onBack` works.
     let onOpen: (FriendEntry) -> Void
 
+    /// "Invite to play" on an accepted row. Reported like `onOpen`: hosting a
+    /// lobby and sending the invite are both the shell's, and this screen learns
+    /// neither. It is passed only to the accepted section, so a pending row has
+    /// no way to draw the button at all.
+    let onInvite: (FriendEntry) -> Void
+
     /// The code field, written through the model so the `A–Z0–9` clamp is the
     /// model's one rule rather than a second copy of it here.
     private var code: Binding<String> {
@@ -75,6 +81,9 @@ struct FriendsView: View {
                         model.accepted,
                         onOpen: onOpen
                     ) { entry in
+                        Button(FriendsModel.invitePlayLabel) { onInvite(entry) }
+                            .buttonStyle(.brandPrimary)
+
                         Button(FriendsModel.blockLabel) {
                             Task { await model.block(entry) }
                         }

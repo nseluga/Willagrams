@@ -17,6 +17,8 @@ import Audio
 import Settings
 #endif
 
+import Foundation
+
 /// The one sign-in the shell knows how to run.
 ///
 /// It exists because `signInAnonymously()` lives on the concrete
@@ -43,15 +45,25 @@ public struct ShellServices {
     /// Nil in Release, and in any build that chooses not to offer one.
     public let signIn: (any ShellSignIn)?
 
+    /// Builds the signed-in player's invite channel, given their id.
+    ///
+    /// A factory rather than a channel: the topic is named for the local user,
+    /// who is not known until sign-in lands, and nothing may open a channel
+    /// before then. Nil in a build with no realtime behind it, which is a shell
+    /// that simply never receives an invite.
+    public let inviteChannel: (@Sendable (UUID) -> any MatchInviteChannel)?
+
     public init(
         backend: (any BackendClient)? = nil,
         audio: any AudioPlayer = SilentAudioPlayer(),
         settings: SettingsStore? = nil,
-        signIn: (any ShellSignIn)? = nil
+        signIn: (any ShellSignIn)? = nil,
+        inviteChannel: (@Sendable (UUID) -> any MatchInviteChannel)? = nil
     ) {
         self.backend = backend
         self.audio = audio
         self.settings = settings
         self.signIn = signIn
+        self.inviteChannel = inviteChannel
     }
 }

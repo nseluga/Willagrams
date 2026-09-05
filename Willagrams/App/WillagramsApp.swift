@@ -24,7 +24,10 @@ struct WillagramsApp: App {
                     backend: backend,
                     audio: audio,
                     settings: SettingsStore(defaults: .standard),
-                    signIn: ShellServices.anonymousSignIn(backend)
+                    signIn: ShellServices.anonymousSignIn(backend),
+                    // A factory, not a channel: the topic is named for the
+                    // signed-in player, who is not known until sign-in lands.
+                    inviteChannel: { backend.inviteChannel(for: $0) }
                 )
             )
         )

@@ -197,6 +197,10 @@ public final class JoinModel {
                 match = nil
                 phase = .entering
                 message = HostLobbyModel.message(for: error)
+                // Reported, not decided: this screen does not know an invite
+                // exists. The shell owns whether a dead lobby means a banner to
+                // clear, and it ignores every join it did not start.
+                shell.joinFailed(error)
             }
             work = nil
         }

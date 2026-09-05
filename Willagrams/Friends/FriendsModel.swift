@@ -417,6 +417,9 @@ public final class FriendsModel {
     public static let declineLabel = "Decline & block"
     public static let declineFootnote = "Declining blocks that player. It can't be undone here."
     public static let blockLabel = "Block"
+    /// Only ever drawn on an accepted row — the screen passes it to that one
+    /// section, so a pending row cannot render it.
+    public static let invitePlayLabel = "Invite to play"
     public static let backLabel = "Done"
     public static let emptyMessage = "No friends yet. Share your friend code to add one."
     public static let loadFailedMessage = "Couldn't load your friends. Try again."

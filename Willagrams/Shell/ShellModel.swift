@@ -14,6 +14,7 @@ import Friends
 import UIKit
 #endif
 
+import Foundation
 import Observation
 import WillagramsRules
 
@@ -71,6 +72,10 @@ public final class ShellModel {
     @ObservationIgnored private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
     @ObservationIgnored private let seedSource: @MainActor () -> UInt64
 
+    /// The clock every invite's age is decided against. Injected, so "older than
+    /// two minutes" is a value a test sets rather than a wall-clock wait.
+    @ObservationIgnored private let now: @MainActor () -> Date
+
     /// The backend, player and settings store the root built. Screens read them
     /// from here; none of them constructs its own.
     @ObservationIgnored public let services: ShellServices
@@ -119,12 +124,14 @@ public final class ShellModel {
         seedSource: @escaping @MainActor () -> UInt64 = {
             UInt64.random(in: UInt64.min ... UInt64.max)
         },
+        now: @escaping @MainActor () -> Date = { Date() },
         services: ShellServices = ShellServices()
     ) {
         self.route = route
         self.dictionary = dictionary
         self.sleepFor = sleepFor
         self.seedSource = seedSource
+        self.now = now
         self.services = services
         self.soloSetup = SoloSetup(store: services.settings)
 
@@ -139,6 +146,9 @@ public final class ShellModel {
                 guard !Task.isCancelled, let self else { return }
                 currentProfile = profile
                 onlineUnavailableReason = nil
+                // The invite topic is named for the local user, so this is the
+                // first moment it can be opened at all.
+                startInviteChannel(for: profile)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 onlineUnavailableReason = Self.onlineUnavailableReason(for: error)
@@ -146,9 +156,20 @@ public final class ShellModel {
         }
     }
 
-    /// Cancels the sign-in the model started. A failed or cancelled sign-in is
-    /// a disabled menu with a reason — never a retry, never an alert.
-    deinit { signInTask?.cancel() }
+    /// Cancels the sign-in the model started, and closes the invite channel it
+    /// opened. A failed or cancelled sign-in is a disabled menu with a reason —
+    /// never a retry, never an alert.
+    ///
+    /// The channel is left here rather than only in ``endInviteChannel()``
+    /// because no channel may outlive this model: a subscription still on the
+    /// socket after the model has gone is one nothing can ever tear down.
+    deinit {
+        signInTask?.cancel()
+        inviteTask?.cancel()
+        inviteExpiry?.cancel()
+        inviteSend?.cancel()
+        inviteChannel?.leave()
+    }
 
     /// Whether `generation` is still the live one. Read by a
     /// ``MatchRun/results(board:)`` screen's closures, which must decline once
@@ -159,7 +180,18 @@ public final class ShellModel {
     /// menu button cannot yank a live match back to the start.
     public func startMatch(_ setup: MatchSetup) {
         guard case .menu = route else { return }
+        dropInviteBanner()
         route = .countdown(setup)
+    }
+
+    /// Takes any banner down on the way to a screen that must not carry one.
+    /// The same rule ``showsInvites(_:)`` states for arrival, applied to a
+    /// banner that was already up: a match is no place to be asked to join one.
+    private func dropInviteBanner() {
+        inviteExpiry?.cancel()
+        inviteExpiry = nil
+        inviteBanner = nil
+        inviteMessage = nil
     }
 
     /// The guest's join screen for this visit, or nil when it is not up. Like
@@ -284,6 +316,212 @@ public final class ShellModel {
         #endif
     }
 
+    // MARK: - Invites
+
+    /// The invite banner up right now, or nil. One at a time: a second invite
+    /// arriving replaces nothing — the first is still the one being answered.
+    public private(set) var inviteBanner: MatchInvite?
+
+    /// One line about an invite that came to nothing, or nil. Derived here for
+    /// the same reason ``onlineUnavailableReason`` is: a view holds no branch
+    /// that changes what the app says.
+    public private(set) var inviteMessage: String?
+
+    @ObservationIgnored private var inviteChannel: (any MatchInviteChannel)?
+    @ObservationIgnored private var inviteTask: Task<Void, Never>?
+    @ObservationIgnored private var inviteExpiry: Task<Void, Never>?
+    @ObservationIgnored private var inviteSend: Task<Void, Never>?
+
+    /// Every match already offered as a banner this session. Broadcast promises
+    /// no ordering and no exactly-once, so "at most one banner per match" is a
+    /// set here rather than an assumption about the wire.
+    @ObservationIgnored private var bannered: Set<UUID> = []
+
+    /// The invite whose join is in flight, or nil. A hand-typed code's failure
+    /// is the join screen's own message and nothing more; only an invite's
+    /// failure clears a banner.
+    @ObservationIgnored private var joiningInvite: MatchInvite?
+
+    /// How long an invite is worth showing. Past it the host has almost
+    /// certainly given up and cancelled the lobby.
+    public static let inviteLifetime: TimeInterval = 120
+
+    public static let inviteOverMessage = "That game is over."
+    public static let inviteJoinLabel = "Join"
+
+    /// What the banner says. Pure, so the copy is testable without a model.
+    public static func inviteLine(_ invite: MatchInvite) -> String {
+        "\(invite.hostName) wants to play"
+    }
+
+    /// The four screens an invite may interrupt.
+    ///
+    /// An allow-list, not a deny-list: a route added later is silent until
+    /// somebody decides it should not be, which is the safe way round for a
+    /// banner that must never land over a live match or a lobby.
+    static func showsInvites(_ route: AppRoute) -> Bool {
+        switch route {
+        case .menu, .friends, .profile, .join: true
+        default: false
+        }
+    }
+
+    /// Opens the local player's invite topic and pumps it. Called once, when
+    /// sign-in lands; ``endInviteChannel()`` and `deinit` are the ways out.
+    private func startInviteChannel(for profile: Profile) {
+        guard inviteChannel == nil, let make = services.inviteChannel else { return }
+        let channel = make(profile.id)
+        inviteChannel = channel
+        inviteTask = Task { @MainActor [weak self] in
+            do { try await channel.subscribe() } catch { return }
+            for await invite in channel.invites {
+                guard !Task.isCancelled, let self else { return }
+                self.inviteArrived(invite)
+            }
+        }
+    }
+
+    /// Closes the channel and forgets everything it produced. The sign-out
+    /// teardown, and idempotent — no channel and no banner survives it.
+    public func endInviteChannel() {
+        inviteTask?.cancel()
+        inviteTask = nil
+        inviteExpiry?.cancel()
+        inviteExpiry = nil
+        inviteSend?.cancel()
+        inviteSend = nil
+        inviteChannel?.leave()
+        inviteChannel = nil
+        inviteBanner = nil
+        inviteMessage = nil
+        joiningInvite = nil
+        bannered.removeAll()
+    }
+
+    /// One invite off the wire. Every reason to say nothing is decided here, so
+    /// the banner the view draws is never a view's judgement.
+    func inviteArrived(_ invite: MatchInvite) {
+        guard Self.showsInvites(route) else { return }
+        guard !bannered.contains(invite.matchID) else { return }
+        guard now().timeIntervalSince(invite.sentAt) < Self.inviteLifetime else { return }
+        bannered.insert(invite.matchID)
+        inviteMessage = nil
+        inviteBanner = invite
+        armInviteExpiry(invite)
+    }
+
+    /// Wakes once, when this invite would be too old to answer.
+    ///
+    /// The wake re-reads the clock rather than trusting the sleep: an injected
+    /// `sleepFor` returns at once, and a banner must not vanish just because a
+    /// test's sleep does nothing.
+    private func armInviteExpiry(_ invite: MatchInvite) {
+        inviteExpiry?.cancel()
+        let remaining = Self.inviteLifetime - now().timeIntervalSince(invite.sentAt)
+        let sleepFor = sleepFor
+        inviteExpiry = Task { @MainActor [weak self] in
+            try? await sleepFor(.seconds(max(0, remaining)))
+            guard !Task.isCancelled else { return }
+            self?.expireInviteBanner()
+        }
+    }
+
+    /// Clears the banner if it has aged out, and says so. Idempotent, and a
+    /// no-op on a banner that is still good.
+    func expireInviteBanner() {
+        guard let invite = inviteBanner else { return }
+        guard now().timeIntervalSince(invite.sentAt) >= Self.inviteLifetime else { return }
+        inviteBanner = nil
+        inviteMessage = Self.inviteOverMessage
+    }
+
+    /// The banner's Join: the join screen, on the host's code, joining at once.
+    ///
+    /// The banner is taken down first whatever happens — an invite is answered
+    /// exactly once, and a banner still up behind the join screen would be a
+    /// second answer waiting to happen.
+    ///
+    /// - Returns: whether the join screen opened.
+    @discardableResult
+    public func joinInvite() -> Bool {
+        guard let invite = inviteBanner else { return false }
+        inviteBanner = nil
+        inviteExpiry?.cancel()
+        inviteExpiry = nil
+
+        // Aged out between the banner going up and the tap landing.
+        guard now().timeIntervalSince(invite.sentAt) < Self.inviteLifetime else {
+            inviteMessage = Self.inviteOverMessage
+            return false
+        }
+
+        inviteMessage = nil
+        // The banner shows on four screens and `showJoin()` only moves from the
+        // menu, so this is what makes Join work from any of them — and it is
+        // the same teardown every other way home runs.
+        returnToMenu()
+        guard showJoin(), let join else { return false }
+        joiningInvite = invite
+        join.code = invite.inviteCode
+        join.join()
+        return true
+    }
+
+    /// A join that failed, reported by ``JoinModel``.
+    ///
+    /// Only the two refusals that mean the lobby is gone send the player home;
+    /// everything else — offline, a full match — leaves them on the join screen
+    /// with the screen's own message, where retyping or retrying still works.
+    func joinFailed(_ error: any Error) {
+        guard joiningInvite != nil else { return }
+        joiningInvite = nil
+        switch error as? BackendError {
+        case .notFound, .permissionDenied: break
+        default: return
+        }
+        returnToMenu()
+        inviteMessage = Self.inviteOverMessage
+    }
+
+    /// Friends → host a lobby and invite that friend into it.
+    ///
+    /// Only an accepted friendship: a pending row is somebody who has not agreed
+    /// to hear from this player yet. Only from the friends list, which is also
+    /// what makes a double tap harmless — the first tap leaves the route on
+    /// `.hostLobby`, so the second finds no friends list to act from and one
+    /// lobby carries at most one invite.
+    ///
+    /// - Returns: whether the lobby opened.
+    @discardableResult
+    public func invitePlay(_ entry: FriendEntry) -> Bool {
+        guard case .friends = route else { return false }
+        guard entry.friendship.status == .accepted else { return false }
+        guard let channel = inviteChannel, let me = currentProfile else { return false }
+
+        returnToMenu()
+        guard playAFriend(), let lobby = hostLobby else { return false }
+
+        let recipient = entry.profile.id
+        let now = now
+        // The code does not exist until the `matches` row has been written, and
+        // that write is the lobby's own task — so this waits on it rather than
+        // polling, and re-checks that the lobby is still the live one.
+        inviteSend = Task { @MainActor [weak self] in
+            await lobby.work?.value
+            guard !Task.isCancelled, let self, self.hostLobby === lobby else { return }
+            guard let code = lobby.inviteCode, let matchID = lobby.match?.record.id else { return }
+            try? await channel.send(
+                MatchInvite(
+                    matchID: matchID,
+                    inviteCode: code,
+                    hostID: me.id,
+                    hostName: me.displayName,
+                    sentAt: now()),
+                to: recipient)
+        }
+        return true
+    }
+
     /// What the next solo match will be played with. Lives here rather than on
     /// the screen that edits it, so choices survive backing out to the menu.
     public let soloSetup: SoloSetup
@@ -330,6 +568,7 @@ public final class ShellModel {
         guard case .menu = route, canPlayOnline, let backend = services.backend else {
             return false
         }
+        dropInviteBanner()
         let lobby = HostLobbyModel(
             shell: self,
             backend: backend,
@@ -586,6 +825,12 @@ public final class ShellModel {
         // before the route moves so the menu is never shown over a live screen
         // model, and a stale section list cannot reappear on the next visit.
         friends = nil
+        // The invite in flight belongs to the lobby being torn down. The
+        // channel itself is untouched — it outlives every screen and is closed
+        // only by ``endInviteChannel()`` and `deinit`.
+        inviteSend?.cancel()
+        inviteSend = nil
+        joiningInvite = nil
         endSoloPractice()
         // Reaching the menu is what makes every end screen stale: the run they
         // were built for is gone and cannot come back. The bump is here rather

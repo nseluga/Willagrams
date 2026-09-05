@@ -38,6 +38,10 @@ let package = Package(
                 "MatchSrc",
                 "OnlineSrc/BackendContracts.swift",
                 "OnlineSrc/FakeBackend.swift",
+                // The invite seam and its in-memory bus. SDK-free on purpose —
+                // `SupabaseMatchInviteChannel.swift` beside it imports Realtime
+                // and stays out, exactly as the rest of `OnlineSrc` does.
+                "OnlineSrc/MatchInvite.swift",
                 "OnlineSrc/MatchOutcomeRecorder.swift",
                 "OnlineSrc/OnlineMatch.swift",
             ]

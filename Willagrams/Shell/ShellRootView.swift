@@ -42,6 +42,38 @@ struct ShellRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DesignTokens.Palette.canvasTop)
+        // One overlay rather than a banner drawn into each of the four screens
+        // that can carry one. `ShellModel` has already decided whether a banner
+        // exists at all — this renders what it publishes and branches on
+        // nothing, which is why there is no route check here.
+        .overlay(alignment: .top) { inviteBanner }
+    }
+
+    /// "<name> wants to play", with the way in. Both the line and the decision
+    /// to have one are `ShellModel`'s.
+    @ViewBuilder private var inviteBanner: some View {
+        if let invite = shell.inviteBanner {
+            HStack(spacing: DesignTokens.Space.m) {
+                Text(ShellModel.inviteLine(invite))
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: DesignTokens.Space.m)
+
+                Button(ShellModel.inviteJoinLabel) { shell.joinInvite() }
+                    .buttonStyle(.brandPrimary)
+            }
+            .padding(DesignTokens.Space.l)
+            .background(DesignTokens.Palette.canvasBottom)
+            .frame(maxWidth: 620)
+            .padding(DesignTokens.Space.m)
+        } else if let message = shell.inviteMessage {
+            Text(message)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .padding(DesignTokens.Space.l)
+        }
     }
 
     /// The host's lobby. Absent when `ShellModel` has already torn it down,
@@ -78,6 +110,8 @@ struct ShellRootView: View {
         if let friends = shell.friends {
             FriendsView(model: friends) { shell.returnToMenu() } onOpen: { entry in
                 shell.showFriendProfile(entry)
+            } onInvite: { entry in
+                shell.invitePlay(entry)
             }
         }
     }
