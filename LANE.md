@@ -313,7 +313,7 @@ below the stop marker on the Apple Developer membership.
     - With the peer `.gone`, the route moves to `.results` and the results model's headline names a departed opponent, not a winner
     - `ResultsModel` built for an online opponent exposes no rematch action; built for solo it still does
     - `swift test --package-path Tests/ShellTests` and the iOS `xcodebuild` build pass
-  status: not started
+  status: done  # all four criteria met; overlay lives on MatchBoard (MatchHUDModel carries a fence banning peerPlayerID)
 
 - task: |
     Present the settings lane's options view and persist the choice.
