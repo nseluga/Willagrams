@@ -184,6 +184,41 @@ struct JoinTests {
         #expect(seen.count >= 3)
     }
 
+    /// The other half of the criterion, which the mapping test above cannot
+    /// reach: an error that is *not* `.notFound` has to travel the same path out
+    /// of `join()` and land beside the field. Proven at the model, on the real
+    /// entry point, for every case the item names.
+    @Test(
+        "A full match, a started match and a dead network each land beside the field",
+        arguments: [BackendError.matchFull, .permissionDenied, .offline]
+    )
+    func everyJoinFailureReachesTheField(_ error: BackendError) async throws {
+        let f = try await Self.make()
+        let refusing = RefusingJoin(wrapping: f.backend, throwing: error)
+        let shell = ShellModel(
+            dictionary: { EveryWordIsReal() },
+            sleepFor: { _ in },
+            services: ShellServices(backend: refusing, signIn: f.backend)
+        )
+        await shell.signInTask?.value
+
+        #expect(shell.showJoin())
+        let model = try #require(shell.join)
+        model.code = f.code
+        model.join()
+
+        await Self.until("the join failed") { model.message != nil }
+        #expect(model.message == HostLobbyModel.message(for: error))
+        #expect(model.message != HostLobbyModel.message(for: BackendError.notFound))
+        #expect(model.phase == .entering)
+        #expect(shell.route == .join)
+        #expect(shell.run == nil)
+        #expect(model.canJoin, "the screen is a dead end after a refusal")
+
+        shell.returnToMenu()
+        f.hostMatch.leave()
+    }
+
     // MARK: - done when 3
 
     @Test("The host pressing Start carries the guest to the countdown over the host's session")
@@ -405,5 +440,51 @@ struct JoinTests {
             encoding: .utf8
         )
         #expect(manifest.contains("\"JoinView.swift\""))
+    }
+}
+
+/// A `FakeBackend` that refuses `joinMatch` with one chosen error and forwards
+/// everything else. The only way to drive `.matchFull` and `.offline` through
+/// the real entry point: the fake reaches the first only with six members and
+/// the second never.
+private actor RefusingJoin: BackendClient {
+    private let inner: FakeBackend
+    private let error: BackendError
+
+    init(wrapping inner: FakeBackend, throwing error: BackendError) {
+        self.inner = inner
+        self.error = error
+    }
+
+    func joinMatch(inviteCode: String) async throws -> MatchRecord { throw error }
+
+    var currentUserID: UUID? { get async { await inner.currentUserID } }
+    func signInWithApple(idToken: String, nonce: String) async throws -> Profile {
+        try await inner.signInWithApple(idToken: idToken, nonce: nonce)
+    }
+    func signOut() async throws { try await inner.signOut() }
+    func profile(id: UUID) async throws -> Profile { try await inner.profile(id: id) }
+    func profile(friendCode: String) async throws -> Profile? {
+        try await inner.profile(friendCode: friendCode)
+    }
+    func updateDisplayName(_ name: String) async throws -> Profile {
+        try await inner.updateDisplayName(name)
+    }
+    func friendships() async throws -> [Friendship] { try await inner.friendships() }
+    func requestFriend(addresseeID: UUID) async throws -> Friendship {
+        try await inner.requestFriend(addresseeID: addresseeID)
+    }
+    func respondToFriendRequest(requesterID: UUID, accept: Bool) async throws -> Friendship {
+        try await inner.respondToFriendRequest(requesterID: requesterID, accept: accept)
+    }
+    func block(_ playerID: UUID) async throws -> Friendship { try await inner.block(playerID) }
+    func createMatch(options: MatchOptions, seed: Int64) async throws -> MatchRecord {
+        try await inner.createMatch(options: options, seed: seed)
+    }
+    func players(inMatch matchID: UUID) async throws -> [MatchPlayerRow] {
+        try await inner.players(inMatch: matchID)
+    }
+    func transport(for match: MatchRecord, as player: PlayerID) async throws -> any MatchTransport {
+        try await inner.transport(for: match, as: player)
     }
 }
