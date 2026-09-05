@@ -99,7 +99,7 @@ public final class MatchHUDModel {
         shell: ShellModel,
         session: MatchSession,
         board: MatchBoard,
-        audio: any AudioPlayer = SilentAudioPlayer()
+        audio: any AudioPlayer
     ) {
         self.shell = shell
         self.session = session

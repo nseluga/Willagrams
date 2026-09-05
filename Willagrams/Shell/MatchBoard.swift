@@ -154,7 +154,7 @@ public final class MatchBoard {
     public init(
         session: MatchSession,
         dictionary: any WordList,
-        audio: any AudioPlayer = SilentAudioPlayer()
+        audio: any AudioPlayer
     ) {
         self.session = session
         self.dictionary = dictionary

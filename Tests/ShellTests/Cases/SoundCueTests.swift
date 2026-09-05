@@ -193,6 +193,49 @@ struct SoundCueTests {
         f.session.leave()
     }
 
+    // MARK: - The wiring production actually builds
+
+    @Test("A match the shell assembled sounds its board and its HUD, not silence")
+    func aRealRunIsWiredToTheShellsPlayer() async throws {
+        let audio = RecordingAudioPlayer()
+        let shell = ShellModel(
+            dictionary: { EveryWordIsReal() },
+            sleepFor: { _ in },
+            services: ShellServices(audio: audio)
+        )
+        #expect(shell.startSoloPractice(seed: 20260904))
+        try await SoloMatchTests.waitUntil("the deal") {
+            if case .match = shell.route { return shell.run?.board.board.placementList.isEmpty == false }
+            return false
+        }
+        let run = try #require(shell.run)
+        audio.forget()
+
+        // The HUD seam: a hand that is not one word yet refuses the Draw, and
+        // the refusal has to reach the player the shell owns.
+        #expect(run.hud.draw() == false)
+        #expect(audio.effects == [.invalid], "the HUD was wired to a silent player")
+
+        // The board seam: one committed move, through the same run.
+        audio.forget()
+        let loose = try #require(run.board.board.placementList.first)
+        let target = Coord(
+            row: loose.coord.row,
+            col: (run.board.board.placementList.map(\.coord.col).max() ?? loose.coord.col) + 2
+        )
+        var next = run.board.board
+        _ = next.remove(at: loose.coord)
+        try next.place(loose.tile, at: target)
+        run.board.board = next
+        run.board.model.seed(run.board.board, against: run.dictionary)
+        try await SoloMatchTests.waitUntil("the move to be heard") {
+            audio.effects.contains(.tilePlace)
+        }
+        #expect(audio.effects.contains(.invalid) == false, "a move sounded a refusal")
+
+        shell.returnToMenu()
+    }
+
     // MARK: - The order of a whole match
 
     @Test("Place, Draw and a recall are heard in the order the player caused them")
