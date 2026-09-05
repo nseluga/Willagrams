@@ -337,7 +337,7 @@ below the stop marker on the Apple Developer membership.
     - No Toggle or Stepper over a match option remains under `Willagrams/Shell/**`
     - `swift test --package-path Tests/ShellTests` and the iOS `xcodebuild` build pass
   after: settings
-  status: not started
+  status: done
 
 - task: |
     The profile screen.

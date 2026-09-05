@@ -75,3 +75,22 @@ MatchBoard.inputLocked: Bool, MatchBoard.reconnectingTitle
   — all computed off MatchSession; do not store presence.
 ResultsModel.noWinnerHeadline == "Opponent left"
 ```
+
+### Item 6 — Present the settings lane's options view and persist the choice (`2fa2198` + `e4c64b7`, 1 attempt, engineer-only)
+
+- **`#expect(x == x.transform())` is always a tautology when `x` is already the transformed value.** The pre-existing `#expect(setup.options == setup.options.validated)` looked like it pinned the `MatchOptions.validated` guardrail; deleting `.validated` from production left the suite green. Closed with a test driving `startSoloPractice(options:)` with `minimumWordLength: 99`. **Grep new and inherited assertions for both sides deriving from the same expression before trusting them.** Fourth consecutive item shipping with exactly one vacuous check.
+- **A source fence needs a presence half as well as an absence half.** The fence asserts `MatchOptionsView(form:` really appears in `SoloSetupView.swift` alongside banning the four `MatchOptions` field names. Mutation 6 re-added a real banned `Toggle` to production and the fence caught it, proving it is not vacuous.
+- **Scoping the fence to the four `MatchOptions` field names** (rather than "any Toggle/Stepper") keeps `startingHandSize` — which lives on `MatchSetup`, not `MatchOptions` — and item 12's mute toggle legal without weakening it. Note for a human: a `Stepper` therefore does remain under `Willagrams/Shell/**`, deliberately.
+- **`MatchOptionsForm()` hashes the whole ENABLE word list** (~2.2 s in a debug macOS test build). Build it once per `SoloSetup` on screen entry, never at `ShellModel.init`, or every ShellTests case that constructs a model pays for it.
+- **`Willagrams/Settings/**` was consumed, not edited** — verified independently: `git diff --stat` over `Willagrams/Settings` and `Tests/SettingsTests` is empty. SettingsTests 36 before and after.
+- **Counts:** ShellTests 160→164, SettingsTests 36, root 53, MatchTests 125, xcodebuild BUILD SUCCEEDED. 7 mutation checks, all restored byte-identical.
+- **Cosmetic, unfixed (Settings is consume-only):** `MatchOptionsView` ships its own `"HOST"` mono label, `"Match options"` title and full-bleed gradient canvas, which reads wrong embedded in a solo screen. A settings-lane or dt-ui item, not shell's.
+
+**Contract for later items:**
+```
+SoloSetup(store: SettingsStore?) — optionsForm: MatchOptionsForm? (settable; nil
+  until entry), loadOptions(), saveOptions(_:), options: MatchOptions (always
+  .validated). Go through optionsForm, not the removed scalar properties.
+ShellModel.soloSetup is a `let` assigned in init from services.settings.
+HostLobbyTests.make(sleepFor:settings:) — new optional settings: SettingsStore? = nil.
+```
