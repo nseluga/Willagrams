@@ -97,6 +97,37 @@ public final class MatchBoard {
     /// answer — the shell never checks a board or a word itself.
     public var canDraw: Bool { model.canDraw }
 
+    // MARK: - The board is covered
+
+    /// What is drawn over the board right now, or nil when nothing is.
+    ///
+    /// Computed off ``MatchSession/presence(of:)``, like every other value
+    /// here: nothing about presence is mirrored into this type, so there is
+    /// nothing to keep in step and nothing to go stale, and `MatchSession`
+    /// gains no property to carry it.
+    ///
+    /// ponytail: the peer is named by their `PlayerID`, which is the only name
+    /// a session has — the lobby resolves display names and the match never
+    /// receives them. Carry the name onto ``MatchOpponent`` when a screen needs
+    /// a readable one.
+    public var overlay: MatchOverlay? {
+        for player in session.peerPlayerIDs {
+            guard case .reconnecting = session.presence(of: player) else { continue }
+            return .reconnecting(peer: player.rawValue)
+        }
+        return nil
+    }
+
+    /// Whether the board refuses every touch. True exactly while something
+    /// covers it — a player cannot play through an overlay, and a move made
+    /// against a frozen session would be dropped on the floor.
+    public var inputLocked: Bool { overlay != nil }
+
+    /// Local chrome, not `Terminology`: waiting for a peer is a statement about
+    /// the connection, not a game concept.
+    public static let reconnectingTitle = "Reconnecting"
+
+
     /// Tiles already laid on the board by this type. Not a rack and not a
     /// second copy: ids only, so an arrival can be told from a tile the player
     /// is still moving around.
@@ -259,4 +290,14 @@ public final class MatchBoard {
             }
         }
     }
+}
+
+/// What covers the board instead of the match.
+///
+/// One case, and no `nil` case: absence *is* nil. A screen that is not covered
+/// has no overlay, so there is no "none" to forget to handle.
+public enum MatchOverlay: Equatable, Sendable {
+    /// A peer has dropped and may still come back. The board is frozen and the
+    /// player is told who they are waiting on.
+    case reconnecting(peer: String)
 }

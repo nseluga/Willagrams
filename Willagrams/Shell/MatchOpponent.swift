@@ -47,9 +47,21 @@ public protocol MatchOpponent: AnyObject {
     /// Ends the session and everything the far end was running. Must be
     /// idempotent: tearing a run down twice cannot reach a live one.
     func leave()
+
+    /// Whether this far end can be played again straight from the end screen.
+    ///
+    /// Asked of the opponent rather than answered by `MatchRun`, so the run
+    /// still never learns which kind it holds. A bot can be dealt a second hand
+    /// on the spot; a network peer cannot — that needs a new match row and a
+    /// fresh invite, which is a lobby's job and not this screen's.
+    var offersRematch: Bool { get }
 }
 
 extension MatchOpponent {
+
+    /// Rebuildable in place unless the conformer says otherwise. Solo is the
+    /// default because every opponent `ShellModel` can construct by itself is.
+    public var offersRematch: Bool { true }
 
     /// The session already elected a local player; asking it is how the two
     /// answers cannot start to disagree.

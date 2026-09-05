@@ -56,6 +56,11 @@ public final class OnlineOpponent: MatchOpponent {
     /// identically, and the difference lives here rather than in a branch there.
     public func start() {}
 
+    /// No. A rematch here would need a second match row and a second invite
+    /// for the peer to accept, and neither exists on an end screen — so the
+    /// action is not offered at all rather than offered and refused.
+    public var offersRematch: Bool { false }
+
     public func leave() {
         guard !hasLeft else { return }
         hasLeft = true

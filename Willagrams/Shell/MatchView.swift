@@ -61,6 +61,9 @@ struct MatchView: View {
                 // engineer report.
                 camera: matchBoard.camera,
                 dictionary: dictionary,
+                // Locked while something covers the board. `BoardView` writes
+                // this into its model, which cancels a drag in flight.
+                inputLocked: matchBoard.inputLocked,
                 // The refusal count, not a flag: `BoardView` keys its flash on
                 // the value changing, so a second refusal flashes again.
                 completionAttempts: hud.completionAttempts,
@@ -70,6 +73,11 @@ struct MatchView: View {
                 arrivalToken: matchBoard.arrivalToken
             )
             .overlay { MatchHUD(hud: hud) }
+            .overlay {
+                if case .reconnecting(let peer) = matchBoard.overlay {
+                    ReconnectingOverlay(peer: peer)
+                }
+            }
             // The measured size, handed over as-is. In `.onChange`, never in
             // the body: writing an observed property while SwiftUI is
             // evaluating a body is a mutation-during-update. `initial: true`
@@ -80,4 +88,38 @@ struct MatchView: View {
             }
         }
     }
+}
+
+
+/// The dim over a board nobody can play, naming who it is waiting for.
+///
+/// Decides nothing: whether it is on screen at all is `MatchBoard.overlay`,
+/// and the lock that makes it honest is `MatchBoard.inputLocked`.
+struct ReconnectingOverlay: View {
+
+    let peer: String
+
+    var body: some View {
+        ZStack {
+            // The dim itself. `DesignTokens` is frozen and has no scrim, so
+            // the one the comp asks for is built here from the ink it does
+            // define — local to this view, like `BoardView.recenterLabel`.
+            DesignTokens.Palette.ink.opacity(Self.dimOpacity).ignoresSafeArea()
+            VStack(spacing: DesignTokens.Space.s) {
+                Text(MatchBoard.reconnectingTitle)
+                    .monoLabel()
+                    .textCase(.uppercase)
+                Text(peer)
+                    .font(DesignTokens.Typography.display)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .lineLimit(1)
+                    .allowsTightening(true)
+            }
+            .padding(DesignTokens.Space.xl)
+            .brandCard()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private static let dimOpacity: Double = 0.35
 }

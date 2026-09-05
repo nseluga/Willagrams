@@ -149,8 +149,11 @@ public final class ResultsModel {
     /// Local chrome, not `Terminology`: that file is the frozen IP fence and
     /// names game concepts, not screens.
     public static let peerWinHeadline = "Your opponent won"
-    /// Not a defeat, and not an error. Said plainly.
-    public static let noWinnerHeadline = "No winner"
+    /// Not a defeat, and not an error. Said plainly — and named for the one
+    /// way a match reaches it: `MatchSession` declares no winner exactly when a
+    /// peer stopped answering, so "no winner" told the player a fact about the
+    /// scoreboard when what they needed was the reason.
+    public static let noWinnerHeadline = "Opponent left"
     public static let rematchLabel = "Rematch"
     public static let mainMenuLabel = "Main Menu"
 

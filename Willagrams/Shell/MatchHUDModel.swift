@@ -38,7 +38,9 @@ import WillagramsRules
 /// There is no opponent-facing value on this type and there is nothing for a
 /// view to render one from. Not their board, not their tile count, not whether
 /// they are there — `peerPresence` is read only to decide whether a control of
-/// *this* player's can do anything, and is never published.
+/// *this* player's can do anything, and is never published. What a peer's
+/// absence puts *over* the board is ``MatchBoard/overlay``, because the lock it
+/// implies is the board's.
 ///
 /// ## Every value is computed
 ///

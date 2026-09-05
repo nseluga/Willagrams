@@ -178,11 +178,16 @@ public final class MatchRun {
                 shell.endSoloPractice()
                 return true
             },
-            rematch: { [weak shell] in
-                guard let shell, shell.isLiveGeneration(generation) else { return }
-                // The one construction path, and it tears down before it builds.
-                shell.startSoloPractice()
-            }
+            // Absent, not disabled, when the far end cannot be rebuilt here:
+            // `ResultsModel` has no rematch closure to spend, so the screen
+            // draws no button rather than a dead one.
+            rematch: opponent.offersRematch
+                ? { [weak shell] in
+                    guard let shell, shell.isLiveGeneration(generation) else { return }
+                    // The one construction path: it tears down before it builds.
+                    shell.startSoloPractice()
+                }
+                : nil
         )
     }
 }
