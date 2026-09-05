@@ -94,3 +94,22 @@ SoloSetup(store: SettingsStore?) — optionsForm: MatchOptionsForm? (settable; n
 ShellModel.soloSetup is a `let` assigned in init from services.settings.
 HostLobbyTests.make(sleepFor:settings:) — new optional settings: SettingsStore? = nil.
 ```
+
+### Item 7 — The profile screen (`20b3fe8` + `71a100c`, 1 attempt, engineer-only)
+
+- **Any UIKit/AppKit-fenced injection is unobservable to `swift test` and needs a source-level assertion that the wiring exists.** Deleting `pasteboard: Self.pasteboard` from `ShellModel.showProfile()` left the whole suite green: `ProfileModel` fell back to its no-op default, so the app's Copy button would have silently copied nothing, invisibly on macOS where UIKit is absent. Closed with `ProfileRouteTests."The shell hands the screen a clipboard that really writes"`. The same trap waits for a share sheet or haptics. Fifth consecutive item shipping with exactly one vacuous check.
+- **A new test package consumes `Willagrams/Online` file-by-file, not as a directory.** `AccountTests` symlinks `OnlineSrc -> ../../Willagrams/Online` but lists only `BackendContracts.swift`, `FakeBackend.swift`, `MatchOutcomeRecorder.swift` and `OnlineMatch.swift` as extra `sources:` of its `Match` target. That is ShellTests' approach, not OnlineTests' whole-directory one, and it keeps the Supabase SDK out: no `supabase-swift` dependency and no `Package.resolved` (verified — zero `supabase` references in the manifest). Copy this shape for `Tests/FriendsTests`.
+- **A model that `ShellModel` constructs needs a mirror target in `Tests/ShellTests/Package.swift`** with the same source symlink and the same View `exclude:` — otherwise ShellTests stops building the moment the shell references it.
+- **No stat is computed client-side.** `ProfileModel.stats` is exactly four `ProfileStat`s read off the row as returned, so a server-side scoring change needs no app change.
+- **Counts:** ShellTests 164→173, AccountTests 15 (new), root 53, xcodebuild BUILD SUCCEEDED. 12 mutation checks, all restored byte-identical.
+
+**Contract for later items:**
+```
+AppRoute.profile · ShellModel.profile: ProfileModel? · @discardableResult showProfile() -> Bool
+  (guards case .menu + non-nil currentProfile; torn down in returnToMenu() before the route moves)
+ProfileModel(profile:isEditable:backend:pasteboard:) — draftName, trimmedDraft, canSave,
+  message, isSaving, didCopyCode, stats: [ProfileStat] (exactly 4), save() async,
+  copyFriendCode(), shareMessage, static nameLength = 1...24.
+Item 9 reuses it read-only: ProfileModel(profile: friend, isEditable: false).
+ProfileView(model:) takes its onward action as a closure — the view holds no route.
+```

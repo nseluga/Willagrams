@@ -5,8 +5,8 @@ LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** round 3 in progress — items 1–6 of 12 done, none blocked. Online host and join are live-proven on two simulators.
-- **Next:** items 7 and 8 in parallel (profile screen, friends list), then item 9.
+- **Status:** round 3 in progress — items 1–7 of 12 done, none blocked. Online host and join are live-proven on two simulators.
+- **Next:** item 8 (the friends list), then item 9. Items 7–9 run one at a time, not in parallel: each one touches the same menu and routing files.
 - **Blockers:** none.
 - **Last updated:** 2026-09-05
 
@@ -20,7 +20,7 @@ LANE.md wins for scope.
 | Join a match by invite code | done — You can now type a friend's six-character code to join their game; the screen tells you it is waiting for them and names them, and a wrong, full or already-started code gets a plain message beside the box instead of failing silently. Proven end to end on two phones: the guest joined and both reached the game when the host pressed Start. |
 | Show reconnecting, end on gone, and give online results a way home | done — When your opponent drops out the board dims, names them and stops taking taps until they are back; if they leave for good the game ends on a screen that says the opponent left rather than naming a winner, and an online game offers only Main Menu instead of a rematch that could not work. |
 | Present the settings lane's options view and persist the choice | done — Solo setup now shows the real options screen instead of its own duplicate controls, and whatever you pick is remembered for next launch and used when you host a game for a friend. |
-| The profile screen | not started |
+| The profile screen | done — The menu now opens your profile, showing your display name, your friend code with a Copy button, and your four match statistics exactly as the server reports them; you can rename yourself and it saves, and a name that is empty or too long is refused before anything is sent. |
 | The friends list | not started |
 | Add a friend by code, and open a friend's profile | not started |
 | Invite a friend to play, in-app | not started |

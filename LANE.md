@@ -122,7 +122,7 @@ below the stop marker on the Apple Developer membership.
   `Tests/BoardTests` (253, XCTest — "Executed N"), `Tests/MatchTests` (125),
   `Tests/StyleTests` (30), `Tests/ShellTests` (125), `Tests/SettingsTests`
   (36), `Tests/BotTests` (68, ~5 min), `Tests/OnlineTests` (126),
-  `Tests/AudioTests` (19), `Tests/AccountTests` (new), `Tests/FriendsTests`
+  `Tests/AudioTests` (19), `Tests/AccountTests` (15), `Tests/FriendsTests`
   (new). Two cases are wall-clock flaky under a full parallel run and pass
   alone: BotTests' pacing case and ShellTests' countdown overlay.
 - **`swift test` never compiles SwiftUI.** Only
@@ -364,7 +364,7 @@ below the stop marker on the Apple Developer membership.
     - `ProfileModel` on a `FakeBackend` saves a new name and re-reads it; a 25-character draft is refused before any call is made
     - The menu's Profile action moves the route to `.profile` and back
     - `swift test --package-path Tests/AccountTests` exists and passes, and the iOS `xcodebuild` build passes
-  status: not started
+  status: done
   parallel-group: a
 
 - task: |
