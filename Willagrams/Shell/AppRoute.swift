@@ -56,6 +56,10 @@ public enum AppRoute: Hashable, Sendable {
     /// ``ShellModel/hostLobby``, which owns a live `OnlineMatch` a route payload
     /// has no business holding.
     case hostLobby
+    /// The guest's side: a code field, then the wait for the host to open the
+    /// match. Carries nothing for the same reason `hostLobby` does — the state
+    /// lives on ``ShellModel/join``, which owns a live `OnlineMatch`.
+    case join
     case countdown(MatchSetup)
     case match(MatchSetup)
     /// `winner` is nil when the match ended without one — a draw, or a peer that

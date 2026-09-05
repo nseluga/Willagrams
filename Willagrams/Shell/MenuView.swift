@@ -139,6 +139,16 @@ struct MenuView: View {
             .buttonStyle(.brandPrimary)
             .disabled(!shell.canPlayOnline)
 
+            // The other end of the same handoff: one side shows a code, the
+            // other types it. Two actions rather than one screen with both,
+            // because a host and a guest are doing different things and a
+            // screen that offered both would ask the player which they are.
+            Button { shell.showJoin() } label: {
+                Text(JoinModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandQuiet)
+            .disabled(!shell.canPlayOnline)
+
             if let reason = shell.onlineUnavailableReason {
                 Text(reason)
                     .font(DesignTokens.Typography.caption)

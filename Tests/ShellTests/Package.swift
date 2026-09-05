@@ -89,6 +89,7 @@ let package = Package(
                 "ShellRootView.swift", "MenuView.swift", "CountdownView.swift",
                 "MatchHUD.swift", "MatchView.swift", "ResultsView.swift",
                 "HowToPlayView.swift", "SoloSetupView.swift", "HostLobbyView.swift",
+                "JoinView.swift",
             ]
         ),
         .testTarget(

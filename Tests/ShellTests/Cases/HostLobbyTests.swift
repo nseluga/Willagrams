@@ -52,11 +52,21 @@ struct HostLobbyTests {
             states = presence.continuation
         }
 
+        /// The other device's endpoint, when a test needs the two to actually
+        /// talk — `JoinTests` does, because the host's `.start` has to reach the
+        /// guest. Nil here: the host lobby's own cases never deliver a message,
+        /// and a link they did not ask for would be a second thing to explain.
+        var peer: LobbyWire?
+
         /// The test's hand on the lobby: a peer arriving, or going.
         func announce(_ state: PeerConnectionState) { states.yield(state) }
 
+        /// Hands `message` to this endpoint's consumer, as if it arrived.
+        func deliver(_ message: MatchMessage) { inbound.yield(message) }
+
         func send(_ message: MatchMessage, delivery: MatchDelivery) async throws {
             lock.withLock { outbound.append(message) }
+            peer?.deliver(message)
         }
 
         func leave() {

@@ -152,6 +152,32 @@ public final class ShellModel {
         route = .countdown(setup)
     }
 
+    /// The guest's join screen for this visit, or nil when it is not up. Like
+    /// ``hostLobby`` it owns a live `OnlineMatch` once a code lands, so it is
+    /// built on the way in and torn down by ``returnToMenu()`` on every way out.
+    public private(set) var join: JoinModel?
+
+    /// Menu → the join screen.
+    ///
+    /// Refused on the same terms as ``playAFriend()``: joining writes a
+    /// `match_players` row, and there is nobody to write one as.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showJoin() -> Bool {
+        guard case .menu = route, canPlayOnline, let backend = services.backend else {
+            return false
+        }
+        join = JoinModel(
+            shell: self,
+            backend: backend,
+            dictionary: loadedDictionary(),
+            sleepFor: sleepFor
+        )
+        route = .join
+        return true
+    }
+
     /// What the next solo match will be played with. Lives here rather than on
     /// the screen that edits it, so choices survive backing out to the menu.
     public let soloSetup = SoloSetup()
@@ -433,6 +459,10 @@ public final class ShellModel {
         // rather than one per way out.
         hostLobby?.teardown()
         hostLobby = nil
+        // The guest's half of the same rule: the join in flight is cancelled and
+        // its channel closed before the menu is shown over them.
+        join?.teardown()
+        join = nil
         endSoloPractice()
         // Reaching the menu is what makes every end screen stale: the run they
         // were built for is gone and cannot come back. The bump is here rather

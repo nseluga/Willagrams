@@ -32,6 +32,7 @@ struct ShellRootView: View {
             case .soloSetup: SoloSetupView(shell: shell)
             case .howToPlay: HowToPlayView(shell: shell)
             case .hostLobby: hostLobby
+            case .join: joinScreen
             case .countdown: countdown
             case .match: match
             case .results: results
@@ -47,6 +48,13 @@ struct ShellRootView: View {
     @ViewBuilder private var hostLobby: some View {
         if let lobby = shell.hostLobby {
             HostLobbyView(shell: shell, lobby: lobby)
+        }
+    }
+
+    /// The guest's join screen, on the same terms as the host's lobby above.
+    @ViewBuilder private var joinScreen: some View {
+        if let join = shell.join {
+            JoinView(shell: shell, join: join)
         }
     }
 
