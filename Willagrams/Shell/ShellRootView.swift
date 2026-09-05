@@ -31,6 +31,7 @@ struct ShellRootView: View {
             case .menu: MenuView(shell: shell)
             case .soloSetup: SoloSetupView(shell: shell)
             case .howToPlay: HowToPlayView(shell: shell)
+            case .hostLobby: hostLobby
             case .countdown: countdown
             case .match: match
             case .results: results
@@ -38,6 +39,15 @@ struct ShellRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DesignTokens.Palette.canvasTop)
+    }
+
+    /// The host's lobby. Absent when `ShellModel` has already torn it down,
+    /// which renders nothing rather than fabricating a second one — same rule as
+    /// the three match screens below.
+    @ViewBuilder private var hostLobby: some View {
+        if let lobby = shell.hostLobby {
+            HostLobbyView(shell: shell, lobby: lobby)
+        }
     }
 
     /// The board, with the count over it. Reads the run's session (the count),

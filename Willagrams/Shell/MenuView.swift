@@ -129,6 +129,23 @@ struct MenuView: View {
             }
             .buttonStyle(.brandPrimary)
 
+            // Online play, off until the anonymous sign-in lands. Disabled with
+            // a reason underneath rather than absent: the row is a promise the
+            // app keeps as soon as it can, and a control that vanishes and
+            // reappears is worse than one that says why it is waiting.
+            Button { shell.playAFriend() } label: {
+                Text(HostLobbyModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandPrimary)
+            .disabled(!shell.canPlayOnline)
+
+            if let reason = shell.onlineUnavailableReason {
+                Text(reason)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Button { shell.showHowToPlay() } label: {
                 Text(HowToPlay.title).menuActionLabel()
             }

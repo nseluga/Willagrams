@@ -51,6 +51,11 @@ public enum AppRoute: Hashable, Sendable {
     /// inside a match, and it renders nothing match-specific — so, like `menu`,
     /// it carries nothing.
     case howToPlay
+    /// The host's lobby: an invite code, who has arrived, and the way into the
+    /// match. Like `soloSetup` it carries nothing — the state lives on
+    /// ``ShellModel/hostLobby``, which owns a live `OnlineMatch` a route payload
+    /// has no business holding.
+    case hostLobby
     case countdown(MatchSetup)
     case match(MatchSetup)
     /// `winner` is nil when the match ended without one — a draw, or a peer that

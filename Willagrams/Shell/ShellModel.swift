@@ -172,6 +172,43 @@ public final class ShellModel {
         route = .howToPlay
     }
 
+    /// The host's lobby for this visit, or nil when the screen is not up. It
+    /// owns a live `OnlineMatch`, so it is built on the way in and torn down by
+    /// ``returnToMenu()`` on every way out.
+    public private(set) var hostLobby: HostLobbyModel?
+
+    /// Whether the menu's online actions can be taken. One question, asked here,
+    /// so the view that draws the button and the transition that honours it
+    /// cannot disagree.
+    public var canPlayOnline: Bool { currentProfile != nil && services.backend != nil }
+
+    /// Menu → host lobby, building the lobby that screen renders.
+    ///
+    /// Refused with no sign-in and no backend, for the same reason the button is
+    /// disabled: a lobby needs a `matches` row and there is nobody to write one
+    /// as. The rules are whatever ``SettingsStore`` last stored, so a host plays
+    /// under the options they last chose for solo.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func playAFriend() -> Bool {
+        guard case .menu = route, canPlayOnline, let backend = services.backend else {
+            return false
+        }
+        let lobby = HostLobbyModel(
+            shell: self,
+            backend: backend,
+            options: services.settings?.load() ?? .standard,
+            dictionary: loadedDictionary(),
+            localProfile: currentProfile,
+            sleepFor: sleepFor
+        )
+        hostLobby = lobby
+        route = .hostLobby
+        lobby.create()
+        return true
+    }
+
     /// What the menu's first action starts. The setup is fixed apart from the
     /// seed: there is no difficulty selector on the menu yet, so every solo
     /// match is played against the bot at ``soloDifficulty``.
@@ -389,6 +426,13 @@ public final class ShellModel {
     /// taking the live match with it. The teardown runs first, so the menu is
     /// never shown over a session that is still pumping.
     public func returnToMenu() {
+        // Before the route moves, and before the run is touched: a cancelled
+        // lobby must not leave a channel subscribed behind the menu. Every exit
+        // from `.hostLobby` runs through here — Cancel, Start's own teardown,
+        // and anything else that goes home — so there is one place this happens
+        // rather than one per way out.
+        hostLobby?.teardown()
+        hostLobby = nil
         endSoloPractice()
         // Reaching the menu is what makes every end screen stale: the run they
         // were built for is gone and cannot come back. The bump is here rather

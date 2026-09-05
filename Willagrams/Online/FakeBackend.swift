@@ -20,7 +20,7 @@ import WillagramsRules
 /// An actor, so the `account` and `friends` lanes exercise the same
 /// serialization the real client has, and a test that races two calls behaves
 /// the same way against both.
-public actor FakeBackend: BackendClient {
+public actor FakeBackend: BackendClient, MatchAbandoning {
 
     private var signedInUser: UUID?
     private var profiles: [UUID: Profile] = [:]
@@ -203,6 +203,19 @@ public actor FakeBackend: BackendClient {
     /// row still reads `lobby`" cannot be asserted through `joinMatch`, which
     /// refuses on exactly that status and so cannot tell the two apart.
     public func matchRecord(_ id: UUID) -> MatchRecord? { matches[id] }
+
+    /// The offline stand-in for `matches_update_host`: only the host moves the
+    /// row, and only while it is still a lobby. A row that already went
+    /// `playing` is the outcome recorder's, so this leaves it alone rather than
+    /// erasing a match that was actually played.
+    public func abandonMatch(_ id: UUID) async throws {
+        let me = try requireUser()
+        guard var match = matches[id] else { throw BackendError.notFound }
+        guard match.hostID == me else { throw BackendError.permissionDenied }
+        guard match.status == .lobby else { return }
+        match.status = .abandoned
+        matches[id] = match
+    }
 
     public func players(inMatch matchID: UUID) async throws -> [MatchPlayerRow] {
         guard let rows = memberships[matchID] else { throw BackendError.notFound }

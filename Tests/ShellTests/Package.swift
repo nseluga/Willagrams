@@ -29,7 +29,18 @@ let package = Package(
                 .product(name: "WillagramsRules", package: "Willagrams"),
             ],
             path: ".",
-            sources: ["MatchSrc", "OnlineSrc/BackendContracts.swift", "OnlineSrc/FakeBackend.swift"]
+            // `OnlineMatch` and the recorder seam join the two originals: the
+            // host lobby calls the façade directly, so the shell cannot be
+            // tested without it. All four are SDK-free — the one place
+            // `OnlineMatch` names `SupabaseBackend` is fenced on
+            // `canImport(PostgREST)`, which is false here and true in the app.
+            sources: [
+                "MatchSrc",
+                "OnlineSrc/BackendContracts.swift",
+                "OnlineSrc/FakeBackend.swift",
+                "OnlineSrc/MatchOutcomeRecorder.swift",
+                "OnlineSrc/OnlineMatch.swift",
+            ]
         ),
         // `SystemAudioPlayer` imports AVFoundation and UIKit and cannot build
         // for macOS; the seam, the catalogue and the settings can.
@@ -77,7 +88,7 @@ let package = Package(
             exclude: [
                 "ShellRootView.swift", "MenuView.swift", "CountdownView.swift",
                 "MatchHUD.swift", "MatchView.swift", "ResultsView.swift",
-                "HowToPlayView.swift", "SoloSetupView.swift",
+                "HowToPlayView.swift", "SoloSetupView.swift", "HostLobbyView.swift",
             ]
         ),
         .testTarget(

@@ -1,33 +1,44 @@
 # Engineer Report
-**Task:** LANE.md item 2 — let `MatchRun` run a match it did not build (`MatchOpponent` seam)
-**Branch:** auto/shell-r3
+**Task:** LANE.md item 3 — host a match from the menu and show the invite code
+**Branch:** auto/shell-r3 (in place, no worktree)
 **Date:** 2026-09-04
-**severity:** none — no blocked path, no amendment needed
 
-## Design Decisions
-- `MatchOpponent` is class-bound and carries `session`, `localPlayerID`, `start()`, `leave()`; `start()` is included because `MatchRun.start()` must drive the far end without a cast.
-- `localPlayerID` has a protocol-extension default of `session.localPlayerID`, so `SoloMatch` conforms with an empty extension and gains no member.
-- `MatchRun` stores `let opponent: any MatchOpponent`; `session`, `start()`, `leave()` all route through it.
-- KNOWN TENSION resolved with `public private(set) var match: SoloMatch!` set only by the solo initializer — never by a cast. Optional-chained `run?.match` still yields `SoloMatch?`, so **zero test edits**: `RematchTests`, `MatchRunTests`, `SoloMatchTests`, `SoloSetupTests`, `ShellModelTests` compile and pass unmodified (not even construction). Trap-on-nil is deliberate: reading `.match` on a non-solo run is a bug, not a nil to pass along.
-- The solo init is now a `convenience` that builds `SoloMatch` and delegates to the opponent init, so there is one assembly path.
-- `ShellModel.startMatch(_:opponent:)` takes the opponent as a **closure**, not a value: a value argument would be constructed before the call is entered, i.e. before teardown. Item 3/4 call it as `startMatch(setup) { OnlineOpponent(match) }`.
-- Both start paths share a new private `install(_:)` that arms the trackers and opens the run, so solo and online cannot arm different things.
+## Gates
+- `swift test --package-path Tests/ShellTests` — 141 passed, 0 failed, 0 skipped (baseline 135 + 6 new)
+- `swift test` — 53 passed, 0 failed
+- `swift test --package-path Tests/MatchTests` — 125 passed, 0 failed
+- `swift test --package-path Tests/OnlineTests` — 126 passed, 0 failed, 1 pre-existing known issue
+- `xcodebuild -scheme Willagrams -destination 'generic/platform=iOS Simulator' build` — ** BUILD SUCCEEDED **
+
+## done when
+1. `HostLobbyTests."Play a Friend opens a lobby, shows a six-character code, and waits for a second player"` — PASS
+2. `HostLobbyTests."Start on a two-player lobby moves to the countdown over a two-player session"` — PASS
+3. `HostLobbyTests."Cancel leaves the channel, abandons the row and returns to the menu"` — PASS
+4. UNVERIFIED. Not attempted on two simulators: nothing in `Willagrams/` calls `OnlineMatch.join` — the guest has no way into a lobby until item 4 ships the join screen, so a second simulator cannot join the host's code through the app. `grep -rn "OnlineMatch.join" Willagrams/` returns nothing.
 
 ## Files Changed
-- `Willagrams/Shell/MatchOpponent.swift` — new: the protocol, the `localPlayerID` default, `extension SoloMatch: MatchOpponent {}`. Pure state, no exclude entry needed.
-- `Willagrams/Shell/MatchRun.swift` — holds `opponent`; `match` became `SoloMatch!` set by the solo convenience init; second (designated) init takes a built opponent.
-- `Willagrams/Shell/ShellModel.swift` — added `startMatch(_:opponent:)` and private `install(_:)`; `startSoloPractice` unchanged in behavior, tail moved into `install`.
-- `Tests/ShellTests/Cases/MatchOpponentTests.swift` — new: 4 cases (route walk on a double, teardown order, solo path tears the double down first, falsifiable no-cast source scan).
+- `Willagrams/Shell/HostLobbyModel.swift` (new) — the lobby's whole state machine: create, roster+names, Start, Cancel, `Phase`, static error copy
+- `Willagrams/Shell/HostLobbyView.swift` (new) — code at display size, `ShareLink`, roster, Start/Cancel; branches only on published values
+- `Willagrams/Shell/OnlineOpponent.swift` (new) — wraps `OnlineMatch`+`MatchSession` as a `MatchOpponent`; never touches `MatchRun.match`
+- `Willagrams/Shell/AppRoute.swift` — `case hostLobby`, carrying nothing
+- `Willagrams/Shell/ShellModel.swift` — `hostLobby`, `canPlayOnline`, `playAFriend()`; `returnToMenu()` tears the lobby down before moving the route
+- `Willagrams/Shell/MenuView.swift` — "Play a Friend", disabled without a profile, reason underneath
+- `Willagrams/Shell/ShellRootView.swift` — renders the lobby when one exists
+- `Willagrams/Online/OnlineMatch.swift` — added `MatchAbandoning`, `leave()` (pump/recorder cancel, transport leave, abandon the row only if never started), `hasStarted`; fenced the `SupabaseBackend` default on `canImport(PostgREST)` so the file builds SDK-free
+- `Willagrams/Online/FakeBackend.swift` — conforms to `MatchAbandoning`
+- `Willagrams/Online/SupabaseBackend+Matches.swift` — `abandon(matchID:)`, an update fenced on `status = lobby`
+- `Tests/ShellTests/Package.swift` — `Match` target now compiles `OnlineMatch.swift`/`MatchOutcomeRecorder.swift`; `HostLobbyView.swift` added to the `Shell` exclude
+- `Tests/ShellTests/Cases/HostLobbyTests.swift` (new) — 6 cases over a `LobbyWire` double (`FakeTransport.pair` buffers `.connected` immediately, so it cannot falsify `canStart`)
 
-## Verification
-- `swift test --package-path Tests/ShellTests` → **135** (floor 131). Root **53**, MatchTests **125**, BotTests **68**, `xcodebuild … build` **BUILD SUCCEEDED**. Zero failures.
-- Mutation A (build the opponent before `returnToMenu()`): ordering test went RED — `["build A","build B","leave A"]`. Restored.
-- Mutation B (respelled `opponent.leave()` to a local): the source scan went RED. Restored.
-
-## Deferred / Out of Scope
-- No `OnlineMatch` adapter — item 3.
-- `ResultsModel`'s closures still go through `ShellModel` (no concrete type reaches them); removing rematch for an online opponent is item 5.
+## Design Decisions
+- Teardown lives only in `ShellModel.returnToMenu()`, so every exit — not just Cancel — leaves the façade before the route moves
+- `start()` nils `self.match` before calling `startMatch`, so the shell's own pass through the menu cannot kill the match it is opening
+- `hasStarted` decides abandon-vs-leave: a lobby nobody played abandons its row; a match that ran belongs to the outcome recorder
+- `MatchAbandoning` is a new protocol because `BackendContracts.swift` is protected; two real conformers, not a one-implementation abstraction
+- Lazier alternative not taken: leave the row in `lobby` forever and let a server sweep expire it — no client protocol, no Supabase update, but abandoned lobbies stay joinable until the sweep
 
 ## Flags for Reviewer
-- `MatchRun.match` is an IUO: any future non-solo caller that reads it traps. Only tests read it today.
-- `startMatch(_:opponent:)` bumps `generation` twice per start (`returnToMenu` + `install`), same as `startSoloPractice` — stale results screens decline, as designed.
+- `resolveNames` reads `profile(id:)` one player at a time and is skipped while a read is in flight; fine at two players, unbounded shape if the roster ever grows
+- `OnlineMatch.leave()` fires the abandon as a detached `Task` with `try?` — a failed abandon is silent and the row stays `lobby`
+- `abandon(matchID:)` relies on RLS + `.eq("status", "lobby")` for correctness; it cannot report that it matched zero rows
+- Criterion-2's test injects a 500ms `sleepFor` so the countdown is still live when the route is read; it tears down explicitly at the end
