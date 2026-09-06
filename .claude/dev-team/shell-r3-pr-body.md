@@ -250,3 +250,56 @@ Mute is sound only. Suppressing haptics while muted is the concrete player's own
 behavior, documented in the protected `AudioPlayer` protocol; the one
 `services.audio.impact(.medium)` in `ShellModel` is item 11's win haptic and is
 untouched.
+
+---
+
+## Lane acceptance check
+
+An independent `dt-review` read the full merged diff against the four
+`Lane done when:` criteria. Verdicts:
+
+1. **Host/join, win advances both `profiles` rows** — mechanism **MET (live)**,
+   literal two-simulator tap-through **UNRUN**. `LiveMatchTests` plays a whole
+   match over two real `SupabaseBackend`s; `MatchOutcomeRecorderLiveTests`
+   asserts `record_outcome` advances both rows as deltas against fresh reads,
+   not `0==0`. The menu-level flow is model-proven against `FakeBackend`.
+2. **Friend by code, in-app invite, play to a result, read a profile under RLS**
+   — every sub-mechanism **MET (live)**, literal tap-through **UNRUN**.
+   `FriendsLiveTests` proves cross-user profile reads really pass RLS;
+   `MatchInviteChannelLiveTests` carries a genuine positive/negative pair
+   (an invite arrives; one addressed elsewhere does not).
+3. **Sound cues, Release `SystemAudioPlayer`, mute persists** — **MET**. No
+   `#if DEBUG` fences audio at the root; `aRealRunIsWiredToTheShellsPlayer`
+   drives the production object graph rather than a hand-built one.
+4. **Eleven packages green + iOS build** — **MET**, ten of eleven re-run by the
+   reviewer independently, plus BUILD SUCCEEDED.
+
+**Criteria 1 and 2 are not fully discharged.** No XCUITest target exists and
+`simctl` has no tap primitive, so no agent in this repo can execute a
+two-simulator tap-through. A human owes that check before ship. The three live
+mechanisms are also each proven in isolation and never chained in one continuous
+run, so the live suite is not end-to-end cover of the actual player journey.
+
+## Known risks not covered by the criteria
+
+1. **Silent lobby-abandon failures** — `OnlineMatch.abandonTask` discards the
+   result with `try?`. A network blip while cancelling a lobby can leave a
+   `matches` row stuck in `lobby` indefinitely, with nothing surfaced and no
+   retry.
+2. **Realtime invite topics are public** (filed via `/foundation`, needs a
+   migration this lane was forbidden to make) — anyone who resolves a friend
+   code to a UUID can subscribe with the shipped anon key and read live invite
+   codes. Spoofing is shut by the recipient-side check; eavesdropping is not.
+   The fix needs `config.isPrivate` **plus** a `realtime.messages` policy —
+   `isPrivate` alone breaks the channel.
+3. **Declining a friend request blocks permanently** with no undo (filed).
+
+## Disclosed mutation survivor
+
+`ShellModel:932`'s `card.secondsRemaining != lastTick` guard. No test can drive
+it in either direction; kept deliberately rather than covered with a vacuous
+test.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+https://claude.ai/code/session_01BBbKTHe1pVkpgTvdunykC3

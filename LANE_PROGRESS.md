@@ -7,8 +7,19 @@ LANE.md wins for scope.
 
 - **Status:** round 3 complete — all 12 items done, none blocked. Online host and join are live-proven on two simulators, every sound cue has a call site, and the menu can mute.
 - **Next:** nothing in this round. The item below the stop marker, Sign in with Apple, waits on the paid Apple Developer membership.
-- **Blockers:** none. Three things a person still owes before this ships: invites need a hands-on check on two devices, because nothing here can tap a button on a simulator; anyone who learns your friend code can currently listen in on your game invitations, which needs a database change this round was not allowed to make; and declining a friend request still blocks that person permanently, with no way to undo it.
+- **Blockers:** none. Four things a person still owes before this ships. Hosting, joining and inviting all work against the real service and are proven there, but nobody has yet sat down with two devices and tapped through them, and nothing here can tap a button on a simulator — that is a hands-on check. Anyone who learns your friend code can currently listen in on your game invitations, which needs a database change this round was not allowed to make. Declining a friend request still blocks that person permanently, with no way to undo it. And if the network drops at the moment you back out of a lobby, the game you abandoned can be left sitting open on the server with nothing told to you and nothing trying again.
 - **Last updated:** 2026-09-05
+
+### 2026-09-05 — round 3 closed
+
+All twelve items above the stop marker are done; none blocked. An independent
+acceptance check read the whole round against the four `Lane done when:`
+criteria: sound and the test gate are met outright, and the two multiplayer
+criteria are met in mechanism — friending, invite delivery and a whole match
+with real stat updates are each proven live against the real project — but
+their literal two-device tap-through is unrun and is a person's job. The three
+live mechanisms have never been chained in one run either, so the live suite
+should not be read as end-to-end cover of the whole player journey.
 
 ## Round 3 — every screen reachable, against the live backend
 
