@@ -47,6 +47,20 @@ struct MatchInviteChannelLiveTests {
         }
     }
 
+    /// `invites_send_to_accepted_friend` (migration 0005) admits an insert only
+    /// between an accepted pair, so an invite between two strangers is refused
+    /// by the project before it reaches a topic. Two fresh anonymous users are
+    /// strangers, which is what every case here starts from. Befriend them the
+    /// way the app does, through the same two calls the friends suite uses.
+    private static func befriend(
+        _ requester: SupabaseBackend, _ requesterID: UUID,
+        _ addressee: SupabaseBackend, _ addresseeID: UUID
+    ) async throws {
+        _ = try await requester.requestFriend(addresseeID: addresseeID)
+        _ = try await addressee.respondToFriendRequest(
+            requesterID: requesterID, accept: true)
+    }
+
     @Test("An invite reaches the recipient's own channel within five seconds",
           .enabled(if: LiveProject.isEnabled))
     func anInviteCrossesTheSocket() async throws {
@@ -55,12 +69,16 @@ struct MatchInviteChannelLiveTests {
         let guestBackend = LiveProject.fresh()
         let guest = try await guestBackend.signInAnonymously()
 
+        try await Self.befriend(hostBackend, host.id, guestBackend, guest.id)
+
         let listening = guestBackend.inviteChannel(for: guest.id)
         try await listening.subscribe()
         defer { listening.leave() }
 
+        // No `subscribe()` on the sender: `send` posts over REST and never
+        // joins. Joining would need a read of someone else's topic, which is
+        // the hole 0005 closes.
         let sending = hostBackend.inviteChannel(for: host.id)
-        try await sending.subscribe()
         defer { sending.leave() }
 
         let invite = MatchInvite(
@@ -85,24 +103,33 @@ struct MatchInviteChannelLiveTests {
         let guestBackend = LiveProject.fresh()
         let guest = try await guestBackend.signInAnonymously()
 
+        try await Self.befriend(hostBackend, host.id, guestBackend, guest.id)
+
         let listening = guestBackend.inviteChannel(for: guest.id)
         try await listening.subscribe()
         defer { listening.leave() }
 
         let sending = hostBackend.inviteChannel(for: host.id)
-        try await sending.subscribe()
         defer { sending.leave() }
 
+        // Before 0005 this send succeeded and the assertion was that the topic
+        // kept it away from the guest. The project now refuses it outright, so
+        // assert the refusal: a stranger's topic is not writable at all. That
+        // is the stronger of the two claims, and it fails loudly rather than
+        // after a five-second silence.
         let elsewhere = UUID()
         let missed = MatchInvite(
             matchID: UUID(), inviteCode: "LIVE02", hostID: host.id,
             hostName: host.displayName, sentAt: Self.sentAt)
-        try await sending.send(missed, to: elsewhere)
+        await #expect(throws: (any Error).self,
+                      "a stranger's invite topic accepted a write") {
+            try await sending.send(missed, to: elsewhere)
+        }
 
         // One consumer, not two: `AsyncStream` has a single iterator, and the
-        // positive twin is what makes the negative readable. The misaddressed
-        // invite left first, so if the guest's channel carried it at all it
-        // would be the one that arrives here.
+        // positive twin is what makes the negative readable. If the guest's
+        // channel carried anything but the addressed invite, it would arrive
+        // here.
         let addressed = MatchInvite(
             matchID: UUID(), inviteCode: "LIVE03", hostID: host.id,
             hostName: host.displayName, sentAt: Self.sentAt)
