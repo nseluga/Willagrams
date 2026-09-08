@@ -726,7 +726,13 @@ delete from realtime.messages
 delete from public.friendships
  where requester_id in ('11111111-1111-1111-1111-111111111111',
                         '22222222-2222-2222-2222-222222222222');
-delete from public.profiles
+-- Ada, Grace and Alan are shared with `schema_invariants.sql`, so this file
+-- used to leave their `auth.users` rows for that file's top-of-run sweep to
+-- take. Three orphan auth rows on the live project is a small thing, but "the
+-- fixture leaves nothing" is easier to check than "the fixture leaves exactly
+-- these three". The cascade takes the profiles, so this replaces the profile
+-- delete rather than following it. Both files recreate all three at the top.
+delete from auth.users
  where id in ('11111111-1111-1111-1111-111111111111',
               '22222222-2222-2222-2222-222222222222',
               '33333333-3333-3333-3333-333333333333');
