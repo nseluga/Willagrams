@@ -1,7 +1,23 @@
 #if canImport(Bot)
 import Bot
 #endif
+#if canImport(Match)
+import Match
+#endif
+#if canImport(Account)
+import Account
+#endif
+#if canImport(Friends)
+import Friends
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(Audio)
+import Audio
+#endif
 
+import Foundation
 import Observation
 import WillagramsRules
 
@@ -59,6 +75,50 @@ public final class ShellModel {
     @ObservationIgnored private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
     @ObservationIgnored private let seedSource: @MainActor () -> UInt64
 
+    /// The clock every invite's age is decided against. Injected, so "older than
+    /// two minutes" is a value a test sets rather than a wall-clock wait.
+    @ObservationIgnored private let now: @MainActor () -> Date
+
+    /// The backend, player and settings store the root built. Screens read them
+    /// from here; none of them constructs its own.
+    @ObservationIgnored public let services: ShellServices
+
+    /// Whether the game's sound is off. Sound only — haptics are not muted
+    /// here; iOS already gates those through System Haptics.
+    ///
+    /// Seeded from the persisted value at init, so a relaunch comes up in the
+    /// state the player left it in.
+    public private(set) var isMuted: Bool
+
+    /// The signed-in player, once sign-in lands. Nil until then, and for the
+    /// whole run of a build that carries no sign-in.
+    public private(set) var currentProfile: Profile?
+
+    /// One line saying why the menu's online actions are off, or nil when they
+    /// work. The copy is derived here rather than in a view: a view holds no
+    /// branch that changes what the app says.
+    public private(set) var onlineUnavailableReason: String?
+
+    /// Owned here so it can be cancelled when this model goes away; never
+    /// awaited on the launch path, so the menu draws while it is still running.
+    /// Readable so a test can await the launch sign-in instead of polling for
+    /// it; nothing in the app reads it.
+    @ObservationIgnored private(set) var signInTask: Task<Void, Never>?
+
+    public static let signingInReason = "Signing in…"
+    public static let noSignInReason = "Online play is unavailable in this build."
+
+    /// A `BackendError` as one line a player can read. Pure, so the copy is
+    /// testable without a model and without a view.
+    public static func onlineUnavailableReason(for error: any Error) -> String {
+        switch error as? BackendError {
+        case .offline: "You're offline. Reconnect to play a friend."
+        case .permissionDenied: "This account can't play online."
+        case .notAuthenticated, .notFound, .alreadyExists, .blocked, .matchFull, .none:
+            "Couldn't sign in. Reopen the app to try again."
+        }
+    }
+
     public init(
         route: AppRoute = .menu,
         dictionary: @escaping @MainActor () -> any WordList = {
@@ -73,12 +133,55 @@ public final class ShellModel {
         },
         seedSource: @escaping @MainActor () -> UInt64 = {
             UInt64.random(in: UInt64.min ... UInt64.max)
-        }
+        },
+        now: @escaping @MainActor () -> Date = { Date() },
+        services: ShellServices = ShellServices()
     ) {
         self.route = route
         self.dictionary = dictionary
         self.sleepFor = sleepFor
         self.seedSource = seedSource
+        self.now = now
+        self.services = services
+        self.soloSetup = SoloSetup(store: services.settings)
+        // Before the early return below: a build with no sign-in still has a
+        // mute control, and an uninitialised stored property would not compile.
+        self.isMuted = services.audioSettings.isMuted
+
+        guard let signIn = services.signIn else {
+            onlineUnavailableReason = Self.noSignInReason
+            return
+        }
+        onlineUnavailableReason = Self.signingInReason
+        signInTask = Task { @MainActor [weak self] in
+            do {
+                let profile = try await signIn.signIn()
+                guard !Task.isCancelled, let self else { return }
+                currentProfile = profile
+                onlineUnavailableReason = nil
+                // The invite topic is named for the local user, so this is the
+                // first moment it can be opened at all.
+                startInviteChannel(for: profile)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                onlineUnavailableReason = Self.onlineUnavailableReason(for: error)
+            }
+        }
+    }
+
+    /// Cancels the sign-in the model started, and closes the invite channel it
+    /// opened. A failed or cancelled sign-in is a disabled menu with a reason —
+    /// never a retry, never an alert.
+    ///
+    /// The channel is left here rather than only in ``endInviteChannel()``
+    /// because no channel may outlive this model: a subscription still on the
+    /// socket after the model has gone is one nothing can ever tear down.
+    deinit {
+        signInTask?.cancel()
+        inviteTask?.cancel()
+        inviteExpiry?.cancel()
+        inviteSend?.cancel()
+        inviteChannel?.leave()
     }
 
     /// Whether `generation` is still the live one. Read by a
@@ -86,22 +189,540 @@ public final class ShellModel {
     /// the run they were built for has been replaced.
     func isLiveGeneration(_ generation: Int) -> Bool { generation == self.generation }
 
+    /// The one path that changes mute. Both writes happen here — the persisted
+    /// value and the live player — so no caller can set one without the other.
+    ///
+    /// The tap cue comes after both writes, so unmuting is audible and muting
+    /// is not. Haptics are untouched by design.
+    public func setMuted(_ muted: Bool) {
+        isMuted = muted
+        services.audioSettings.setMuted(muted)
+        services.audio.setMuted(muted)
+        services.audio.play(.menuTap)
+    }
+
+    public func toggleMute() { setMuted(!isMuted) }
+
     /// Menu → countdown. Ignored from anywhere else, so a stray tap on a stale
     /// menu button cannot yank a live match back to the start.
     public func startMatch(_ setup: MatchSetup) {
         guard case .menu = route else { return }
+        dropInviteBanner()
         route = .countdown(setup)
+    }
+
+    /// Takes any banner down on the way to a screen that must not carry one.
+    /// The same rule ``showsInvites(_:)`` states for arrival, applied to a
+    /// banner that was already up: a match is no place to be asked to join one.
+    private func dropInviteBanner() {
+        inviteExpiry?.cancel()
+        inviteExpiry = nil
+        inviteBanner = nil
+        inviteMessage = nil
+    }
+
+    /// The guest's join screen for this visit, or nil when it is not up. Like
+    /// ``hostLobby`` it owns a live `OnlineMatch` once a code lands, so it is
+    /// built on the way in and torn down by ``returnToMenu()`` on every way out.
+    public private(set) var join: JoinModel?
+
+    /// Menu → the join screen.
+    ///
+    /// Refused on the same terms as ``playAFriend()``: joining writes a
+    /// `match_players` row, and there is nobody to write one as.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showJoin() -> Bool {
+        guard case .menu = route, canPlayOnline, let backend = services.backend else {
+            return false
+        }
+        services.audio.play(.menuTap)
+        join = JoinModel(
+            shell: self,
+            backend: backend,
+            dictionary: loadedDictionary(),
+            sleepFor: sleepFor
+        )
+        route = .join
+        return true
+    }
+
+    /// The profile screen for this visit, or nil when it is not up. Torn down
+    /// by ``returnToMenu()`` like every other screen model, so a stale draft
+    /// name cannot survive a trip to the menu and reappear.
+    public private(set) var profile: ProfileModel?
+
+    /// Where ``dismissProfile()`` goes. The profile screen is reached from two
+    /// places and Back means "the screen I came from", not "the menu" — and
+    /// `ProfileView` itself takes only a closure and holds no route, so the
+    /// answer has to be remembered here.
+    @ObservationIgnored private var profileReturn: AppRoute = .menu
+
+    /// Menu → the local player's profile, with editing on.
+    ///
+    /// Refused without a signed-in profile, on the same terms the menu button
+    /// is disabled: there is no row to render and nobody to save as.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showProfile() -> Bool {
+        guard case .menu = route, let currentProfile else { return false }
+        services.audio.play(.menuTap)
+        profile = ProfileModel(
+            profile: currentProfile,
+            isEditable: true,
+            backend: services.backend,
+            pasteboard: Self.pasteboard
+        )
+        profileReturn = .menu
+        route = .profile
+        return true
+    }
+
+    /// Friends → that friend's profile, read-only.
+    ///
+    /// The very screen ``showProfile()`` opens, with `isEditable` off: a
+    /// second read-only profile view would be a second copy of the stats rules.
+    /// Only from `.friends`, like every other transition here, so a stale tap
+    /// cannot open a profile over a live match.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showFriendProfile(_ entry: FriendEntry) -> Bool {
+        guard case .friends = route else { return false }
+        profile = ProfileModel(
+            profile: entry.profile,
+            isEditable: false,
+            backend: services.backend,
+            pasteboard: Self.pasteboard
+        )
+        profileReturn = .friends
+        route = .profile
+        return true
+    }
+
+    /// Back out of the profile screen, to whichever screen opened it.
+    ///
+    /// Returning to the friends list nils `profile` and nothing else:
+    /// ``returnToMenu()`` also drops `friends`, and using it here would leave
+    /// the route on a list with no model behind it.
+    public func dismissProfile() {
+        guard case .profile = route else { return }
+        profile = nil
+        guard case .friends = profileReturn, friends != nil else { return returnToMenu() }
+        route = .friends
+    }
+
+    /// The friends list for this visit, or nil when it is not up. Torn down by
+    /// ``returnToMenu()`` like every other screen model, so the next visit reads
+    /// the sections again rather than showing the last visit's.
+    public private(set) var friends: FriendsModel?
+
+    /// Menu → the friends list.
+    ///
+    /// Refused without a signed-in profile, on the same terms the menu button is
+    /// disabled: `friendships()` is read as somebody, and there is nobody.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func showFriends() -> Bool {
+        guard case .menu = route, let currentProfile, let backend = services.backend else {
+            return false
+        }
+        services.audio.play(.menuTap)
+        friends = FriendsModel(me: currentProfile, backend: backend)
+        route = .friends
+        return true
+    }
+
+    /// Putting the friend code on the clipboard. Here rather than in
+    /// `Willagrams/Account` because `UIPasteboard` is UIKit and that directory
+    /// is compiled for macOS by two test packages; a no-op there is correct,
+    /// since nothing on macOS renders the button that calls it.
+    static let pasteboard: @MainActor (String) -> Void = { text in
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
+    }
+
+    // MARK: - Invites
+
+    /// The invite banner up right now, or nil. One at a time: a second invite
+    /// arriving replaces nothing — the first is still the one being answered.
+    public private(set) var inviteBanner: MatchInvite?
+
+    /// One line about an invite that came to nothing, or nil. Derived here for
+    /// the same reason ``onlineUnavailableReason`` is: a view holds no branch
+    /// that changes what the app says.
+    public private(set) var inviteMessage: String?
+
+    @ObservationIgnored private var inviteChannel: (any MatchInviteChannel)?
+    @ObservationIgnored private var inviteTask: Task<Void, Never>?
+    @ObservationIgnored private var inviteExpiry: Task<Void, Never>?
+    @ObservationIgnored private var inviteSend: Task<Void, Never>?
+
+    /// Every match already offered as a banner, against when it was offered.
+    /// Broadcast promises no ordering and no exactly-once, so "at most one
+    /// banner per match" is remembered here rather than assumed of the wire.
+    ///
+    /// Dated rather than a bare set so it cannot grow for the life of the
+    /// process: an entry older than an invite's lifetime can never suppress a
+    /// live invite, so it is dropped on the next arrival.
+    @ObservationIgnored private var bannered: [UUID: Date] = [:]
+
+    /// The accepted friend ids from the last ``BackendClient/friendships()``,
+    /// against when they were read. A bound on how much work an unwanted frame
+    /// can cost, not a speed-up: see ``isAcceptedFriend(_:)``.
+    @ObservationIgnored private var acceptedFriends: (ids: Set<UUID>, at: Date)?
+
+    /// How long a read friend list answers for. Well under an invite's own
+    /// lifetime, so a friendship accepted mid-session is live before the
+    /// invite that follows it has expired.
+    static let friendListLifetime: TimeInterval = 30
+
+    /// The invite whose join is in flight, or nil. A hand-typed code's failure
+    /// is the join screen's own message and nothing more; only an invite's
+    /// failure clears a banner.
+    @ObservationIgnored private var joiningInvite: MatchInvite?
+
+    /// How long an invite is worth showing. Past it the host has almost
+    /// certainly given up and cancelled the lobby.
+    public static let inviteLifetime: TimeInterval = 120
+
+    public static let inviteOverMessage = "That game is over."
+    public static let inviteJoinLabel = "Join"
+
+    /// Said to the host, not the friend: the invite did not leave this device.
+    /// One line for both ways that happens — no channel to send on, and a send
+    /// that threw — because the player's next move is the same either way.
+    public static let inviteSendFailedMessage = "Could not send that invite."
+
+    /// What the banner says. Pure, so the copy is testable without a model.
+    public static func inviteLine(_ invite: MatchInvite) -> String {
+        "\(invite.hostName) wants to play"
+    }
+
+    /// How old an invite is by the local clock, never negative.
+    ///
+    /// The clamp is the whole point: the two clocks are the sender's and the
+    /// recipient's, and a recipient running a little behind would otherwise see
+    /// every invite as arriving from the future.
+    ///
+    /// ponytail: only the future half is clamped. A recipient whose clock runs
+    /// more than two minutes *fast* still drops every invite, and nothing on
+    /// the client can tell that apart from a genuinely stale one. Upgrade when
+    /// the frame carries a server timestamp to measure against.
+    private func age(of invite: MatchInvite) -> TimeInterval {
+        max(0, now().timeIntervalSince(invite.sentAt))
+    }
+
+    /// Whether the sender is someone this player has actually accepted.
+    ///
+    /// The sender's client already refuses to invite a stranger, but that is
+    /// the attacker's own copy of the rule: the topic is named for a player id,
+    /// and a friend code resolves to one. This is the half that holds.
+    ///
+    /// Answered from ``acceptedFriends`` whenever that is fresh, because a
+    /// rejected frame publishes nothing and so leaves the next frame just as
+    /// welcome: without the cache a peer spamming distinct match ids would
+    /// drive one backend query per frame from the *victim's* device.
+    ///
+    /// ponytail: a whole-list cache on a time bound, not an invalidated one —
+    /// a friendship accepted in the last ``friendListLifetime`` seconds is not
+    /// visible here yet, so that brand-new friend's first invite can be
+    /// dropped and has to be sent again. Invalidate on the friends screen's
+    /// own accept instead when that wait is worth a coupling.
+    private func isAcceptedFriend(_ hostID: UUID) async -> Bool {
+        guard let me = currentProfile else { return false }
+        guard hostID != me.id else { return false }
+        return await acceptedFriendIDs(me: me.id).contains(hostID)
+    }
+
+    /// The accepted counterparts of every friendship row, cached.
+    private func acceptedFriendIDs(me: UUID) async -> Set<UUID> {
+        if let cached = acceptedFriends,
+           now().timeIntervalSince(cached.at) < Self.friendListLifetime {
+            return cached.ids
+        }
+        guard let backend = services.backend,
+              let rows = try? await backend.friendships() else { return [] }
+        // `.accepted` is load-bearing and not a formality: declining leaves the
+        // row behind as `.blocked` rather than deleting it, so this predicate
+        // is what keeps a blocked player off the banner.
+        let ids = Set(rows.filter { $0.status == .accepted }.compactMap { $0.other(than: me) })
+        acceptedFriends = (ids, now())
+        return ids
+    }
+
+    /// The four screens an invite may interrupt.
+    ///
+    /// An allow-list, not a deny-list: a route added later is silent until
+    /// somebody decides it should not be, which is the safe way round for a
+    /// banner that must never land over a live match or a lobby.
+    static func showsInvites(_ route: AppRoute) -> Bool {
+        switch route {
+        case .menu, .friends, .profile, .join: true
+        default: false
+        }
+    }
+
+    /// Opens the local player's invite topic and pumps it. Called once, when
+    /// sign-in lands; ``endInviteChannel()`` and `deinit` are the ways out.
+    private func startInviteChannel(for profile: Profile) {
+        guard inviteChannel == nil, let make = services.inviteChannel else { return }
+        let channel = make(profile.id)
+        inviteChannel = channel
+        let sleepFor = sleepFor
+        inviteTask = Task { @MainActor [weak self] in
+            // A socket that is down at sign-in is the common failure, and it is
+            // transient. Without the retry one refused subscribe would kill
+            // invites for the whole session, silently — the channel would still
+            // be non-nil and nothing else ever opens one.
+            var subscribed = false
+            var backoff = Duration.seconds(1)
+            for attempt in 0 ..< Self.inviteSubscribeAttempts {
+                do {
+                    try await channel.subscribe()
+                    subscribed = true
+                    break
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    if attempt < Self.inviteSubscribeAttempts - 1 {
+                        try? await sleepFor(backoff)
+                        // Again after the sleep: a cancel landing during the
+                        // backoff must not buy one more subscribe.
+                        guard !Task.isCancelled else { return }
+                        backoff *= 2
+                    }
+                }
+            }
+            guard subscribed else {
+                // Left in a state a later sign-in can open a channel from,
+                // rather than one holding a channel that never subscribed.
+                self?.forgetInviteChannel(channel)
+                channel.leave()
+                return
+            }
+            for await invite in channel.invites {
+                guard !Task.isCancelled, let self else { return }
+                await self.inviteArrived(invite)
+            }
+        }
+    }
+
+    /// How many times a refused subscribe is retried before invites are given
+    /// up on for this sign-in.
+    static let inviteSubscribeAttempts = 3
+
+    /// Drops the channel reference without touching the channel — the pump
+    /// closes it itself, and this is only about not holding a dead one.
+    ///
+    /// Only if it is still the one that gave up: a teardown-and-reopen while
+    /// the retries were running would otherwise have this clear a live
+    /// channel's reference, leaving invites arriving and none sendable.
+    private func forgetInviteChannel(_ channel: any MatchInviteChannel) {
+        guard inviteChannel === channel else { return }
+        inviteChannel = nil
+    }
+
+    /// Closes the channel and forgets everything it produced. The sign-out
+    /// teardown, and idempotent — no channel and no banner survives it.
+    public func endInviteChannel() {
+        inviteTask?.cancel()
+        inviteTask = nil
+        inviteExpiry?.cancel()
+        inviteExpiry = nil
+        inviteSend?.cancel()
+        inviteSend = nil
+        inviteChannel?.leave()
+        inviteChannel = nil
+        inviteBanner = nil
+        inviteMessage = nil
+        joiningInvite = nil
+        bannered.removeAll()
+        // The next sign-in is a different player, whose friends are not these.
+        acceptedFriends = nil
+    }
+
+    /// One invite off the wire. Every reason to say nothing is decided here, so
+    /// the banner the view draws is never a view's judgement.
+    func inviteArrived(_ invite: MatchInvite) async {
+        guard canBanner(invite) else { return }
+        // The one check that cannot be made locally. Everything above it is
+        // cheap and synchronous on purpose, so a flood of junk on the topic
+        // costs no round trips.
+        guard await isAcceptedFriend(invite.hostID) else { return }
+        // Re-read after the await: the player may have started a match, or a
+        // different invite may have taken the banner, while this was in flight.
+        guard canBanner(invite) else { return }
+
+        let now = now()
+        bannered = bannered.filter { now.timeIntervalSince($0.value) < Self.inviteLifetime }
+        bannered[invite.matchID] = now
+        inviteMessage = nil
+        inviteBanner = invite
+        armInviteExpiry(invite)
+    }
+
+    /// Every local reason to say nothing. Read twice by ``inviteArrived(_:)``,
+    /// because each of these can change while the friendship check is in
+    /// flight.
+    private func canBanner(_ invite: MatchInvite) -> Bool {
+        guard Self.showsInvites(route) else { return false }
+        // One at a time, as the doc on ``inviteBanner`` says: a second invite
+        // replaces nothing. Swapping the banner between the read and the tap
+        // would make Join enter a match the player never agreed to, and
+        // broadcast does not order its messages.
+        guard inviteBanner == nil else { return false }
+        guard bannered[invite.matchID] == nil else { return false }
+        guard age(of: invite) < Self.inviteLifetime else { return false }
+        return true
+    }
+
+    /// Wakes once, when this invite would be too old to answer.
+    ///
+    /// The wake re-reads the clock rather than trusting the sleep: an injected
+    /// `sleepFor` returns at once, and a banner must not vanish just because a
+    /// test's sleep does nothing.
+    private func armInviteExpiry(_ invite: MatchInvite) {
+        inviteExpiry?.cancel()
+        let remaining = Self.inviteLifetime - age(of: invite)
+        let sleepFor = sleepFor
+        inviteExpiry = Task { @MainActor [weak self] in
+            try? await sleepFor(.seconds(max(0, remaining)))
+            guard !Task.isCancelled else { return }
+            self?.expireInviteBanner()
+        }
+    }
+
+    /// Clears the banner if it has aged out, and says so. Idempotent, and a
+    /// no-op on a banner that is still good.
+    func expireInviteBanner() {
+        guard let invite = inviteBanner else { return }
+        guard age(of: invite) >= Self.inviteLifetime else { return }
+        inviteBanner = nil
+        inviteMessage = Self.inviteOverMessage
+    }
+
+    /// The banner's Join: the join screen, on the host's code, joining at once.
+    ///
+    /// The banner is taken down first whatever happens — an invite is answered
+    /// exactly once, and a banner still up behind the join screen would be a
+    /// second answer waiting to happen.
+    ///
+    /// - Returns: whether the join screen opened.
+    @discardableResult
+    public func joinInvite() -> Bool {
+        guard let invite = inviteBanner else { return false }
+        inviteBanner = nil
+        inviteExpiry?.cancel()
+        inviteExpiry = nil
+
+        // Aged out between the banner going up and the tap landing.
+        guard age(of: invite) < Self.inviteLifetime else {
+            inviteMessage = Self.inviteOverMessage
+            return false
+        }
+
+        inviteMessage = nil
+        // The banner shows on four screens and `showJoin()` only moves from the
+        // menu, so this is what makes Join work from any of them — and it is
+        // the same teardown every other way home runs.
+        returnToMenu()
+        guard showJoin(), let join else { return false }
+        joiningInvite = invite
+        join.code = invite.inviteCode
+        join.join()
+        return true
+    }
+
+    /// A join that failed, reported by ``JoinModel``.
+    ///
+    /// Only the two refusals that mean the lobby is gone send the player home;
+    /// everything else — offline, a full match — leaves them on the join screen
+    /// with the screen's own message, where retyping or retrying still works.
+    func joinFailed(_ error: any Error) {
+        guard joiningInvite != nil else { return }
+        joiningInvite = nil
+        switch error as? BackendError {
+        case .notFound, .permissionDenied: break
+        default: return
+        }
+        returnToMenu()
+        inviteMessage = Self.inviteOverMessage
+    }
+
+    /// Friends → host a lobby and invite that friend into it.
+    ///
+    /// Only an accepted friendship: a pending row is somebody who has not agreed
+    /// to hear from this player yet. Only from the friends list, which is also
+    /// what makes a double tap harmless — the first tap leaves the route on
+    /// `.hostLobby`, so the second finds no friends list to act from and one
+    /// lobby carries at most one invite.
+    ///
+    /// - Returns: whether the lobby opened.
+    @discardableResult
+    public func invitePlay(_ entry: FriendEntry) -> Bool {
+        guard case .friends = route else { return false }
+        guard entry.friendship.status == .accepted else { return false }
+        guard let channel = inviteChannel, let me = currentProfile else {
+            inviteMessage = Self.inviteSendFailedMessage
+            return false
+        }
+
+        returnToMenu()
+        guard playAFriend(), let lobby = hostLobby else { return false }
+
+        let recipient = entry.profile.id
+        let now = now
+        // The code does not exist until the `matches` row has been written, and
+        // that write is the lobby's own task — so this waits on it rather than
+        // polling, and re-checks that the lobby is still the live one.
+        inviteSend = Task { @MainActor [weak self] in
+            await lobby.work?.value
+            guard !Task.isCancelled, let self, self.hostLobby === lobby else { return }
+            guard let code = lobby.inviteCode, let matchID = lobby.match?.record.id else {
+                self.inviteMessage = Self.inviteSendFailedMessage
+                return
+            }
+            do {
+                try await channel.send(
+                    MatchInvite(
+                        matchID: matchID,
+                        inviteCode: code,
+                        hostID: me.id,
+                        hostName: me.displayName,
+                        sentAt: now()),
+                    to: recipient)
+            } catch {
+                // The same staleness guard the success path took before the
+                // await, retaken after it: a send cannot be interrupted once
+                // parked, so by the time it throws the player may be on a
+                // countdown or in a match, and this line must not land there.
+                guard !Task.isCancelled, self.hostLobby === lobby else { return }
+                // The lobby is still good — the code is on screen and can be
+                // read out — so this says the invite did not go, and nothing
+                // more.
+                self.inviteMessage = Self.inviteSendFailedMessage
+            }
+        }
+        return true
     }
 
     /// What the next solo match will be played with. Lives here rather than on
     /// the screen that edits it, so choices survive backing out to the menu.
-    public let soloSetup = SoloSetup()
+    public let soloSetup: SoloSetup
 
     /// Menu → solo setup. Only from the menu, for the same reason the rules
     /// screen is: a live match must not be yanked out from under the player by
     /// a stray tap on a stale control.
     public func showSoloSetup() {
         guard case .menu = route else { return }
+        services.audio.play(.menuTap)
+        // Entry is where the stored rules are read, so the screen opens on what
+        // was last chosen — here or in a host lobby — rather than on defaults.
+        soloSetup.loadOptions()
         route = .soloSetup
     }
 
@@ -110,7 +731,47 @@ public final class ShellModel {
     /// is the way back.
     public func showHowToPlay() {
         guard case .menu = route else { return }
+        services.audio.play(.menuTap)
         route = .howToPlay
+    }
+
+    /// The host's lobby for this visit, or nil when the screen is not up. It
+    /// owns a live `OnlineMatch`, so it is built on the way in and torn down by
+    /// ``returnToMenu()`` on every way out.
+    public private(set) var hostLobby: HostLobbyModel?
+
+    /// Whether the menu's online actions can be taken. One question, asked here,
+    /// so the view that draws the button and the transition that honours it
+    /// cannot disagree.
+    public var canPlayOnline: Bool { currentProfile != nil && services.backend != nil }
+
+    /// Menu → host lobby, building the lobby that screen renders.
+    ///
+    /// Refused with no sign-in and no backend, for the same reason the button is
+    /// disabled: a lobby needs a `matches` row and there is nobody to write one
+    /// as. The rules are whatever ``SettingsStore`` last stored, so a host plays
+    /// under the options they last chose for solo.
+    ///
+    /// - Returns: whether the route moved.
+    @discardableResult
+    public func playAFriend() -> Bool {
+        guard case .menu = route, canPlayOnline, let backend = services.backend else {
+            return false
+        }
+        services.audio.play(.menuTap)
+        dropInviteBanner()
+        let lobby = HostLobbyModel(
+            shell: self,
+            backend: backend,
+            options: services.settings?.load() ?? .standard,
+            dictionary: loadedDictionary(),
+            localProfile: currentProfile,
+            sleepFor: sleepFor
+        )
+        hostLobby = lobby
+        route = .hostLobby
+        lobby.create()
+        return true
     }
 
     /// What the menu's first action starts. The setup is fixed apart from the
@@ -167,28 +828,71 @@ public final class ShellModel {
         let candidate = explicit ?? seedSource()
         let fresh = candidate == seed ? candidate &+ 1 : candidate
 
+        // Start is where the rules are written back, so the next launch and the
+        // next host lobby open on what this match is about to be played under.
+        let chosen = (options ?? soloSetup.options).validated
+        soloSetup.saveOptions(chosen)
+
         startMatch(
             MatchSetup(
                 seed: fresh,
                 startingHandSize: handSize ?? soloSetup.handSize,
                 countdownSeconds: Self.soloCountdownSeconds,
-                options: options ?? soloSetup.options
+                options: chosen
             )
         )
+        return install { setup, dictionary, generation in
+            MatchRun(
+                shell: self,
+                setup: setup,
+                dictionary: dictionary,
+                generation: generation,
+                difficulty: difficulty ?? self.soloSetup.difficulty,
+                sleepFor: self.sleepFor
+            )
+        }
+    }
+
+    /// Menu → countdown over an opponent the caller built — a lobby's
+    /// `OnlineMatch`, or a test's double.
+    ///
+    /// The opponent arrives as a closure rather than as a value so the same
+    /// down-before-up order solo has is kept for a caller who cannot see it: the
+    /// previous run is torn down, and only then is the next opponent made. A
+    /// built value in an argument would be constructed before this call is even
+    /// entered, with two far ends live at once for as long as that took.
+    @discardableResult
+    public func startMatch(
+        _ setup: MatchSetup,
+        opponent makeOpponent: @MainActor () -> any MatchOpponent
+    ) -> Bool {
+        // Down before up, exactly as in `startSoloPractice`.
+        returnToMenu()
+        startMatch(setup)
+        return install { setup, dictionary, generation in
+            MatchRun(
+                shell: self,
+                setup: setup,
+                dictionary: dictionary,
+                generation: generation,
+                opponent: makeOpponent()
+            )
+        }
+    }
+
+    /// Builds the run for the countdown the route is already on, arms it and
+    /// opens it. The one place a run becomes *the* run, so solo and online
+    /// cannot arm different things.
+    private func install(
+        _ build: (MatchSetup, any WordList, Int) -> MatchRun
+    ) -> Bool {
         // `startMatch` only moves from `.menu`, so this is the assertion that
         // the route really did advance rather than silently no-op.
         guard case .countdown(let setup) = route else { return false }
 
-        seed = fresh
+        seed = setup.seed
         generation &+= 1
-        let built = MatchRun(
-            shell: self,
-            setup: setup,
-            dictionary: loadedDictionary(),
-            generation: generation,
-            difficulty: difficulty ?? soloSetup.difficulty,
-            sleepFor: sleepFor
-        )
+        let built = build(setup, loadedDictionary(), generation)
         run = built
         // Armed BEFORE the deal: `start()` is what sets the count running, and a
         // tracker armed after it would miss a status change that landed in
@@ -230,7 +934,14 @@ public final class ShellModel {
     /// it does, so the check hops to the next main-actor turn — where the new
     /// status is readable — and re-arms there. The generation guard is what stops
     /// a superseded run's last callback yanking a newer match's route.
-    private func advanceWhenCountdownEnds(_ run: MatchRun, generation: Int) {
+    ///
+    /// It is also where the count is *heard*. The tick belongs to whatever owns
+    /// the seconds, and nothing else in the shell does: `CountdownOverlay` is a
+    /// value a view body builds — once per render, not once per second — so a
+    /// cue there would fire on every layout pass and none at all in a test.
+    /// `lastTick` rides the re-arm rather than being stored, so a second that
+    /// is merely re-read is silent and there is nothing to reset between runs.
+    private func advanceWhenCountdownEnds(_ run: MatchRun, generation: Int, lastTick: Int? = nil) {
         withObservationTracking {
             _ = run.session.state.status
             _ = run.session.isMatchOver
@@ -239,10 +950,13 @@ public final class ShellModel {
                 guard let self, self.isLiveGeneration(generation) else { return }
                 guard case .countdown = self.route else { return }
                 // A card still up means the count is still running.
-                guard CountdownOverlay(session: run.session) == nil else {
-                    return self.advanceWhenCountdownEnds(run, generation: generation)
+                guard let card = CountdownOverlay(session: run.session) else {
+                    return self.countdownFinished()
                 }
-                self.countdownFinished()
+                if card.secondsRemaining != lastTick { self.services.audio.play(.countdownTick) }
+                return self.advanceWhenCountdownEnds(
+                    run, generation: generation, lastTick: card.secondsRemaining
+                )
             }
         }
     }
@@ -276,15 +990,40 @@ public final class ShellModel {
                 // `.match`. Finishing the countdown first is what stops that
                 // ending being swallowed.
                 if case .countdown = self.route { self.countdownFinished() }
-                self.matchEnded(winner: run.session.winner)
+                self.matchEnded(
+                    winner: run.session.winner, localPlayerID: run.session.localPlayerID
+                )
             }
         }
     }
 
     /// Match → results. Only reachable from a match, so results can never show
     /// an outcome for a match that never ran.
-    public func matchEnded(winner: PlayerID?) {
+    /// - Parameter localPlayerID: who "this device" is, for the outcome the
+    ///   ending is sounded from. Defaults to the live run's, which is the only
+    ///   answer when the ending arrived from the far end; ``MatchHUDModel``
+    ///   passes its own session's, so a HUD over a session the shell did not
+    ///   build still sounds the right ending.
+    public func matchEnded(winner: PlayerID?, localPlayerID: PlayerID? = nil) {
         guard case .match = route else { return }
+        // Here, not in `ResultsModel.init`: that type is built by a factory
+        // SwiftUI calls again on every re-render, and a cue in it would replay
+        // the ending on every body. This runs once per match, on the one
+        // transition into the end screen, and reads the same mapping the screen
+        // renders from — there is no second rule about who won.
+        if let localPlayerID = localPlayerID ?? run?.session.localPlayerID {
+            switch ResultsModel.Outcome(winner: winner, localPlayerID: localPlayerID) {
+            case .localWin:
+                services.audio.play(.win)
+                // The one haptic the shell fires. Tiles have their own, from
+                // `BoardHaptics`, and nothing here doubles it.
+                services.audio.impact(.medium)
+            case .peerWin: services.audio.play(.loss)
+            // Neither a win nor a loss, so neither sound. A peer that walked
+            // away is not an outcome to celebrate or mourn.
+            case .noWinner: break
+            }
+        }
         route = .results(winner: winner)
     }
 
@@ -292,6 +1031,37 @@ public final class ShellModel {
     /// taking the live match with it. The teardown runs first, so the menu is
     /// never shown over a session that is still pumping.
     public func returnToMenu() {
+        // Before the route moves, and before the run is touched: a cancelled
+        // lobby must not leave a channel subscribed behind the menu. Every exit
+        // from `.hostLobby` runs through here — Cancel, Start's own teardown,
+        // and anything else that goes home — so there is one place this happens
+        // rather than one per way out.
+        hostLobby?.teardown()
+        hostLobby = nil
+        // The guest's half of the same rule: the join in flight is cancelled and
+        // its channel closed before the menu is shown over them.
+        join?.teardown()
+        join = nil
+        // No channel and no task behind this one — dropping it is the whole
+        // teardown — but it goes before the route moves for the same reason the
+        // other two do: the menu is never shown over a screen model that is
+        // still reachable.
+        profile = nil
+        // Same rule again: no channel and no task behind it, but it is gone
+        // before the route moves so the menu is never shown over a live screen
+        // model, and a stale section list cannot reappear on the next visit.
+        friends = nil
+        // The invite in flight belongs to the lobby being torn down. The
+        // channel itself is untouched — it outlives every screen and is closed
+        // only by ``endInviteChannel()`` and `deinit`.
+        inviteSend?.cancel()
+        inviteSend = nil
+        joiningInvite = nil
+        // "That game is over." is about the screen the player just left. Left
+        // pinned it would sit over the menu for the rest of the session; the
+        // two callers that mean to say it — ``joinInvite()`` and
+        // ``joinFailed(_:)`` — set it after this runs.
+        inviteMessage = nil
         endSoloPractice()
         // Reaching the menu is what makes every end screen stale: the run they
         // were built for is gone and cannot come back. The bump is here rather

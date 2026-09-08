@@ -47,11 +47,13 @@ public enum MatchOutcomeUpdate: Sendable, Equatable {
 
 /// The four counters this recorder owns on a `profiles` row.
 ///
-/// A whole new value rather than a delta: the increment is computed from the
-/// row as it was read, so what reaches the database is always a value that
-/// already satisfies `matches_won <= matches_played` and the non-negativity
-/// checks. `fastestWinSeconds` is `encodeIfPresent` by synthesis, so a `nil`
-/// omits the key rather than nulling a record the player already holds.
+/// The rules, stated once in Swift so they are decidable with no project — and
+/// stated again in `supabase/migrations/0004_record_outcome.sql`, which is what
+/// actually runs. Duplicated on purpose, the way `0003`'s `6` is: the two move
+/// together or not at all, and `MatchOutcomeRecorderLiveTests` is the crossing
+/// that proves they still agree. Every offline ``MatchOutcomeStore`` double
+/// applies ``after(_:won:tilesPlaced:elapsedSeconds:)``; the Supabase one calls
+/// the function.
 public struct ProfileStats: Sendable, Equatable, Encodable {
 
     public var matchesPlayed: Int
@@ -116,9 +118,9 @@ public struct ProfileStats: Sendable, Equatable, Encodable {
 
 /// Everything ``MatchOutcomeRecorder`` asks of the database.
 ///
-/// Three methods, and the read is one of them on purpose: a stats bump is an
-/// increment on a value that was read, never a blind write of a number this
-/// process guessed.
+/// Three methods, and the stats bump is a delta on purpose: the increment is
+/// applied by whatever holds the row, never computed here from a copy of it
+/// that a concurrent match may already have made stale.
 ///
 /// SDK-free by rule — this file must never import `PostgREST`.
 public protocol MatchOutcomeStore: Sendable {
@@ -126,11 +128,22 @@ public protocol MatchOutcomeStore: Sendable {
     /// Updates the `matches` row. Only ever called on the creator's device.
     func updateMatch(_ id: UUID, _ update: MatchOutcomeUpdate) async throws
 
-    /// The row as it stands, which is what the increment is computed from.
+    /// The row as it stands. Not what the increment is computed from — the
+    /// server does that — but what a caller showing the result reads.
     func profile(_ id: UUID) async throws -> Profile
 
-    /// Writes the four counters back. Only ever the caller's own row.
-    func updateProfile(_ id: UUID, _ stats: ProfileStats) async throws
+    /// Applies one finished match to `id`'s four counters and hands back the
+    /// row as it now stands.
+    ///
+    /// A delta, not a value. The Supabase conformance is one `update ... set
+    /// column = column + n` inside `record_outcome`, so the row the increment
+    /// reads is the row it writes; a value computed here from a row read a
+    /// round trip ago would silently lose a concurrent match. Every offline
+    /// double applies ``ProfileStats/after`` to say the same thing.
+    @discardableResult
+    func recordOutcome(
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+    ) async throws -> Profile
 }
 
 // MARK: - The recorder
@@ -241,11 +254,8 @@ public final class MatchOutcomeRecorder {
         // device's own count and nobody else's.
         let tiles = session.state.board.placements.count
         await write {
-            let current = try await store.profile(localID)
-            try await store.updateProfile(
-                localID,
-                .after(current, won: won, tilesPlaced: tiles, elapsedSeconds: elapsed)
-            )
+            try await store.recordOutcome(
+                localID, won: won, tilesPlaced: tiles, elapsedSeconds: elapsed)
         }
     }
 

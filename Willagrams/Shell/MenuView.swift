@@ -118,8 +118,25 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
             Spacer(minLength: 0)
 
-            Text(Self.actionsLabel)
-                .monoLabel()
+            // The mute control rides the section label rather than the button
+            // stack: it is chrome, not a third thing to play. Icon only, at the
+            // label's weight, so it never competes with the PLAY actions.
+            HStack {
+                Text(Self.actionsLabel)
+                    .monoLabel()
+
+                Spacer(minLength: 0)
+
+                Button { shell.toggleMute() } label: {
+                    Image(systemName: shell.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .imageScale(.medium)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .accessibilityLabel(shell.isMuted ? Self.soundOffLabel : Self.soundOnLabel)
+            }
 
             // Into the setup screen, not into a match: what the far end plays
             // like and what the rules are get chosen before the deal, because
@@ -128,6 +145,51 @@ struct MenuView: View {
                 Text(SoloSetup.title).menuActionLabel()
             }
             .buttonStyle(.brandPrimary)
+
+            // Online play, off until the anonymous sign-in lands. Disabled with
+            // a reason underneath rather than absent: the row is a promise the
+            // app keeps as soon as it can, and a control that vanishes and
+            // reappears is worse than one that says why it is waiting.
+            Button { shell.playAFriend() } label: {
+                Text(HostLobbyModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandPrimary)
+            .disabled(!shell.canPlayOnline)
+
+            // The other end of the same handoff: one side shows a code, the
+            // other types it. Two actions rather than one screen with both,
+            // because a host and a guest are doing different things and a
+            // screen that offered both would ask the player which they are.
+            Button { shell.showJoin() } label: {
+                Text(JoinModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandQuiet)
+            .disabled(!shell.canPlayOnline)
+
+            // Your own row: a name to change and the code a friend needs. Off
+            // on the same terms as the two above — there is no profile to show
+            // until sign-in lands.
+            Button { shell.showProfile() } label: {
+                Text(ProfileModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandQuiet)
+            .disabled(shell.currentProfile == nil)
+
+            // Who you play with, and who is waiting on an answer. Gated on the
+            // same signed-in row the profile is: `friendships()` is read as
+            // somebody.
+            Button { shell.showFriends() } label: {
+                Text(FriendsModel.title).menuActionLabel()
+            }
+            .buttonStyle(.brandQuiet)
+            .disabled(shell.currentProfile == nil)
+
+            if let reason = shell.onlineUnavailableReason {
+                Text(reason)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Button { shell.showHowToPlay() } label: {
                 Text(HowToPlay.title).menuActionLabel()
@@ -142,6 +204,12 @@ struct MenuView: View {
     /// concepts, not screens. The two action labels are the screens' own
     /// chrome — `SoloSetup.title` and `HowToPlay.title`.
     private static let actionsLabel = "PLAY"
+
+    /// The mute control's two states, read aloud. Chrome, so local constants
+    /// and not `Terminology` — the label states what is true now, so a muted
+    /// app reads "Sound off".
+    private static let soundOnLabel = "Sound on"
+    private static let soundOffLabel = "Sound off"
 
     /// The one sentence that says what the game is. The game concepts in it come
     /// through `Terminology`, so the fence holds here too.

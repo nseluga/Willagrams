@@ -448,3 +448,110 @@ by code only after seating the caller in it.
 
 The error contract the Swift client maps: `42501` → `notAuthenticated`,
 `P0002` → `notFound`, `P0005` → `matchFull`.
+
+## Amendment — the stats bump is a delta, not a value (written 2026-09-02)
+
+Found reviewing the outcome recorder after the first live online run. Nothing in
+the frozen shape moves: no table, column, constraint, row type or policy
+changes, and `BackendContracts.swift` is untouched. What changes is one protocol
+inside `Willagrams/Online/**`, which no other lane implements.
+
+`MatchOutcomeRecorder` recorded a finished match by reading the player's
+`profiles` row, computing the four counters from it in Swift, and PATCHing the
+whole value back. That is a read-modify-write across two round trips. The
+counters are a tally nothing recomputes — `0001_init.sql` says so in as many
+words — so a player finishing two matches inside that window has both writes
+computed from the same `before` row, and the second silently erases the first.
+Nothing raises, no test against a double notices, and the match is gone for
+good. This is the same false-negative shape the recorder's own header names.
+
+The `0002` guardrail — the definer functions in this schema are few and each
+narrowly scoped — is widened from two to three. The reasoning is in the
+migration's header and is not the obvious one: the first draft was `security
+invoker`, on the grounds that `profiles_update_self` already grants a player
+their own row, and it was run before it was believed. It fails twice. As
+invoker the body executes with the caller's privileges, so `auth.uid()` becomes
+a grant on the `auth` schema the `authenticated` role must hold rather than a
+given — against the stub in `docs/schema.md` it raises `permission denied for
+schema auth` before reaching the update. And under a policy, a row the caller
+may not update is zero rows rather than an error, so the function's `not found`
+branch could not tell "you have no profile row" from "the policy hid it" and
+would report the second as `P0002` → `notFound`. Definer removes both.
+
+- task: Make one finished match one atomic increment on the player's own row
+  done when:
+    - `supabase/migrations/0004_record_outcome.sql` declares
+      `public.record_outcome(won boolean, tiles integer, elapsed_seconds integer)
+      returns public.profiles`, `language plpgsql`, `security definer`, with
+      `set search_path = public, pg_temp`; execute revoked from `public` and
+      from `anon`, granted to `authenticated`
+    - it takes **no player id** — the row is `auth.uid()` — and raises `42501`
+      with no signed-in caller, `P0002` when that caller has no `profiles` row
+    - every counter is written as `column + n` inside one UPDATE, so the row the
+      increment reads is the row it writes
+    - `fastest_win_seconds` moves only on a win and only downwards, via
+      `least`, which ignores nulls and so covers the first win with no branch;
+      elapsed floors at 1 and tiles floor at 0, both because the column's own
+      check says so
+    - `MatchOutcomeStore` drops `updateProfile(_:_:)` for
+      `recordOutcome(_:won:tilesPlaced:elapsedSeconds:) -> Profile`, and
+      `SupabaseOutcomeQueries` implements it as one `rpc("record_outcome")`
+    - `supabase/tests/rls_behavior.sql` asserts the five rules, the caller's own
+      row, another player's row untouched, and both error codes — 45 assertions
+      in total, up from 33 — and both SQL fixtures run twice in either order
+      leaving `public` clean
+    - OnlineTests is green offline
+  guardrails:
+    - `ProfileStats.after` stays, and stays tested. It is now the offline model
+      of what the function does rather than production code, duplicated on
+      purpose the way `0003`'s `6` is: every offline `MatchOutcomeStore` double
+      applies it, the migration states the same five rules in SQL, and the two
+      move together or not at all. `MatchOutcomeRecorderLiveTests` is the only
+      crossing that can prove they still agree — a Swift-only run cannot
+    - the function touches four columns and no others. `display_name` and
+      `friend_code` stay reachable only through `profiles_update_self`
+    - the client keeps its `didRecordStats` latch. Atomic is not idempotent —
+      calling this twice records two matches, correctly. "Exactly once" is still
+      the recorder's, and a failed write is still not retried
+  risk: the failure this removes writes nothing to any log and raises nothing.
+        A counter that is one short looks exactly like a player who played one
+        fewer match, on the one table the schema deliberately never recomputes
+  difficulty: low to write; the invoker-first draft is the part worth reading
+  status: **done, and live on `ynkayuwwrifluhhqnrjc` as of 2026-09-02.** Proven
+        first on a scratch database — 45 assertions, both fixtures twice in
+        either order, nine mutations of the function each confirmed to turn the
+        suite red — then applied to the project, where `record_outcome` stands
+        alongside the other two definer functions with `search_path` pinned. The
+        live OnlineTests run green, including `MatchOutcomeRecorderLiveTests`,
+        which is the only crossing that can prove `ProfileStats.after` and the
+        SQL still agree. The database password is in the `fnd` worktree's
+        `.env`, written there by `scripts/supabase-setup.sh`; `scripts/apply-0004-live.sh`
+        is the runner and `scripts/scratch-verify.sh` the offline one
+
+
+## Open risk — Realtime broadcast is not ordered (found 2026-09-02)
+
+  task: give `WireEnvelope` a per-sender sequence number and have the receiving
+        transport deliver in that order, holding a gap briefly before giving up
+        on it
+  why:  `RealtimeMatchTransportLiveTests` sent twenty messages each way, awaiting
+        each send before the next, and they arrived transposed — `host-0` behind
+        `host-3` — on roughly one live run in two. The sends are sequential, so
+        the reordering is the server's fan-out. Supabase Realtime broadcast is
+        best-effort ordered and makes no sequencing promise across a fan-out
+  found by: the assertion that used to demand strict order. It was narrowed to a
+        multiset comparison, which is what the platform actually guarantees, so
+        the suite no longer flakes — and no longer covers this. That is why the
+        risk is written here rather than left in a comment
+  risk: **this is a real defect, not a test artifact.** The match protocol
+        applies moves in the order they arrive. Two moves that cross put the two
+        devices in different board states with nothing raised, which is the same
+        silent-divergence shape `0004` was written to remove from the stats
+  guardrails:
+    - the fix belongs to whichever lane owns the wire format, not to a test
+    - a sequence number is not a delivery guarantee. Exactly-once is already
+      covered; ordering is the missing half
+    - the offline stub channel delivers in send order, so no offline case can
+      fail on this. It needs a live case, or a stub that deliberately transposes
+  difficulty: medium — the buffering-and-timeout policy is the whole of it
+  status: open. Not scheduled to a lane yet

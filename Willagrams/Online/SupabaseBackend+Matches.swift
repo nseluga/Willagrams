@@ -170,6 +170,23 @@ struct SupabaseMatchQueries: Sendable {
         }
         return try SupabaseBackend.matchPlayerRows(fromRows: rows)
     }
+
+    /// Closes out a lobby the host walked away from.
+    ///
+    /// The `status = 'lobby'` filter is the client's half of the rule: only a
+    /// lobby is abandoned, so a match that reached `playing` cannot be erased by
+    /// a late teardown. `matches_update_host` is the other half and refuses
+    /// everyone but the host by updating zero rows.
+    func abandon(matchID: UUID) async throws {
+        _ = try await mapping {
+            try await rest.from("matches")
+                .update(["status": MatchRecordStatus.abandoned.rawValue], returning: .minimal)
+                .eq("id", value: matchID.uuidString)
+                .eq("status", value: MatchRecordStatus.lobby.rawValue)
+                .execute()
+                .data
+        }
+    }
 }
 
 // MARK: - Pure statics and the actor's entry points
@@ -287,5 +304,14 @@ extension SupabaseBackend {
 
     func matchPlayerRows(inMatch matchID: UUID) async throws -> [MatchPlayerRow] {
         try await matchQueries().players(inMatch: matchID)
+    }
+}
+
+/// The real client's half of ``MatchAbandoning``. An extension rather than a
+/// method on the actor's own file: nothing else in this round edits that file.
+extension SupabaseBackend: MatchAbandoning {
+
+    public func abandonMatch(_ id: UUID) async throws {
+        try await matchQueries().abandon(matchID: id)
     }
 }

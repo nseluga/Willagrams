@@ -29,6 +29,21 @@ public enum OnlineMatchError: Error, Sendable, Equatable {
     case notAuthenticated
 }
 
+/// Closing out a lobby nobody is going to play.
+///
+/// A protocol beside `BackendClient` rather than a method on it: that file is
+/// frozen, and abandoning is the one write a lobby screen makes that the match
+/// itself never does. Both shipping clients conform — `SupabaseBackend` with an
+/// `update ... set status = 'abandoned'` the row's own policy fences to the
+/// host, `FakeBackend` by moving the row it holds.
+public protocol MatchAbandoning: Sendable {
+
+    /// Marks the `matches` row abandoned. A row that already left `lobby` is
+    /// left exactly as it stands: a played match is closed out by the outcome
+    /// recorder, never by whoever walked away from the screen.
+    func abandonMatch(_ id: UUID) async throws
+}
+
 /// One online match, lobby through the moment play begins.
 ///
 /// Create it with ``host(options:backend:)`` or ``join(code:backend:)``, watch
@@ -90,6 +105,42 @@ public final class OnlineMatch {
     @ObservationIgnored private var presencePump: Task<Void, Never>?
     @ObservationIgnored private var recorderTask: Task<Void, Never>?
 
+    /// Whether a `MatchSession` was handed out. What separates "a lobby nobody
+    /// played" from "a match that ran": ``leave()`` abandons the row only in the
+    /// first case, because in the second the outcome recorder owns it.
+    @ObservationIgnored public private(set) var hasStarted = false
+
+    /// The abandon this façade issues, or nil where the row cannot be closed
+    /// out — the shell's cancel then still tears the channel down.
+    @ObservationIgnored private var abandonTask: Task<Void, Never>?
+
+    /// How many times the abandon is attempted before the row is left stale.
+    ///
+    /// Nobody waits on this write, but discarding its failure leaves a
+    /// `matches` row stuck in `lobby` for good, with nothing surfaced. One
+    /// attempt is a single dropped packet away from that.
+    public static let abandonAttempts = 3
+
+    /// How long to wait between those attempts. Injected `sleepFor` makes it
+    /// free in tests.
+    public static let abandonRetryDelay: Duration = .seconds(2)
+
+    /// Whether the abandon landed: nil while it is still being attempted, and
+    /// on a façade that never had a row to close out. False once every attempt
+    /// has failed, which is a stale lobby row a human may have to clear.
+    @ObservationIgnored public private(set) var abandonSucceeded: Bool?
+
+    /// Waits out the abandon this façade issued, if any.
+    ///
+    /// Nothing in the app waits on it — the retry is fire-and-forget by design.
+    /// A test has to, or it asserts on ``abandonSucceeded`` before the loop has
+    /// run.
+    func awaitAbandon() async { await abandonTask?.value }
+
+    /// Set once ``leave()`` has run, so tearing a lobby down twice cannot issue
+    /// two abandons or leave a transport that is already gone.
+    @ObservationIgnored private var hasLeft = false
+
     private init(
         record: MatchRecord,
         localPlayer: PlayerID,
@@ -117,6 +168,51 @@ public final class OnlineMatch {
     deinit {
         presencePump?.cancel()
         recorderTask?.cancel()
+        // `abandonTask` is deliberately NOT cancelled. It captures the backend
+        // and the row id rather than `self`, and the whole point of it is to
+        // close out a row this façade is done with — cancelling it here would
+        // abort the retry precisely when the screen tears the façade down,
+        // which is the common case.
+    }
+
+    /// Tears this façade down: the presence pump, the recorder and the channel,
+    /// and — for a lobby that never became a match — the `matches` row.
+    ///
+    /// Idempotent, and synchronous up to and including `transport.leave()`, so a
+    /// screen that calls this before it moves cannot leave a live channel behind
+    /// it. Only the abandon is a `Task`: it is a network write with nothing to
+    /// wait for, and a lobby whose abandon never lands is a stale row, not a
+    /// live channel.
+    ///
+    /// The session a started match handed out is not left here — `MatchSession`
+    /// is owned by whoever took it, and leaving it twice is that owner's call.
+    public func leave() {
+        guard !hasLeft else { return }
+        hasLeft = true
+        presencePump?.cancel()
+        presencePump = nil
+        recorderTask?.cancel()
+        recorderTask = nil
+        transport.leave()
+        guard !hasStarted, let abandoning = backend as? any MatchAbandoning else { return }
+        let id = record.id
+        let sleepFor = sleepFor
+        abandonTask = Task { [weak self] in
+            for attempt in 1...Self.abandonAttempts {
+                do {
+                    try await abandoning.abandonMatch(id)
+                    self?.abandonSucceeded = true
+                    return
+                } catch {
+                    guard attempt < Self.abandonAttempts else { break }
+                    // A cancelled sleep must not spin the loop: it would burn
+                    // every remaining attempt in one pass and report failure.
+                    try? await sleepFor(Self.abandonRetryDelay)
+                    guard !Task.isCancelled else { return }
+                }
+            }
+            self?.abandonSucceeded = false
+        }
     }
 
     // MARK: - Entry points
@@ -195,9 +291,15 @@ public final class OnlineMatch {
         // `BackendContracts.swift` is frozen — so it is injected, and the cast
         // is only the default for a caller that did not.
         var store = outcomeStore
+        // The concrete client only exists where the SDK does. `Tests/ShellTests`
+        // compiles this file with the SDK-free half of `Online` and no
+        // `SupabaseBackend` to name, so the default is fenced on the SDK rather
+        // than on a build configuration.
+        #if canImport(PostgREST)
         if store == nil, let supabase = backend as? SupabaseBackend {
             store = await supabase.outcomeStore()
         }
+        #endif
         return OnlineMatch(
             record: record,
             localPlayer: localPlayer,
@@ -316,6 +418,7 @@ public final class OnlineMatch {
     private func makeSession(roster: [PlayerID]) -> MatchSession {
         presencePump?.cancel()
         presencePump = nil
+        hasStarted = true
         return MatchSession(
             transport: transport,
             roster: roster,

@@ -195,7 +195,11 @@ struct MatchOutcomeRecorderTests {
 
         #expect(await store.matchUpdates.filter(\.isFinished).count == 1)
         #expect(await store.profileUpdates.count == 1)
-        #expect(await store.reads == 1)
+        // Zero, not one. The bump is a delta the row's holder applies, so there
+        // is no read to be stale by the time the write lands — and no second
+        // round trip. A read reappearing here is the read-modify-write coming
+        // back.
+        #expect(await store.reads == 0)
     }
 
     // MARK: - A match that never started
@@ -444,8 +448,23 @@ actor RecordingOutcomeStore: MatchOutcomeStore {
         return profile
     }
 
-    func updateProfile(_ id: UUID, _ stats: ProfileStats) async throws {
+    /// Applies ``ProfileStats/after`` to the seeded row, the way
+    /// `record_outcome` applies the same five rules in SQL, and remembers what
+    /// it wrote so "never decrements" and "exactly once" stay assertable.
+    @discardableResult
+    func recordOutcome(
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+    ) async throws -> Profile {
+        guard var row = profiles[id] else { throw BackendError.notFound }
+        let stats = ProfileStats.after(
+            row, won: won, tilesPlaced: tilesPlaced, elapsedSeconds: elapsedSeconds)
         profileUpdates.append((id, stats))
+        row.matchesPlayed = stats.matchesPlayed
+        row.matchesWon = stats.matchesWon
+        row.tilesPlaced = stats.tilesPlaced
+        row.fastestWinSeconds = stats.fastestWinSeconds
+        profiles[id] = row
+        return row
     }
 }
 

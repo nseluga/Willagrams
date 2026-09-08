@@ -147,12 +147,17 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
     /// Both keys are single lowercase words, so no key strategy can rename them.
     struct Frame: Codable, Sendable, Equatable {
         let sender: String
+        /// The sender's own count, so the receiver can put a transposed
+        /// fan-out back in order. A number rather than a string: it is compared
+        /// on arrival, never displayed.
+        let sequence: UInt64
         let payload: String
     }
 
     static func payload(for envelope: WireEnvelope) -> Frame {
         Frame(
             sender: envelope.sender.rawValue,
+            sequence: envelope.sequence,
             payload: envelope.payload.base64EncodedString())
     }
 
@@ -160,7 +165,10 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
     /// arbitrary JSON on the channel; that is a dropped message, not a crash.
     static func envelope(from frame: Frame) -> WireEnvelope? {
         guard let data = Data(base64Encoded: frame.payload) else { return nil }
-        return WireEnvelope(sender: PlayerID(rawValue: frame.sender), payload: data)
+        return WireEnvelope(
+            sender: PlayerID(rawValue: frame.sender),
+            sequence: frame.sequence,
+            payload: data)
     }
 }
 

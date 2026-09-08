@@ -45,6 +45,18 @@ public final class ResultsModel {
         case localWin
         case peerWin
         case noWinner
+
+        /// The one mapping from a session's winner to an outcome.
+        ///
+        /// Named so ``ShellModel/matchEnded(winner:)`` can sound the ending
+        /// without a second copy of this rule. It plays there rather than in
+        /// this type's `init` because `MatchRun.results(board:)` is a factory
+        /// SwiftUI calls again on every re-render — a cue in the initializer
+        /// would replay the win on every body.
+        public init(winner: PlayerID?, localPlayerID: PlayerID) {
+            guard let winner else { self = .noWinner; return }
+            self = winner == localPlayerID ? .localWin : .peerWin
+        }
     }
 
     public let outcome: Outcome
@@ -89,11 +101,7 @@ public final class ResultsModel {
     ) {
         self.startRematch = rematch
         self.shell = shell
-        if let winner {
-            self.outcome = winner == localPlayerID ? .localWin : .peerWin
-        } else {
-            self.outcome = .noWinner
-        }
+        self.outcome = Outcome(winner: winner, localPlayerID: localPlayerID)
         self.board = Self.finalBoard(winningPlacements, fallback: board)
         self.teardown = teardown
     }
@@ -149,8 +157,11 @@ public final class ResultsModel {
     /// Local chrome, not `Terminology`: that file is the frozen IP fence and
     /// names game concepts, not screens.
     public static let peerWinHeadline = "Your opponent won"
-    /// Not a defeat, and not an error. Said plainly.
-    public static let noWinnerHeadline = "No winner"
+    /// Not a defeat, and not an error. Said plainly — and named for the one
+    /// way a match reaches it: `MatchSession` declares no winner exactly when a
+    /// peer stopped answering, so "no winner" told the player a fact about the
+    /// scoreboard when what they needed was the reason.
+    public static let noWinnerHeadline = "Opponent left"
     public static let rematchLabel = "Rematch"
     public static let mainMenuLabel = "Main Menu"
 

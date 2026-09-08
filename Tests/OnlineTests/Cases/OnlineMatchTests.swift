@@ -325,6 +325,77 @@ struct OnlineMatchOfflineTests {
         #expect(OnlineMatch.roster(from: unsorted).map(\.rawValue) == ["0A", "B0", "FF"])
     }
 
+    // MARK: - Abandoning the lobby
+
+    /// A lobby the host walks out of has to close its `matches` row, and the
+    /// write that closes it is fire-and-forget — nobody is left to notice it
+    /// fail. One dropped packet used to leave the row reading `lobby` for good,
+    /// silently, because the call was made with `try?` and nothing else.
+    @Test("A failed abandon is retried, not discarded")
+    func abandonRetriesUntilItLands() async throws {
+        let f = try await Self.fixture(creatorToken: "A", guestToken: "B")
+        let id = f.creator.record.id
+        _ = try await f.backend.signInWithApple(idToken: "A", nonce: "n")
+        await f.backend.failNextAbandons(OnlineMatch.abandonAttempts - 1)
+
+        f.creator.leave()
+        await f.creator.awaitAbandon()
+
+        #expect(f.creator.abandonSucceeded == true)
+        #expect(await f.backend.abandonAttemptCount == OnlineMatch.abandonAttempts)
+        #expect(await f.backend.matchRecord(id)?.status == .abandoned)
+    }
+
+    /// The positive twin of the retry: when every attempt fails the façade must
+    /// say so rather than report a clean exit. `abandonSucceeded == false` is
+    /// what separates "the row is stale" from "there was never a row".
+    @Test("An abandon that never lands is reported, not reported as success")
+    func abandonGivesUpAndSaysSo() async throws {
+        let f = try await Self.fixture(creatorToken: "A", guestToken: "B")
+        let id = f.creator.record.id
+        _ = try await f.backend.signInWithApple(idToken: "A", nonce: "n")
+        await f.backend.failNextAbandons(OnlineMatch.abandonAttempts + 5)
+
+        f.creator.leave()
+        await f.creator.awaitAbandon()
+
+        #expect(f.creator.abandonSucceeded == false)
+        #expect(await f.backend.abandonAttemptCount == OnlineMatch.abandonAttempts)
+        #expect(await f.backend.matchRecord(id)?.status == .lobby)
+    }
+
+    /// The retry outlives the façade. `ShellModel.returnToMenu()` drops the
+    /// match model the frame after `leave()`, so a `deinit` that cancelled the
+    /// abandon would kill it in the common case, not the rare one.
+    @Test("The façade does not cancel its own abandon when it is torn down")
+    func abandonSurvivesTeardown() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Willagrams/Online/OnlineMatch.swift"),
+            encoding: .utf8
+        )
+        guard let deinitStart = source.range(of: "    deinit {"),
+              let deinitEnd = source.range(
+                  of: "\n    }", range: deinitStart.upperBound ..< source.endIndex)
+        else {
+            Issue.record("OnlineMatch no longer has a deinit to scope this scan to")
+            return
+        }
+        let body = String(source[deinitStart.upperBound ..< deinitEnd.lowerBound])
+        // Falsifiable: the scope is real only if the cancels that *should* be
+        // there are found in it.
+        #expect(body.contains("presencePump?.cancel()"))
+        #expect(body.contains("recorderTask?.cancel()"))
+        let live = body.components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+        #expect(!live.contains { $0.contains("abandonTask?.cancel()") },
+            "deinit cancels the abandon, so tearing the screen down drops the write")
+    }
+
     // MARK: - The two constants
 
     @Test("The hand size and countdown are one constant each, never a literal at a call site")
@@ -425,7 +496,7 @@ final class SpyOutcomeStore: MatchOutcomeStore, @unchecked Sendable {
     enum Call: Equatable {
         case updateMatch(UUID, MatchOutcomeUpdate)
         case readProfile(UUID)
-        case updateProfile(UUID)
+        case recordOutcome(UUID)
     }
 
     private let lock = NSLock()
@@ -444,7 +515,14 @@ final class SpyOutcomeStore: MatchOutcomeStore, @unchecked Sendable {
         )
     }
 
-    func updateProfile(_ id: UUID, _ stats: ProfileStats) async throws {
-        lock.withLock { storedCalls.append(.updateProfile(id)) }
+    @discardableResult
+    func recordOutcome(
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+    ) async throws -> Profile {
+        lock.withLock { storedCalls.append(.recordOutcome(id)) }
+        return Profile(
+            id: id, displayName: "spy", friendCode: "AAAAAAAA",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
     }
 }

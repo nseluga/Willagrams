@@ -1,3 +1,4 @@
+import Audio
 import BoardKit
 import CoreGraphics
 import Foundation
@@ -54,7 +55,7 @@ struct MatchBoardTests {
     /// test made at the right moment.
     static func wired() async throws -> (SoloMatch, MatchBoard) {
         let solo = SoloMatch(setup: setup, dictionary: EveryWordIsReal(), sleepFor: { _ in })
-        let wiring = MatchBoard(session: solo.session, dictionary: EveryWordIsReal())
+        let wiring = MatchBoard(session: solo.session, dictionary: EveryWordIsReal(), audio: SilentAudioPlayer())
         wiring.viewport = viewport
         solo.start()
         try await SoloMatchTests.waitUntil("the opening on the board") {
@@ -155,7 +156,7 @@ struct MatchBoardTests {
     func drawEligibilityFollowsTheBoardModel() async throws {
         let dictionary = EnableWordList(words: ["GO"])
         let (host, session) = try await Self.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = Self.viewport
 
         try await Self.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
@@ -195,7 +196,7 @@ struct MatchBoardTests {
     func interruptedDeliveryLosesNoTileAndReArms() async throws {
         let dictionary = EveryWordIsReal()
         let (host, session) = try await Self.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = Self.viewport
 
         let opening = [Tile(letter: "G"), Tile(letter: "O")]
@@ -236,7 +237,7 @@ struct MatchBoardTests {
     func refusedDeliveryPublishesNothing() async throws {
         let dictionary = EveryWordIsReal()
         let (host, session) = try await Self.guest(handSize: 1, dictionary: dictionary)
-        let laid = MatchBoard(session: session, dictionary: dictionary)
+        let laid = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         laid.viewport = Self.viewport
 
         try await Self.grant([Tile(letter: "G")], from: host)
@@ -253,7 +254,7 @@ struct MatchBoardTests {
         // A second wiring over the same session opens onto an empty board, so
         // the cell it picks is one the session already holds and the rules
         // refuse the mirror. Nothing may be published from a refused delivery.
-        let fresh = MatchBoard(session: session, dictionary: dictionary)
+        let fresh = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         fresh.viewport = Self.viewport
         #expect(fresh.board.placementList.isEmpty)
         #expect(session.state.hand.count == 1, "a refused delivery ate the tile")

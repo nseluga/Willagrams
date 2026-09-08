@@ -59,11 +59,15 @@ struct ResultsView: View {
                 .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: DesignTokens.Space.m) {
-                Button { results.rematch() } label: {
-                    Text(ResultsModel.rematchLabel).resultsActionLabel()
+                // Absent, not disabled. There is nothing to rematch into on a
+                // network match, and a greyed control invites a press that can
+                // never work.
+                if results.isRematchEnabled {
+                    Button { results.rematch() } label: {
+                        Text(ResultsModel.rematchLabel).resultsActionLabel()
+                    }
+                    .buttonStyle(.brandPrimary)
                 }
-                .buttonStyle(.brandPrimary)
-                .disabled(!results.isRematchEnabled)
 
                 Button { results.mainMenu() } label: {
                     Text(ResultsModel.mainMenuLabel).resultsActionLabel()

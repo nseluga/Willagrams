@@ -436,6 +436,40 @@ routing layer from a `#if canImport(UIKit)` hardware file, or excludes the
 hardware file in `Package.swift`. `Tests/BoardTests` dodged this by never
 compiling `Willagrams/Board` at all.
 
+## Granted amendment — `account` and `friends` fold into `shell` round 3, 2026-09-03
+
+Every lane carries the same assignee, and the only thing sequenced behind
+`account` and `friends` is the shell entry point into each of their screens.
+Run as written, the map ends in a fourth shell round whose whole content is
+three menu buttons, plus two extra merges. Online and audio both merged with
+zero callers; a separate `account` lane and a separate `friends` lane would do
+the same, and the wiring would wait.
+
+**Granted:** the `shell` lane's round 3 may create and own
+`Willagrams/Account/**`, `Tests/AccountTests/**`, `Willagrams/Friends/**` and
+`Tests/FriendsTests/**` — the full `owns:` of both lanes — and wires each
+screen into the menu in the same round. The `account` and `friends` entries
+below stay as the record of what those areas are; neither runs as its own lane
+this release. Their `depends on:` edges become items inside shell round 3.
+
+What the fold does not change:
+
+  - `friends` builds and is tested against the real database, not
+    `FakeBackend`. RLS refuses by returning zero rows, never an error, so a
+    fake-green friends page can still be empty in production.
+    `supabase/tests/rls_behavior.sql` is the fixture; extend it.
+  - Sign in with Apple stays below the stop marker, waiting on the paid
+    membership. Identity this round is the anonymous session `online` proved
+    live.
+  - `Willagrams/Online/BackendContracts.swift` and `supabase/migrations/**`
+    are still `protected:`. A screen that needs a column or a call the seam
+    does not have is a `/foundation` amendment, not a shell item.
+  - `launch` is unchanged and still runs last.
+
+Cost accepted with the grant: one large lane PR instead of three small ones,
+and a longer unattended run. `parallel-group:` inside the lane keeps the
+account and friends items concurrent, so no wall-clock is lost.
+
 ## Tuning — the last step before launch
 
 There is no tuning lane; its `owns:` would intersect every other lane. Tuning

@@ -28,6 +28,9 @@ import Match
 #if canImport(BoardKit)
 import BoardKit
 #endif
+#if canImport(Audio)
+import Audio
+#endif
 
 import CoreGraphics
 import Foundation
@@ -97,17 +100,65 @@ public final class MatchBoard {
     /// answer — the shell never checks a board or a word itself.
     public var canDraw: Bool { model.canDraw }
 
+    // MARK: - The board is covered
+
+    /// What is drawn over the board right now, or nil when nothing is.
+    ///
+    /// Computed off ``MatchSession/presence(of:)``, like every other value
+    /// here: nothing about presence is mirrored into this type, so there is
+    /// nothing to keep in step and nothing to go stale, and `MatchSession`
+    /// gains no property to carry it.
+    ///
+    /// ponytail: the peer is named by their `PlayerID`, which is the only name
+    /// a session has — the lobby resolves display names and the match never
+    /// receives them. Carry the name onto ``MatchOpponent`` when a screen needs
+    /// a readable one.
+    public var overlay: MatchOverlay? {
+        for player in session.peerPlayerIDs {
+            guard case .reconnecting = session.presence(of: player) else { continue }
+            return .reconnecting(peer: player.rawValue)
+        }
+        return nil
+    }
+
+    /// Whether the board refuses every touch. True exactly while something
+    /// covers it — a player cannot play through an overlay, and a move made
+    /// against a frozen session would be dropped on the floor.
+    public var inputLocked: Bool { overlay != nil }
+
+    /// Local chrome, not `Terminology`: waiting for a peer is a statement about
+    /// the connection, not a game concept.
+    public static let reconnectingTitle = "Reconnecting"
+
+
     /// Tiles already laid on the board by this type. Not a rack and not a
     /// second copy: ids only, so an arrival can be told from a tile the player
     /// is still moving around.
     @ObservationIgnored private var laidTileIDs: Set<UUID> = []
     @ObservationIgnored private var hasOpened = false
+    /// Tile ids the bridge last saw on the table. The only way to tell a tile
+    /// that *left* from one that was never there: `mirror()` compares the
+    /// surface against the session, and a tile absent from both looks the same
+    /// as a tile that never existed.
+    @ObservationIgnored private var onTable: Set<UUID> = []
+
     @ObservationIgnored private let session: MatchSession
     @ObservationIgnored private let dictionary: any WordList
 
-    public init(session: MatchSession, dictionary: any WordList) {
+    /// The one injected player. Cues are played here rather than in the view
+    /// because this is the only place the shell learns that a drag committed:
+    /// a drag the player abandons never writes `board`, so it never reaches
+    /// this type and never makes a sound.
+    @ObservationIgnored private let audio: any AudioPlayer
+
+    public init(
+        session: MatchSession,
+        dictionary: any WordList,
+        audio: any AudioPlayer
+    ) {
         self.session = session
         self.dictionary = dictionary
+        self.audio = audio
         sync()
         track()
         trackBoard()
@@ -197,6 +248,22 @@ public final class MatchBoard {
             session.state.board.placementList.map { ($0.tile.id, $0.coord) },
             uniquingKeysWith: { first, _ in first }
         )
+        // A tile that left the table, cued before the early return below: a
+        // removal moves nothing to a new cell, so `moved` is empty for it and
+        // the commit would otherwise be silent. One cue per commit, not per
+        // tile — a multi-tile drag is one action, and the player pools three
+        // voices.
+        // Intersected with the session's own board, which is what keeps a Swap
+        // silent here: ``MatchHUDModel/swap(_:)`` recalls from the session
+        // *before* it takes the tile off the surface, so by the time this runs
+        // the tile is on neither and there is nothing to hear. A drag that
+        // takes a tile off the table leaves it on the session's board, so that
+        // one is heard.
+        let mine = Set(board.placementList.map(\.tile.id))
+        let left = onTable.subtracting(mine).intersection(theirs.keys)
+        onTable = mine
+        if !left.isEmpty { audio.play(.tileRecall) }
+
         let moved = board.placementList.filter { theirs[$0.tile.id] != $0.coord }
         guard !moved.isEmpty else { return }
 
@@ -221,6 +288,9 @@ public final class MatchBoard {
                 return rollBack()
             }
         }
+        // Only once every placement landed: a delivery the rules refused was
+        // rolled back above and nothing reached the table to be heard.
+        audio.play(.tilePlace)
     }
 
     /// Re-runs ``mirror()`` on every change to the surface, once per change.
@@ -259,4 +329,14 @@ public final class MatchBoard {
             }
         }
     }
+}
+
+/// What covers the board instead of the match.
+///
+/// One case, and no `nil` case: absence *is* nil. A screen that is not covered
+/// has no overlay, so there is no "none" to forget to handle.
+public enum MatchOverlay: Equatable, Sendable {
+    /// A peer has dropped and may still come back. The board is frozen and the
+    /// player is told who they are waiting on.
+    case reconnecting(peer: String)
 }

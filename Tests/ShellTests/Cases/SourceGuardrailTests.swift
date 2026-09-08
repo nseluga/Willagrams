@@ -100,6 +100,56 @@ struct SourceGuardrailTests {
         }
     }
 
+    /// The names of the fields on `MatchOptions`. A control bound to one of
+    /// these is an options UI, wherever it is drawn.
+    private static let matchOptionFields = [
+        "swapEnabled", "minimumWordLength", "dictionaryID", "dictionaryHash",
+    ]
+
+    /// One options screen ships, and it is `Willagrams/Settings`'. Shell may
+    /// still draw controls of its own — the starting hand is one, and the
+    /// difficulty presets are another — but never over a rule that travels in
+    /// `MatchOptions`.
+    ///
+    /// Both halves are asserted: that no shell file pairs a `Toggle` or a
+    /// `Stepper` with a match option, *and* that the settings lane's view and
+    /// form are really the ones in use. An absence test alone would pass just as
+    /// well if the whole screen were deleted.
+    @Test("The only match-options UI is the settings lane's, and shell really uses it")
+    func noSecondOptionsUIUnderShell() throws {
+        let sources = try Self.swiftFiles(in: Self.shellSourceDirectory)
+        #expect(sources.count >= 2, "expected the shell sources at \(Self.shellSourceDirectory.path)")
+
+        var embedsTheSettingsView = 0
+        for file in sources {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            if text.contains("MatchOptionsView(form:") { embedsTheSettingsView += 1 }
+            guard text.contains("Toggle(") || text.contains("Stepper(") else { continue }
+            for field in Self.matchOptionFields {
+                #expect(
+                    !text.contains(field),
+                    "\(file.lastPathComponent) draws a Toggle or Stepper beside \(field) — that row is MatchOptionsView's"
+                )
+            }
+        }
+
+        // Presence, so a rename or a deletion turns this red rather than green.
+        #expect(embedsTheSettingsView == 1, "exactly one shell view embeds MatchOptionsView(form:)")
+
+        let setupView = try String(
+            contentsOf: Self.shellSourceDirectory.appendingPathComponent("SoloSetupView.swift"),
+            encoding: .utf8
+        )
+        #expect(setupView.contains("MatchOptionsView(form:"))
+
+        let setup = try String(
+            contentsOf: Self.shellSourceDirectory.appendingPathComponent("SoloSetup.swift"),
+            encoding: .utf8
+        )
+        #expect(setup.contains("MatchOptionsForm"), "SoloSetup no longer holds the settings lane's form")
+        #expect(setup.contains("SettingsStore"), "SoloSetup no longer reads the injected store")
+    }
+
     /// The route setter must stay private, or a view could assign a route
     /// instead of calling a transition.
     @Test("Only ShellModel may write the route")

@@ -25,6 +25,16 @@ import WillagramsRules
 /// a config regression cannot turn into a player replaying their own moves.
 struct WireEnvelope: Sendable {
     let sender: PlayerID
+
+    /// This sender's own count, starting at 0 and rising by one per send.
+    ///
+    /// Supabase Realtime broadcast is best-effort ordered, not ordered: a
+    /// fan-out transposes two frames often enough to see it in a live test.
+    /// The game is a command stream — a `grant` applied before the `start` it
+    /// answers is a board the two devices no longer agree about — so order has
+    /// to be re-established here rather than assumed of the platform.
+    let sequence: UInt64
+
     let payload: Data
 }
 
@@ -66,6 +76,15 @@ public actor RealtimeMatchTransport: MatchTransport {
     /// `leave()` is not `async`.
     private nonisolated let peers = PeerRoster()
 
+    /// This endpoint's own send count. Actor state, so it is stamped under the
+    /// actor's serialization rather than a lock.
+    private var nextOutboundSequence: UInt64 = 0
+
+    /// Per-peer ordering for the receive path. Lock-guarded for the reason
+    /// ``peers`` is: `onWire` is a synchronous `@Sendable` closure the SDK
+    /// calls off any thread.
+    private nonisolated let ordering: WireOrdering
+
     /// How long the last peer may be gone before the match is declared over.
     ///
     /// A transient socket drop arrives as a real presence leave, and finishing
@@ -86,14 +105,26 @@ public actor RealtimeMatchTransport: MatchTransport {
     /// is the guard that fails if either number moves.
     static let defaultPeerGrace: Duration = .seconds(35)
 
+    /// How long a gap in a peer's sequence is held open before the messages
+    /// stacked behind it are released anyway.
+    ///
+    /// A transposed pair arrives microseconds apart, so this only ever has to
+    /// cover a fan-out, not a network round trip. It exists because the other
+    /// answer — hold forever — turns one genuinely lost broadcast into a game
+    /// that stops with nothing on screen to say why. Releasing loses exactly
+    /// the lost message, which is what happens today anyway.
+    static let defaultGapGrace: Duration = .seconds(2)
+
     /// Builds a transport and returns it only once the channel is subscribed.
     static func connect(
         localPlayerID: PlayerID,
         channel: any MatchChannel,
-        peerGrace: Duration = defaultPeerGrace
+        peerGrace: Duration = defaultPeerGrace,
+        gapGrace: Duration = defaultGapGrace
     ) async throws -> RealtimeMatchTransport {
         let transport = RealtimeMatchTransport(
-            localPlayerID: localPlayerID, channel: channel, peerGrace: peerGrace)
+            localPlayerID: localPlayerID, channel: channel,
+            peerGrace: peerGrace, gapGrace: gapGrace)
         transport.attach()
         do {
             try await channel.subscribe(as: localPlayerID)
@@ -107,12 +138,18 @@ public actor RealtimeMatchTransport: MatchTransport {
         return transport
     }
 
-    init(localPlayerID: PlayerID, channel: any MatchChannel, peerGrace: Duration = defaultPeerGrace) {
+    init(
+        localPlayerID: PlayerID,
+        channel: any MatchChannel,
+        peerGrace: Duration = defaultPeerGrace,
+        gapGrace: Duration = defaultGapGrace
+    ) {
         let inbound = AsyncStream.makeStream(of: MatchMessage.self, bufferingPolicy: .unbounded)
         let states = AsyncStream.makeStream(of: PeerConnectionState.self, bufferingPolicy: .unbounded)
         self.localPlayerID = localPlayerID
         self.channel = channel
         self.peerGrace = peerGrace
+        self.ordering = WireOrdering(gapGrace: gapGrace)
         self.inboundMessages = inbound.stream
         self.peerConnectionStates = states.stream
         self.inbound = inbound.continuation
@@ -128,15 +165,26 @@ public actor RealtimeMatchTransport: MatchTransport {
         let states = states
         let peers = peers
         let grace = peerGrace
+        let ordering = ordering
+
+        // Yields whatever the orderer says is now deliverable, in order.
+        // Decoding stays after the reordering: undecodable bytes still occupy
+        // a sequence number, so dropping them before the orderer sees them
+        // would open a gap that never closes.
+        let deliver: @Sendable ([Data]) -> Void = { payloads in
+            for payload in payloads {
+                // A peer can send anything. Undecodable bytes are dropped, not
+                // trapped on — `MatchCodec.decode` is the trust boundary.
+                guard let message = try? MatchCodec.decode(payload) else { continue }
+                inbound.yield(message)
+            }
+        }
 
         channel.onWire { envelope in
             // `self: false` is also set on the channel. This is the second
             // door: a config regression cannot become an echo.
             guard envelope.sender != local else { return }
-            // A peer can send anything. Undecodable bytes are dropped, not
-            // trapped on — `MatchCodec.decode` is the trust boundary.
-            guard let message = try? MatchCodec.decode(envelope.payload) else { return }
-            inbound.yield(message)
+            deliver(ordering.accept(envelope, release: deliver))
         }
 
         channel.onPresence { joined, left in
@@ -190,8 +238,15 @@ public actor RealtimeMatchTransport: MatchTransport {
     /// send into an empty match neither throws nor blocks.
     public func send(_ message: MatchMessage, delivery: MatchDelivery) async throws {
         guard !peers.isFinished else { throw MatchTransportError.peerDisconnected }
+        // Stamped before the await, on the actor, so two concurrent sends
+        // cannot take the same number or swap them.
+        let sequence = nextOutboundSequence
+        nextOutboundSequence += 1
         try await channel.send(
-            WireEnvelope(sender: localPlayerID, payload: try MatchCodec.encode(message)))
+            WireEnvelope(
+                sender: localPlayerID,
+                sequence: sequence,
+                payload: try MatchCodec.encode(message)))
     }
 
     public nonisolated func leave() {
@@ -199,6 +254,7 @@ public actor RealtimeMatchTransport: MatchTransport {
         // streams were already finished by the peer's presence leaving, and it
         // must not be torn down twice when `deinit` follows an explicit call.
         peers.cancelGrace()  // Nothing left to wait for; don't outlive the match.
+        ordering.cancelGap()  // Same reason: a held gap has nobody to deliver to.
         if peers.closeChannel() { channel.leave() }
         guard peers.finish() else { return }  // Calling it twice is harmless.
         inbound.finish()
@@ -274,5 +330,114 @@ private final class PeerRoster: @unchecked Sendable {
             defer { finished = true }
             return !finished
         }
+    }
+}
+
+/// Puts one peer's broadcasts back into the order that peer sent them.
+///
+/// A plain lock for the reason `PeerRoster` is: the broadcast handler is a
+/// synchronous `@Sendable` closure called off any thread, so this cannot be
+/// actor state without making delivery reentrant.
+///
+/// Only the ordering lives here — decoding, echo-dropping and the streams stay
+/// in the transport. What this returns is always a contiguous run, oldest
+/// first, and never a message it has already returned.
+private final class WireOrdering: @unchecked Sendable {
+
+    private let lock = NSLock()
+
+    /// The next sequence expected from each sender this endpoint has heard.
+    /// A sender not in here has not been heard from yet.
+    private var expected: [PlayerID: UInt64] = [:]
+
+    /// Arrivals past the gap, held until the gap closes.
+    private var held: [PlayerID: [UInt64: Data]] = [:]
+
+    private let gapGrace: Duration
+    private var gapTask: Task<Void, Never>?
+
+    init(gapGrace: Duration) { self.gapGrace = gapGrace }
+
+    /// Takes one arrival and returns what is now deliverable, in order.
+    ///
+    /// `release` is called later, off this call, when a gap times out — a gap
+    /// is opened by an arrival but closed by a clock, and the caller has no
+    /// other way to hear about the second.
+    func accept(
+        _ envelope: WireEnvelope,
+        release: @escaping @Sendable ([Data]) -> Void
+    ) -> [Data] {
+        let (ready, hasGap) = lock.withLock { () -> ([Data], Bool) in
+            let sender = envelope.sender
+            // Every peer is expected to start at 0. Taking the first arrival as
+            // the baseline instead would drop the earlier half of a transposed
+            // opening pair — and the opening pair is `start`, the one message
+            // the whole match is built on. A peer whose earlier numbers really
+            // never arrive costs one gap window, once.
+            let next = expected[sender] ?? 0
+            // Already delivered, or already skipped past. A resend and a replay
+            // look the same from here, and both must not reach the session
+            // twice.
+            guard envelope.sequence >= next else { return ([], !(held[sender] ?? [:]).isEmpty) }
+            guard envelope.sequence == next else {
+                held[sender, default: [:]][envelope.sequence] = envelope.payload
+                return ([], true)
+            }
+            var payloads = [envelope.payload]
+            var cursor = next + 1
+            while let payload = held[sender]?.removeValue(forKey: cursor) {
+                payloads.append(payload)
+                cursor += 1
+            }
+            if held[sender]?.isEmpty == true { held[sender] = nil }
+            expected[sender] = cursor
+            return (payloads, !(held[sender] ?? [:]).isEmpty)
+        }
+        if hasGap { armGap(release) } else { cancelGap() }
+        return ready
+    }
+
+    /// Gives up on the missing message and releases everything held.
+    ///
+    /// Losing one broadcast is what happens today for every reordered pair, so
+    /// this is not a new failure mode — it is the old one, bounded, and only
+    /// after the reordering had its chance.
+    private func armGap(_ release: @escaping @Sendable ([Data]) -> Void) {
+        let grace = gapGrace
+        let task = Task { [weak self] in
+            if grace != .zero { try? await Task.sleep(for: grace) }
+            guard !Task.isCancelled, let self else { return }
+            let payloads = self.drainHeld()
+            if !payloads.isEmpty { release(payloads) }
+        }
+        lock.withLock {
+            gapTask?.cancel()
+            gapTask = task
+        }
+    }
+
+    /// Everything held, each sender's run in its own order, with `expected`
+    /// moved past the hole so the next arrival is not mistaken for a replay.
+    private func drainHeld() -> [Data] {
+        lock.withLock {
+            var payloads: [Data] = []
+            for (sender, buffered) in held {
+                for sequence in buffered.keys.sorted() {
+                    payloads.append(buffered[sequence]!)
+                    expected[sender] = sequence + 1
+                }
+            }
+            held.removeAll()
+            gapTask = nil
+            return payloads
+        }
+    }
+
+    func cancelGap() {
+        let task = lock.withLock { () -> Task<Void, Never>? in
+            defer { gapTask = nil }
+            return gapTask
+        }
+        task?.cancel()
     }
 }

@@ -197,8 +197,18 @@ select pg_temp.acting_as('33333333-3333-3333-3333-333333333333');
 
 -- Deliberately public: a friend code is looked up by someone who is not yet a
 -- friend. If this ever returns zero, friend-code search silently finds nobody.
+--
+-- Named by id rather than counted over the whole table. `select 1 from
+-- public.profiles` was the obvious form and it is only correct on an empty
+-- database: the policy is `using (true)`, so against the real project it counts
+-- every profile the live tests have ever left behind. Restricting to the
+-- fixture's own three keeps the whole of the assertion's force — under a
+-- reader-scoped policy Alan, who is none of them, would see zero.
 select pg_temp.must_see(
-    $$select 1 from public.profiles$$, 3,
+    $$select 1 from public.profiles
+       where id in ('11111111-1111-1111-1111-111111111111',
+                    '22222222-2222-2222-2222-222222222222',
+                    '33333333-3333-3333-3333-333333333333')$$, 3,
     'a stranger reads every profile');
 
 select pg_temp.must_see(
@@ -449,6 +459,131 @@ select pg_temp.acting_as(null::uuid);
 select pg_temp.must_raise(
     $$select public.join_match('RLSX03')$$, '42501',
     'joining with no signed-in caller');
+
+-- ---------------------------------------------------------------------------
+-- record_outcome — the four counters, moved by deltas the server evaluates.
+--
+-- Every rule here is false-negative shaped in the same way the recorder's are:
+-- a counter that stops moving, or one that moves the wrong way, produces a
+-- profile page that looks like a player who simply has not played. So each
+-- assertion below reads the whole row back and names what it should now be.
+--
+-- The helper is declared here rather than up with the others because it is the
+-- only section that asserts on values instead of on row counts.
+-- ---------------------------------------------------------------------------
+
+-- Asserts that `stmt` — a select of exactly one value — comes back as `want`,
+-- compared as text so a whole row can be named in one line. A null column
+-- renders as an empty field, so `(1,0,4,)` is "played 1, won 0, 4 tiles, no
+-- fastest win yet".
+create or replace function pg_temp.must_equal(stmt text, want text, label text)
+returns void language plpgsql as $$
+declare got text;
+begin
+    execute stmt into got;
+    if got is distinct from want then
+        raise exception 'RULE WRONG: % — got %, expected %', label, got, want;
+    end if;
+    raise notice 'ok   % (%)', label, got;
+end $$;
+
+-- Ada's counters as the seed left them, which is what every delta below is
+-- measured from. If this is not zero the section's arithmetic means nothing.
+select pg_temp.acting_as('11111111-1111-1111-1111-111111111111');
+
+select pg_temp.must_equal(
+    $$select (matches_played, matches_won, tiles_placed, fastest_win_seconds)::text
+        from public.profiles where id = '11111111-1111-1111-1111-111111111111'$$,
+    '(0,0,0,)',
+    'a fresh profile starts at zero with no fastest win');
+
+-- A loss. Played moves, won does not, and a loss never records a time however
+-- quick it was.
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(false, 4, 30) p$$,
+    '(1,0,4,)',
+    'a loss counts the match and the tiles, and records no time');
+
+-- The first win. `least` over a null is the elapsed time, which is the whole
+-- "first win sets it" rule with no branch.
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(true, 3, 50) p$$,
+    '(2,1,7,50)',
+    'the first win sets the fastest time');
+
+-- A slower win. The one that a naive `set fastest = elapsed` would break, and
+-- it would break it silently and permanently.
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(true, 0, 90) p$$,
+    '(3,2,7,50)',
+    'a slower win does not raise the fastest time');
+
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(true, 0, 20) p$$,
+    '(4,3,7,20)',
+    'a faster win lowers the fastest time');
+
+-- A loss quicker than the record. `least` is guarded by the win, not by the
+-- clock.
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(false, 0, 2) p$$,
+    '(5,3,7,20)',
+    'a fast loss does not touch the fastest time');
+
+-- A negative count is a bug above this function. The floor is what keeps that
+-- bug from eating the row's own history, which nothing recomputes.
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(false, -9, 10) p$$,
+    '(6,3,7,20)',
+    'a negative tile count cannot take the tally down');
+
+-- There is no player-id parameter, so the row is the caller's by construction.
+-- This pins that the returned row is in fact theirs.
+select pg_temp.must_equal(
+    $$select (public.record_outcome(false, 0, 10)).id::text$$,
+    '11111111-1111-1111-1111-111111111111',
+    'the row returned is the caller''s own');
+
+-- Seven calls by Ada, and the other seeded player has not moved. The "wrote to
+-- somebody else's row" failure, which no error would report.
+select pg_temp.must_equal(
+    $$select (matches_played, matches_won, tiles_placed, fastest_win_seconds)::text
+        from public.profiles where id = '22222222-2222-2222-2222-222222222222'$$,
+    '(0,0,0,)',
+    'another player''s counters are untouched by seven of Ada''s matches');
+
+-- The column's own check is `null or > 0`, so a match won inside a second has
+-- to floor rather than be rejected. Without the floor this raises 23514 and the
+-- player loses the win as well as the time.
+select pg_temp.acting_as('22222222-2222-2222-2222-222222222222');
+
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(true, 1, 0) p$$,
+    '(1,1,1,1)',
+    'a win inside a second floors at one rather than failing the check');
+
+-- A session whose profile row was never created, or has been deleted. Under
+-- `profiles_update_self` there is nothing to update and nothing raises, so the
+-- `not found` branch is the only thing that turns silence into an answer the
+-- client can map.
+select pg_temp.acting_as('44444444-4444-4444-4444-444444444444');
+
+select pg_temp.must_raise(
+    $$select public.record_outcome(false, 1, 10)$$, 'P0002',
+    'a signed-in caller with no profile row');
+
+select pg_temp.acting_as(null::uuid);
+
+select pg_temp.must_raise(
+    $$select public.record_outcome(false, 1, 10)$$, '42501',
+    'recording an outcome with no signed-in caller');
 
 -- ---------------------------------------------------------------------------
 -- Leave the database as the fixture found it, so the next run of this file or

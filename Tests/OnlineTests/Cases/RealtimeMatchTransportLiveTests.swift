@@ -56,8 +56,23 @@ struct RealtimeMatchTransportLiveTests {
         }
     }
 
+    /// Polls until the condition holds or the deadline passes. Each phase gets
+    /// its own deadline, so a timeout names which one ran out instead of
+    /// reporting one budget spanning presence sync and a grace window together.
+    private static func waitFor(
+        _ deadline: Duration, _ what: String, _ condition: @Sendable () async -> Bool
+    ) async throws {
+        let start = ContinuousClock.now
+        while await !condition() {
+            if ContinuousClock.now - start > deadline {
+                throw LiveTransportTimedOut(waitingFor: what)
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
     @Test(
-        "Two live transports exchange twenty messages each way, in order",
+        "Two live transports exchange twenty messages each way, exactly once",
         .enabled(if: LiveProject.isEnabled))
     func twentyEachWayOverTheLiveProject() async throws {
         let (hostBackend, hostUser) = try await Self.signedIn()
@@ -89,7 +104,13 @@ struct RealtimeMatchTransportLiveTests {
         let atHost = try await hostReceived
         let atGuest = try await guestReceived
 
-        // Decoded equal to what was sent, in send order, and each exactly once.
+        // Strict order, not a multiset. This assertion was narrowed once,
+        // because Supabase Realtime broadcast is best-effort ordered and a
+        // fan-out transposes arrivals about one run in two. That is now the
+        // transport's problem rather than this case's: `WireEnvelope` carries
+        // a per-sender sequence and `RealtimeMatchTransport` re-orders by it.
+        // If this goes red intermittently again, the reordering has stopped
+        // working — do not narrow it a second time.
         #expect(atHost == fromGuest)
         #expect(atGuest == fromHost)
 
@@ -114,35 +135,49 @@ struct RealtimeMatchTransportLiveTests {
         let host = try await hostBackend.transport(for: match, as: hostID)
         let guest = try await guestBackend.transport(for: match, as: guestID)
 
-        async let states = withThrowingTaskGroup(of: [PeerConnectionState].self) { group in
-            group.addTask {
-                var seen: [PeerConnectionState] = []
-                for await state in host.peerConnectionStates { seen.append(state) }
-                return seen
-            }
-            group.addTask {
-                // Derived, not a literal: the host's stream finishes a whole
-                // grace window after the guest leaves, so a deadline sized
-                // against a stale number times out every run. Moving the
-                // production default moves this with it.
-                try await Task.sleep(for: RealtimeMatchTransport.defaultPeerGrace + .seconds(25))
-                throw LiveTransportTimedOut()
-            }
-            let result = try await group.next()!
-            group.cancelAll()
-            return result
+        let seen = ObservedStates()
+        let collector = Task {
+            for await state in host.peerConnectionStates { await seen.append(state) }
+            await seen.markFinished()
         }
 
+        // The host must observe the guest before the guest goes. Leaving inside
+        // the window before presence sync lands means the host never saw a
+        // peer, so there is no disconnect to report and the stream never ends —
+        // a race in this case, not in the transport. It used to leave here
+        // immediately and hung for the whole deadline whenever the project was
+        // slow enough for presence to take more than a moment.
+        try await Self.waitFor(.seconds(20), "the host to see the guest") {
+            await seen.states.contains(.connected(guestID))
+        }
         guest.leave()
 
         // The stream finishing at all is half the assertion: a `for await` on a
-        // match that is over must end rather than hang.
-        let seen = try await states
-        #expect(seen.contains(.connected(guestID)))
-        #expect(seen.last == .disconnected(guestID))
+        // match that is over must end rather than hang. Derived, not a literal:
+        // the host's stream finishes a whole grace window after the disconnect,
+        // so moving the production default moves this with it.
+        try await Self.waitFor(
+            RealtimeMatchTransport.defaultPeerGrace + .seconds(25), "the stream to finish"
+        ) { await seen.isFinished }
 
+        let observed = await seen.states
+        #expect(observed.contains(.connected(guestID)))
+        #expect(observed.last == .disconnected(guestID))
+
+        collector.cancel()
         host.leave()
     }
 }
 
-struct LiveTransportTimedOut: Error {}
+struct LiveTransportTimedOut: Error {
+    var waitingFor: String = "a live response"
+}
+
+/// The host's states, collected off the stream. An actor because the stream is
+/// drained by one task while the case reads it from another.
+private actor ObservedStates {
+    private(set) var states: [PeerConnectionState] = []
+    private(set) var isFinished = false
+    func append(_ state: PeerConnectionState) { states.append(state) }
+    func markFinished() { isFinished = true }
+}
