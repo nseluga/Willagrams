@@ -111,13 +111,47 @@ for pass in 1 2; do
   eval "AFTER$pass=\$(counts)"
 done
 
+# This run ends on `rls_behavior.sql`, which is the fixture that sweeps both
+# seeds on its way out. That matters for the residue check below.
 echo
 echo "== assertion count (rls_behavior) =="
 PGPASSWORD="$PW" psql -q "$URL" -f supabase/tests/rls_behavior.sql 2>&1 | grep -c "NOTICE:  ok"
 
+# Comparing total row counts between the two passes says nothing, because the
+# passes end on different files. `schema_invariants.sql` leaves Ada and Grace
+# standing on purpose — its cascade test deletes Alan and its cleanup runs at
+# the top of the file, not the bottom — so a pass ending there always shows
+# more rows than one ending on `rls_behavior.sql`. That is the fixture working,
+# not leaking, and the old before/after comparison flagged it as RESIDUE every
+# time.
+#
+# Count the fixture's own identities instead, after the sweeping fixture ran
+# last. Every id below is a literal the fixtures hard-code; none can collide
+# with a real account, which is what makes this safe to run against a project
+# holding live players.
 echo
-echo "== did the fixtures leave anything behind? =="
-echo "  after pass 1: $AFTER1"
-echo "  after pass 2: $AFTER2"
-[ "$AFTER1" = "$AFTER2" ] && echo "  CLEAN — a pass leaves the project as it found it." \
-                          || echo "  RESIDUE — the fixtures did not clean up."
+echo "== did the fixtures leave anything behind? (want all zero) =="
+PGPASSWORD="$PW" psql -q "$URL" <<'SQL'
+with ids(id) as (values
+    ('11111111-1111-1111-1111-111111111111'::uuid),
+    ('22222222-2222-2222-2222-222222222222'),
+    ('33333333-3333-3333-3333-333333333333'),
+    ('55555555-5555-5555-5555-555555555555'),
+    ('66666666-6666-6666-6666-666666666666'),
+    ('77777777-7777-7777-7777-777777777777'),
+    ('88888888-8888-8888-8888-888888888888'))
+select (select count(*) from public.profiles where id in (select id from ids))     as profiles,
+       (select count(*) from public.matches
+         where host_id in (select id from ids))                                    as matches,
+       (select count(*) from public.match_players
+         where player_id in (select id from ids))                                  as match_players,
+       (select count(*) from public.friendships
+         where requester_id in (select id from ids)
+            or addressee_id in (select id from ids))                               as friendships,
+       (select count(*) from realtime.messages
+         where topic like 'invites:%'
+           and public.invite_topic_recipient(topic) in (select id from ids))       as invite_msgs,
+       (select count(*) from auth.users where id in (select id from ids))          as auth_users;
+SQL
+echo "  (pass 1 ended on rls_behavior: $AFTER1)"
+echo "  (pass 2 ended on schema_invariants: $AFTER2 — higher by design, see above)"
