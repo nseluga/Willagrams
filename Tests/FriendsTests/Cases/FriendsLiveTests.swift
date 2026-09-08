@@ -111,8 +111,16 @@ struct FriendsLiveTests {
         let request = try #require(aModel.incoming.first { $0.profile.id == c.id },
                                    "the request never reached the addressee")
 
+        // Declining first: it must leave nothing behind, which is what proves
+        // `friendships_delete_own` really lets the addressee delete the row.
         await aModel.decline(request)
         #expect(aModel.message == nil, "declining failed against the live project")
+        let afterDecline = try await aBackend.friendships().filter { $0.other(than: a.id) == c.id }
+        #expect(afterDecline.isEmpty, "the decline left a row behind against the live project")
+
+        // Now block, which is the separate, permanent action this case is about.
+        _ = try await aBackend.block(c.id)
+        await aModel.load()
 
         for section in [aModel.accepted, aModel.incoming, aModel.outgoing] {
             #expect(!section.contains { $0.profile.id == c.id })

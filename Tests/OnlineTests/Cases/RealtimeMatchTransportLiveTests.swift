@@ -104,25 +104,15 @@ struct RealtimeMatchTransportLiveTests {
         let atHost = try await hostReceived
         let atGuest = try await guestReceived
 
-        // Decoded equal to what was sent, and each exactly once — as a set, not
-        // as a sequence. Sends here are sequential and awaited, and arrivals
-        // still transpose locally (host-0 behind host-3), so the reordering is
-        // the server's fan-out, not this case's. Supabase Realtime broadcast is
-        // best-effort ordered; asserting strict order asserted a guarantee the
-        // platform does not make, and failed about one run in two.
-        //
-        // The game does depend on move order, so this is a hole rather than a
-        // non-issue: the fix is a sequence number on WireEnvelope that the
-        // receiver reorders by. Recorded as an open risk in FOUNDATION.md —
-        // that belongs to a lane, not to this assertion.
-        // Sorted rather than a Set: MatchMessage is Equatable but not Hashable,
-        // and a multiset is the stronger check anyway — it still fails on a
-        // duplicate or a drop, which a set would swallow.
-        func canonical(_ messages: [MatchMessage]) -> [String] {
-            messages.map { "\($0)" }.sorted()
-        }
-        #expect(canonical(atHost) == canonical(fromGuest))
-        #expect(canonical(atGuest) == canonical(fromHost))
+        // Strict order, not a multiset. This assertion was narrowed once,
+        // because Supabase Realtime broadcast is best-effort ordered and a
+        // fan-out transposes arrivals about one run in two. That is now the
+        // transport's problem rather than this case's: `WireEnvelope` carries
+        // a per-sender sequence and `RealtimeMatchTransport` re-orders by it.
+        // If this goes red intermittently again, the reordering has stopped
+        // working — do not narrow it a second time.
+        #expect(atHost == fromGuest)
+        #expect(atGuest == fromHost)
 
         host.leave()
         guest.leave()

@@ -65,10 +65,17 @@ struct FriendsView: View {
                             Task { await model.decline(entry) }
                         }
                         .buttonStyle(.brandQuiet)
+
+                        // Declining no longer blocks, so refusing someone for
+                        // good needs its own button on the row that asked.
+                        Button(FriendsModel.blockLabel) {
+                            Task { await model.block(entry) }
+                        }
+                        .buttonStyle(.brandQuiet)
                     }
 
-                    // Said before the tap, not after it: a decline is a block at
-                    // the seam and nothing on this screen takes one back.
+                    // Said before the tap, not after it: the two buttons above
+                    // do different and unequal things.
                     if !model.incoming.isEmpty {
                         Text(FriendsModel.declineFootnote)
                             .font(DesignTokens.Typography.caption)

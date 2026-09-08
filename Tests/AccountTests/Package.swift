@@ -34,6 +34,9 @@ let package = Package(
                 "MatchSrc",
                 "OnlineSrc/BackendContracts.swift",
                 "OnlineSrc/FakeBackend.swift",
+                // `FakeBackend` conforms to it, so it has to be here even
+                // though the profile screen never declines anything.
+                "OnlineSrc/FriendRequestForgetting.swift",
                 "OnlineSrc/MatchOutcomeRecorder.swift",
                 "OnlineSrc/OnlineMatch.swift",
             ]

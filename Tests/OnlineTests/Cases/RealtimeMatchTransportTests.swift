@@ -136,10 +136,39 @@ private let guestID = PlayerID(rawValue: "guest")
 private func connect(
     _ player: PlayerID,
     channel: StubChannel,
-    grace: Duration = .zero
+    grace: Duration = .zero,
+    gap: Duration = .seconds(60)
 ) async throws -> RealtimeMatchTransport {
     try await RealtimeMatchTransport.connect(
-        localPlayerID: player, channel: channel, peerGrace: grace)
+        localPlayerID: player, channel: channel, peerGrace: grace, gapGrace: gap)
+}
+
+/// Takes the first `count` elements under a deadline, leaving the stream open.
+///
+/// `drain` cannot be used where the point of the case is what arrives *before*
+/// the stream is finished — finishing it is what would cancel the wait.
+private func take<T: Sendable>(
+    _ count: Int,
+    from stream: AsyncStream<T>,
+    seconds: Double = 5
+) async throws -> [T] {
+    try await withThrowingTaskGroup(of: [T].self) { group in
+        group.addTask {
+            var collected: [T] = []
+            for await element in stream {
+                collected.append(element)
+                if collected.count == count { break }
+            }
+            return collected
+        }
+        group.addTask {
+            try await Task.sleep(for: .seconds(seconds))
+            throw StreamTimedOut()
+        }
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
+    }
 }
 
 /// Twenty distinguishable messages, so "in order" and "not twice" are both
@@ -301,17 +330,22 @@ struct RealtimeMatchTransportTests {
         #expect(channel.sent.count == 2)
         #expect(channel.subscribes == 1)
 
-        let guest = try await connect(guestID, channel: bus.channel())
+        // Zero gap window: this guest joined after two sends it will never see,
+        // so its first arrival is sequence 2 and the orderer has a hole in
+        // front of it. The window is what closes that hole; `.zero` closes it
+        // without making the case wait.
+        let guest = try await connect(guestID, channel: bus.channel(), gap: .zero)
 
         let reliable = MatchMessage.drawRequest(player: hostID)
         let lossy = MatchMessage.resign(player: hostID)
         try await host.send(reliable, delivery: .reliable)
         try await host.send(lossy, delivery: .lossy)
-        host.leave()
 
-        // `.lossy` is sent exactly as `.reliable` is, so both land.
-        let received = try await drain(guest.inboundMessages)
+        // `.lossy` is sent exactly as `.reliable` is, so both land. Read before
+        // the leave: finishing the stream is what would cut the release short.
+        let received = try await take(2, from: guest.inboundMessages)
         #expect(received == [reliable, lossy])
+        host.leave()
     }
 
     // MARK: - Fault tolerance
@@ -532,36 +566,176 @@ struct RealtimeMatchTransportTests {
         #expect(other.entries == ["other"])
     }
 
+    // MARK: - Ordering
+
+    /// Three messages from one peer, delivered 0, 2, 1 — the transposition a
+    /// live fan-out produces. Without the sequence number the session sees a
+    /// `grant` before the request it answers, and the two devices diverge with
+    /// nothing on either screen to say so.
+    @Test("A transposed pair reaches the session in the order it was sent")
+    func transposedArrivalsAreReordered() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let host = try await connect(hostID, channel: channel)
+        let messages = script(3)
+        let envelopes = try Self.envelopes(messages, from: guestID)
+
+        channel.deliverWire(envelopes[0])
+        channel.deliverWire(envelopes[2])
+        channel.deliverWire(envelopes[1])
+        host.leave()
+
+        let received = try await drain(host.inboundMessages)
+        #expect(received == messages, "the arrival order reached the session unchanged")
+    }
+
+    /// A resend and a replay look identical from the receive path, and applying
+    /// either twice is the same divergence the reordering exists to stop.
+    @Test("A sequence number already delivered is dropped, not delivered twice")
+    func replayedArrivalsAreDropped() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let host = try await connect(hostID, channel: channel)
+        let messages = script(2)
+        let envelopes = try Self.envelopes(messages, from: guestID)
+
+        channel.deliverWire(envelopes[0])
+        channel.deliverWire(envelopes[1])
+        channel.deliverWire(envelopes[1])
+        channel.deliverWire(envelopes[0])
+        host.leave()
+
+        let received = try await drain(host.inboundMessages)
+        // Positive twin: both originals really did arrive, so "no duplicates"
+        // is not passing on an empty stream.
+        #expect(received == messages)
+    }
+
+    /// An endpoint that never saw a peer's earlier numbers must not wait on
+    /// them forever. It waits one gap window and then goes on — a bounded
+    /// stall, not a dead match.
+    @Test("A peer whose earlier messages never arrive still gets through")
+    func earlierMessagesThatNeverArriveDoNotStallThePeer() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let host = try await connect(hostID, channel: channel, gap: .zero)
+        let message = MatchMessage.poolExhausted
+        let envelope = WireEnvelope(
+            sender: guestID, sequence: 9, payload: try MatchCodec.encode(message))
+
+        channel.deliverWire(envelope)
+
+        #expect(try await take(1, from: host.inboundMessages) == [message])
+        host.leave()
+    }
+
+    /// Holding a gap open forever turns one lost broadcast into a game that
+    /// stops with nothing on screen. The window bounds it: what is held is
+    /// released, and only the message that never arrived is lost.
+    @Test("A gap that never closes releases what is stacked behind it")
+    func aStuckGapIsReleased() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let host = try await connect(hostID, channel: channel, gap: .zero)
+        let messages = script(3)
+        let envelopes = try Self.envelopes(messages, from: guestID)
+
+        channel.deliverWire(envelopes[0])
+        // 1 never arrives.
+        channel.deliverWire(envelopes[2])
+
+        let received = try await take(2, from: host.inboundMessages)
+        #expect(received == [messages[0], messages[2]])
+        host.leave()
+    }
+
+    /// The other half of the same seam: a receiver can only reorder by numbers
+    /// the sender actually stamped, and they have to rise by one.
+    @Test("Each send carries the next sequence number, starting at zero")
+    func sendsAreNumberedInOrder() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let host = try await connect(hostID, channel: channel)
+        for message in script(3) { try await host.send(message, delivery: .reliable) }
+
+        #expect(channel.sent.map(\.sequence) == [0, 1, 2])
+        #expect(channel.sent.allSatisfy { $0.sender == hostID })
+    }
+
+    /// One counter per sender, so two peers numbering from zero at the same
+    /// time do not shadow each other.
+    @Test("Two peers are ordered independently")
+    func sendersAreOrderedSeparately() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let host = try await connect(hostID, channel: channel)
+        let fromGuest = script(2)
+        let fromThird = [MatchMessage.poolExhausted, .resign(player: hostID)]
+        let third = PlayerID(rawValue: "third")
+
+        let guestWire = try Self.envelopes(fromGuest, from: guestID)
+        let thirdWire = try Self.envelopes(fromThird, from: third)
+
+        // Each peer transposed within itself, and interleaved with the other.
+        channel.deliverWire(guestWire[1])
+        channel.deliverWire(thirdWire[1])
+        channel.deliverWire(guestWire[0])
+        channel.deliverWire(thirdWire[0])
+        host.leave()
+
+        let received = try await drain(host.inboundMessages)
+        #expect(received.filter { fromGuest.contains($0) } == fromGuest)
+        #expect(received.filter { fromThird.contains($0) } == fromThird)
+    }
+
+    static func envelopes(_ messages: [MatchMessage], from sender: PlayerID) throws -> [WireEnvelope] {
+        try messages.enumerated().map {
+            WireEnvelope(
+                sender: sender,
+                sequence: UInt64($0.offset),
+                payload: try MatchCodec.encode($0.element))
+        }
+    }
+
     // MARK: - Framing
 
     @Test("A frame round-trips, and junk on the channel decodes to nil rather than trapping")
     func framingRoundTrips() throws {
-        let envelope = WireEnvelope(sender: hostID, payload: Data([0x00, 0xFF, 0x10]))
+        let envelope = WireEnvelope(sender: hostID, sequence: 7, payload: Data([0x00, 0xFF, 0x10]))
         let frame = SupabaseMatchChannel.payload(for: envelope)
         #expect(frame.sender == "host")
+        // The sequence has to survive the frame, or the receiver reorders by a
+        // number the sender never wrote.
+        #expect(frame.sequence == 7)
 
         let decoded = try #require(SupabaseMatchChannel.envelope(from: frame))
         #expect(decoded.sender == hostID)
+        #expect(decoded.sequence == 7)
         #expect(decoded.payload == envelope.payload)
 
         // A peer can put anything on the channel. Junk is a dropped message.
         #expect(
             SupabaseMatchChannel.envelope(
-                from: .init(sender: "host", payload: "not base64!!")) == nil)
+                from: .init(sender: "host", sequence: 0, payload: "not base64!!")) == nil)
     }
 
     @Test("A broadcast message carries the frame under `payload`, not at the top level")
     func broadcastMessageShape() throws {
-        let envelope = WireEnvelope(sender: hostID, payload: Data([0x01, 0x02]))
+        let envelope = WireEnvelope(sender: hostID, sequence: 3, payload: Data([0x01, 0x02]))
         let frame = SupabaseMatchChannel.payload(for: envelope)
         // Exactly what the SDK hands `onBroadcast` — proven against the live
         // project on 2026-09-02, when decoding the top level dropped every message.
         let message: JSONObject = [
             "type": "broadcast", "event": "wire",
-            "payload": ["sender": .string(frame.sender), "payload": .string(frame.payload)],
+            "payload": [
+                "sender": .string(frame.sender),
+                "sequence": .integer(Int(frame.sequence)),
+                "payload": .string(frame.payload),
+            ],
         ]
         let decoded = try #require(SupabaseMatchChannel.envelope(fromBroadcast: message))
         #expect(decoded.sender == envelope.sender)
+        #expect(decoded.sequence == envelope.sequence)
         #expect(decoded.payload == envelope.payload)
         #expect(
             SupabaseMatchChannel.envelope(

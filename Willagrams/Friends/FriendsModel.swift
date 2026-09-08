@@ -242,11 +242,24 @@ public final class FriendsModel {
         await respond(to: entry, accept: true, failure: Self.acceptFailedMessage)
     }
 
-    /// Declines an incoming request. The backend's answer to a decline is a
-    /// block, in both implementations — that is the seam's semantics, not a
-    /// choice made here.
+    /// Declines an incoming request by forgetting it.
+    ///
+    /// `respondToFriendRequest(accept: false)` answers a decline with `blocked`
+    /// — permanent, unlabelled, and with no undo anywhere in the app. Declining
+    /// is "not now": the row goes, and that player may ask again. Blocking is
+    /// ``block(_:)``, which the player chooses on purpose.
+    ///
+    /// A backend that cannot forget still declines the old way rather than
+    /// doing nothing, and the screen says the same thing either way.
     public func decline(_ entry: FriendEntry) async {
-        await respond(to: entry, accept: false, failure: Self.declineFailedMessage)
+        guard let forgetting = backend as? any FriendRequestForgetting else {
+            await respond(to: entry, accept: false, failure: Self.declineFailedMessage)
+            return
+        }
+        let requesterID = entry.friendship.requesterID
+        await perform(failure: Self.declineFailedMessage) { _ in
+            try await forgetting.forgetFriendRequest(requesterID: requesterID)
+        }
     }
 
     public func block(_ entry: FriendEntry) async {
@@ -414,8 +427,8 @@ public final class FriendsModel {
     /// Says what it does. The seam answers a decline with a block, so a button
     /// reading "Decline" would be the one word that hides the only irreversible
     /// thing on this screen.
-    public static let declineLabel = "Decline & block"
-    public static let declineFootnote = "Declining blocks that player. It can't be undone here."
+    public static let declineLabel = "Decline"
+    public static let declineFootnote = "Declining clears the request. That player can send it again. Block to stop them."
     public static let blockLabel = "Block"
     /// Only ever drawn on an accepted row — the screen passes it to that one
     /// section, so a pending row cannot render it.

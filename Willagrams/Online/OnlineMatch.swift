@@ -114,6 +114,29 @@ public final class OnlineMatch {
     /// out — the shell's cancel then still tears the channel down.
     @ObservationIgnored private var abandonTask: Task<Void, Never>?
 
+    /// How many times the abandon is attempted before the row is left stale.
+    ///
+    /// Nobody waits on this write, but discarding its failure leaves a
+    /// `matches` row stuck in `lobby` for good, with nothing surfaced. One
+    /// attempt is a single dropped packet away from that.
+    public static let abandonAttempts = 3
+
+    /// How long to wait between those attempts. Injected `sleepFor` makes it
+    /// free in tests.
+    public static let abandonRetryDelay: Duration = .seconds(2)
+
+    /// Whether the abandon landed: nil while it is still being attempted, and
+    /// on a façade that never had a row to close out. False once every attempt
+    /// has failed, which is a stale lobby row a human may have to clear.
+    @ObservationIgnored public private(set) var abandonSucceeded: Bool?
+
+    /// Waits out the abandon this façade issued, if any.
+    ///
+    /// Nothing in the app waits on it — the retry is fire-and-forget by design.
+    /// A test has to, or it asserts on ``abandonSucceeded`` before the loop has
+    /// run.
+    func awaitAbandon() async { await abandonTask?.value }
+
     /// Set once ``leave()`` has run, so tearing a lobby down twice cannot issue
     /// two abandons or leave a transport that is already gone.
     @ObservationIgnored private var hasLeft = false
@@ -145,7 +168,11 @@ public final class OnlineMatch {
     deinit {
         presencePump?.cancel()
         recorderTask?.cancel()
-        abandonTask?.cancel()
+        // `abandonTask` is deliberately NOT cancelled. It captures the backend
+        // and the row id rather than `self`, and the whole point of it is to
+        // close out a row this façade is done with — cancelling it here would
+        // abort the retry precisely when the screen tears the façade down,
+        // which is the common case.
     }
 
     /// Tears this façade down: the presence pump, the recorder and the channel,
@@ -169,7 +196,23 @@ public final class OnlineMatch {
         transport.leave()
         guard !hasStarted, let abandoning = backend as? any MatchAbandoning else { return }
         let id = record.id
-        abandonTask = Task { try? await abandoning.abandonMatch(id) }
+        let sleepFor = sleepFor
+        abandonTask = Task { [weak self] in
+            for attempt in 1...Self.abandonAttempts {
+                do {
+                    try await abandoning.abandonMatch(id)
+                    self?.abandonSucceeded = true
+                    return
+                } catch {
+                    guard attempt < Self.abandonAttempts else { break }
+                    // A cancelled sleep must not spin the loop: it would burn
+                    // every remaining attempt in one pass and report failure.
+                    try? await sleepFor(Self.abandonRetryDelay)
+                    guard !Task.isCancelled else { return }
+                }
+            }
+            self?.abandonSucceeded = false
+        }
     }
 
     // MARK: - Entry points

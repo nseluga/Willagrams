@@ -245,14 +245,20 @@ struct FriendsLoadingTests {
         #expect(one.id != other.id, "two rows collapsing to one id would drop a row from the list")
     }
 
-    /// Declining calls `respondToFriendRequest(accept: false)`, which the seam
-    /// answers with a block that nothing on this screen can take back. The
-    /// button has to say so before it is tapped.
-    @Test("The decline button says that it blocks")
-    func declineSaysItBlocks() {
-        #expect(FriendsModel.declineLabel.lowercased().contains("block"))
-        #expect(FriendsModel.declineFootnote.lowercased().contains("block"))
-        #expect(FriendsModel.declineFootnote.lowercased().contains("undone"))
+    /// Declining forgets the request; blocking is the other button. The copy
+    /// has to keep those apart, because the old copy promised the opposite and
+    /// a player who read it once will assume decline still blocks.
+    @Test("The decline copy separates declining from blocking")
+    func declineCopyDoesNotPromiseABlock() {
+        #expect(!FriendsModel.declineLabel.lowercased().contains("block"),
+                "the decline button still calls itself a block")
+        let footnote = FriendsModel.declineFootnote.lowercased()
+        // Positive twin: the footnote is not vacuously passing by being empty.
+        #expect(footnote.contains("again"),
+                "the footnote no longer says the request can come back")
+        #expect(footnote.contains("block"),
+                "the footnote no longer points at the block button")
+        #expect(!footnote.contains("declining blocks"))
     }
 }
 

@@ -20,7 +20,7 @@ import WillagramsRules
 /// An actor, so the `account` and `friends` lanes exercise the same
 /// serialization the real client has, and a test that races two calls behaves
 /// the same way against both.
-public actor FakeBackend: BackendClient, MatchAbandoning {
+public actor FakeBackend: BackendClient, MatchAbandoning, FriendRequestForgetting {
 
     private var signedInUser: UUID?
     private var profiles: [UUID: Profile] = [:]
@@ -34,6 +34,18 @@ public actor FakeBackend: BackendClient, MatchAbandoning {
 
     /// Deterministic codes, so a test can predict the next one.
     private var codeCounter = 0
+
+    /// How many of the next ``abandonMatch(_:)`` calls throw before one is
+    /// allowed through. The seam a retry test needs: a real abandon fails on a
+    /// dropped packet, and no other method models a transient failure.
+    private var abandonFailuresRemaining = 0
+
+    /// Every ``abandonMatch(_:)`` call, failed ones included — so a test can
+    /// tell "retried and gave up" from "never retried".
+    public private(set) var abandonAttemptCount = 0
+
+    /// Makes the next `count` abandons throw.
+    public func failNextAbandons(_ count: Int) { abandonFailuresRemaining = count }
 
     public init(now: Date = Date(timeIntervalSince1970: 1_700_000_000)) {
         self.now = now
@@ -141,6 +153,17 @@ public actor FakeBackend: BackendClient, MatchAbandoning {
         return friendships[index]
     }
 
+    /// The offline half of ``FriendRequestForgetting``: the decline that
+    /// forgets rather than blocks, matching `friendships_delete_own`.
+    public func forgetFriendRequest(requesterID: UUID) async throws {
+        let me = try requireUser()
+        guard let index = friendships.firstIndex(where: {
+            $0.requesterID == requesterID && $0.addresseeID == me
+                && $0.status == .pending
+        }) else { throw BackendError.notFound }
+        friendships.remove(at: index)
+    }
+
     public func block(_ playerID: UUID) async throws -> Friendship {
         let me = try requireUser()
         guard playerID != me else { throw BackendError.permissionDenied }
@@ -214,6 +237,12 @@ public actor FakeBackend: BackendClient, MatchAbandoning {
     /// `playing` is the outcome recorder's, so this leaves it alone rather than
     /// erasing a match that was actually played.
     public func abandonMatch(_ id: UUID) async throws {
+        if abandonFailuresRemaining > 0 {
+            abandonFailuresRemaining -= 1
+            abandonAttemptCount += 1
+            throw BackendError.notFound
+        }
+        abandonAttemptCount += 1
         let me = try requireUser()
         guard var match = matches[id] else { throw BackendError.notFound }
         guard match.hostID == me else { throw BackendError.permissionDenied }

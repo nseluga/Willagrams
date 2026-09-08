@@ -72,7 +72,7 @@ struct FriendsModelTests {
         #expect(row.respondedAt != nil)
     }
 
-    /// Declining is a block at the seam, so the row leaves every section rather
+    /// Declining forgets the request, so the row leaves every section rather
     /// than moving to another one.
     @Test("Declining the incoming request removes it from every section")
     func decliningRemovesIt() async throws {
@@ -82,9 +82,55 @@ struct FriendsModelTests {
         let request = try #require(model.incoming.first)
         await model.decline(request)
 
+        #expect(model.message == nil, "declining reported a failure")
         #expect(model.incoming.isEmpty)
         #expect(!model.accepted.contains { $0.profile.id == f.asker.id })
         #expect(!model.outgoing.contains { $0.profile.id == f.asker.id })
+    }
+
+    /// The defect this replaced: a decline wrote `blocked`, which is permanent
+    /// and has no undo anywhere in the app. Declining has to mean "not now" —
+    /// no row left behind, and the same player free to ask again.
+    @Test("Declining leaves no row, so that player can ask again")
+    func decliningLetsThemAskAgain() async throws {
+        let f = try await FriendsFixture.make()
+        let model = await Self.loaded(f)
+
+        let request = try #require(model.incoming.first { $0.profile.id == f.asker.id })
+        await model.decline(request)
+
+        _ = try await f.backend.signIn("me")
+        let after = try await f.backend.friendships()
+        #expect(!after.contains { $0.other(than: f.me.id) == f.asker.id },
+                "the decline left a row behind, so it blocked instead of forgetting")
+        // Positive twin: the fixture's other rows are still there, so the
+        // assertion above is not passing on an empty list.
+        #expect(after.contains { $0.other(than: f.me.id) == f.friend.id })
+
+        // And the ask really can be made again, which a `blocked` row refuses.
+        _ = try await f.backend.signIn("asker")
+        _ = try await f.backend.requestFriend(addresseeID: f.me.id)
+
+        let reloaded = await Self.loaded(f)
+        #expect(reloaded.incoming.contains { $0.profile.id == f.asker.id })
+    }
+
+    /// Declining must not have become a no-op that only hides the row: an
+    /// incoming request that cannot be forgotten reports a failure rather than
+    /// leaving the player thinking it went.
+    @Test("A decline the backend refuses is reported")
+    func decliningFailureIsReported() async throws {
+        let f = try await FriendsFixture.make()
+        let model = await Self.loaded(f)
+
+        let request = try #require(model.incoming.first { $0.profile.id == f.asker.id })
+        // Forget it out from under the model, so the model's own call finds
+        // nothing to delete.
+        _ = try await f.backend.signIn("me")
+        try await f.backend.forgetFriendRequest(requesterID: f.asker.id)
+
+        await model.decline(request)
+        #expect(model.message == FriendsModel.declineFailedMessage)
     }
 
     @Test("Blocking a friend takes them out of the accepted section")

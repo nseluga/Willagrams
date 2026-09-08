@@ -215,3 +215,26 @@ extension SupabaseBackend {
         return friendship
     }
 }
+
+/// The real client's half. `friendships_delete_own` in `0001_init.sql` already
+/// lets the addressee delete the row, so this needs no migration.
+extension SupabaseBackend: FriendRequestForgetting {
+
+    public func forgetFriendRequest(requesterID: UUID) async throws {
+        guard let me = currentUserID else { throw BackendError.notAuthenticated }
+        let rows = try await mapping {
+            try await rest.from("friendships")
+                .delete(returning: .representation)
+                .eq("requester_id", value: requesterID.uuidString)
+                .eq("addressee_id", value: me.uuidString)
+                .eq("status", value: FriendshipStatus.pending.rawValue)
+                .execute()
+                .data
+        }
+        // Zero rows is a policy refusal or a request that is no longer pending.
+        // Either way nothing was declined, and saying so beats a silent no-op.
+        guard try !Self.friendships(fromRows: rows).isEmpty else {
+            throw BackendError.notFound
+        }
+    }
+}
