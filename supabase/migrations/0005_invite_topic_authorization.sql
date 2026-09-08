@@ -78,10 +78,20 @@ grant execute on function public.invite_topic_recipient(text) to authenticated;
 -- The policies themselves.
 -- ---------------------------------------------------------------------------
 
--- Supabase creates `realtime.messages` and enables RLS on it. Stated rather
--- than assumed: a project where it is off is a project where every policy
--- below is decoration.
-alter table realtime.messages enable row level security;
+-- Supabase creates `realtime.messages`, enables RLS on it, and leaves it owned
+-- by `supabase_realtime_admin`. `alter table` needs ownership, so running it
+-- unconditionally fails on the live project with "must be owner of table
+-- messages" even though the setting it asks for is already true. Assert the
+-- state instead of setting it, and only turn it on where it is off — which is
+-- the scratch stub in `scripts/scratch-verify.sh`, whose owner we are. A
+-- project where RLS is off and we cannot enable it is a project where every
+-- policy below is decoration, so that case raises rather than passing quietly.
+do $$
+begin
+    if not (select relrowsecurity from pg_class where oid = 'realtime.messages'::regclass) then
+        alter table realtime.messages enable row level security;
+    end if;
+end $$;
 
 -- Reading — you may listen on your own topic and on nobody else's. This is the
 -- whole point of the migration: `auth.uid()` is the only uuid that can appear
