@@ -75,6 +75,31 @@ run -c "select proname, prosecdef, proconfig from pg_proc p
           join pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public' order by proname;"
 
+# The fixture's invite assertions insert into `realtime.messages` directly. On
+# Supabase that table is partitioned by `inserted_at`, one partition per day,
+# and a missing partition refuses the insert. Probe it inside a transaction that
+# rolls back — nothing is committed, so nothing is broadcast — because the
+# alternative is `ON_ERROR_STOP` aborting the fixture halfway through and
+# leaving its seed rows on the project.
+echo
+echo "== can realtime.messages take a direct insert here? =="
+if PGPASSWORD="$PW" psql -v ON_ERROR_STOP=1 -q "$URL" >/dev/null 2>&1 <<'SQL'
+begin;
+insert into realtime.messages (topic, extension, payload, event)
+values ('invites:00000000-0000-0000-0000-000000000000', 'broadcast', '{}'::jsonb, 'probe');
+rollback;
+SQL
+then
+  echo "  yes — the invite assertions can run."
+else
+  echo "  NO — realtime.messages refused a direct insert."
+  echo "  The two policies above are applied and are what protects the topic;"
+  echo "  only the fixture's invite assertions cannot run here. Stopping before"
+  echo "  the fixtures rather than aborting one halfway and leaving seed rows."
+  echo "  The same assertions already pass on scratch: scripts/scratch-verify.sh"
+  exit 1
+fi
+
 for pass in 1 2; do
   echo
   echo "== fixture pass $pass =="
