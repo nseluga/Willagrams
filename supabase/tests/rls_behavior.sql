@@ -586,6 +586,118 @@ select pg_temp.must_raise(
     'recording an outcome with no signed-in caller');
 
 -- ---------------------------------------------------------------------------
+-- realtime.messages — who may listen on an invite topic, and who may write to
+-- one. `0005_invite_topic_authorization.sql`.
+--
+-- These are the only policies in the schema whose subject is not a row. Both
+-- read `realtime.topic()`, which Realtime sets to the topic being joined or
+-- broadcast to before it evaluates the policy — so the assertions below set it
+-- themselves, exactly as the server does. A row still has to exist for the
+-- select half, because a policy that refuses and a table that is empty both
+-- come back as zero rows, which is the disease this whole file is about.
+--
+-- The asymmetry is the point and it is asserted directly: Grace may write to
+-- Ada's topic and may NOT read it. That is what lets the client send without
+-- joining, and it is why a friend cannot listen in on invites meant for
+-- someone else.
+-- ---------------------------------------------------------------------------
+
+select pg_temp.acting_as_owner();
+
+delete from realtime.messages
+ where topic in ('invites:11111111-1111-1111-1111-111111111111',
+                 'invites:22222222-2222-2222-2222-222222222222',
+                 'invites:33333333-3333-3333-3333-333333333333');
+
+-- One frame sitting on Ada's topic, written as the owner so no policy has a
+-- say in it landing. Every read assertion below is against this one row.
+insert into realtime.messages (topic, extension, payload, event)
+values ('invites:11111111-1111-1111-1111-111111111111',
+        'broadcast', '{}'::jsonb, 'invite');
+
+-- Grace and Alan need a pending request between them, so 'accepted' can be
+-- shown to be doing work rather than 'a row exists' doing it.
+insert into public.friendships (requester_id, addressee_id, status, responded_at)
+values ('22222222-2222-2222-2222-222222222222',
+        '33333333-3333-3333-3333-333333333333', 'pending', null);
+
+-- Ada, on her own topic. The one read the policy exists to allow.
+select pg_temp.acting_as('11111111-1111-1111-1111-111111111111');
+select set_config('realtime.topic',
+                  'invites:11111111-1111-1111-1111-111111111111', false);
+select pg_temp.must_see(
+    $$select 1 from realtime.messages$$, 1,
+    'Ada listening on her own invite topic');
+
+-- Alan, on Ada's topic. The defect this migration closed: before it, this was
+-- a public channel and he read her live invite codes as they were sent.
+select pg_temp.acting_as('33333333-3333-3333-3333-333333333333');
+select set_config('realtime.topic',
+                  'invites:11111111-1111-1111-1111-111111111111', false);
+select pg_temp.must_see(
+    $$select 1 from realtime.messages$$, 0,
+    'Alan listening on a stranger''s invite topic');
+
+-- Grace, on Ada's topic. She is Ada's accepted friend and she still may not
+-- listen — friendship buys the write below, never the read.
+select pg_temp.acting_as('22222222-2222-2222-2222-222222222222');
+select set_config('realtime.topic',
+                  'invites:11111111-1111-1111-1111-111111111111', false);
+select pg_temp.must_see(
+    $$select 1 from realtime.messages$$, 0,
+    'Grace listening on her friend Ada''s invite topic');
+
+-- ...and writes to it, which is the whole send path.
+select pg_temp.must_touch(
+    $$insert into realtime.messages (topic, extension, payload, event)
+      values ('invites:11111111-1111-1111-1111-111111111111',
+              'broadcast', '{}'::jsonb, 'invite')$$, 1,
+    'Grace inviting her accepted friend Ada');
+
+-- Alan is nobody's friend, so no topic he can name will take his frame.
+select pg_temp.acting_as('33333333-3333-3333-3333-333333333333');
+select set_config('realtime.topic',
+                  'invites:11111111-1111-1111-1111-111111111111', false);
+select pg_temp.must_raise(
+    $$insert into realtime.messages (topic, extension, payload, event)
+      values ('invites:11111111-1111-1111-1111-111111111111',
+              'broadcast', '{}'::jsonb, 'invite')$$,
+    'Alan inviting a stranger');
+
+-- A pending request is not a friendship. Alan asked Grace and she has not
+-- answered, so he still cannot put a banner on her screen.
+select set_config('realtime.topic',
+                  'invites:22222222-2222-2222-2222-222222222222', false);
+select pg_temp.must_raise(
+    $$insert into realtime.messages (topic, extension, payload, event)
+      values ('invites:22222222-2222-2222-2222-222222222222',
+              'broadcast', '{}'::jsonb, 'invite')$$,
+    'inviting someone whose friend request is still pending');
+
+-- A topic that is not an invite topic at all. `invite_topic_recipient` has to
+-- answer *null* rather than raise, or a stranger joining `invites:hello` gets a
+-- 500 out of a rule that meant to say no. Asserted on the function directly as
+-- well as through the policy: `must_raise` below is happy with any error, so on
+-- its own it cannot tell "the policy refused" from "the cast blew up", which is
+-- exactly the difference this line is about.
+select pg_temp.must_see(
+    $$select 1 where public.invite_topic_recipient('invites:not-a-uuid') is null
+                 and public.invite_topic_recipient('match:whatever') is null
+                 and public.invite_topic_recipient(
+                         'invites:11111111-1111-1111-1111-111111111111')
+                     = '11111111-1111-1111-1111-111111111111'::uuid$$, 1,
+    'invite_topic_recipient answers null for a topic it cannot parse');
+
+select set_config('realtime.topic', 'invites:not-a-uuid', false);
+select pg_temp.must_raise(
+    $$insert into realtime.messages (topic, extension, payload, event)
+      values ('invites:not-a-uuid', 'broadcast', '{}'::jsonb, 'invite')$$,
+    'broadcasting to a topic that is not a uuid');
+
+select pg_temp.acting_as_owner();
+select set_config('realtime.topic', '', false);
+
+-- ---------------------------------------------------------------------------
 -- Leave the database as the fixture found it, so the next run of this file or
 -- of `schema_invariants.sql` starts from the same place this one did.
 -- ---------------------------------------------------------------------------
@@ -607,8 +719,13 @@ delete from auth.users
               '66666666-6666-6666-6666-666666666666',
               '77777777-7777-7777-7777-777777777777',
               '88888888-8888-8888-8888-888888888888');
+delete from realtime.messages
+ where topic in ('invites:11111111-1111-1111-1111-111111111111',
+                 'invites:22222222-2222-2222-2222-222222222222',
+                 'invites:33333333-3333-3333-3333-333333333333');
 delete from public.friendships
- where requester_id = '11111111-1111-1111-1111-111111111111';
+ where requester_id in ('11111111-1111-1111-1111-111111111111',
+                        '22222222-2222-2222-2222-222222222222');
 delete from public.profiles
  where id in ('11111111-1111-1111-1111-111111111111',
               '22222222-2222-2222-2222-222222222222',

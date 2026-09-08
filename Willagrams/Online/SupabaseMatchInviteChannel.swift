@@ -8,8 +8,11 @@
 //  `Tests/ShellTests`, which compiles `Willagrams/Online` by name and has no
 //  SDK dependency.
 //
-//  No migration and no table: an invite is a broadcast on the recipient's own
-//  topic and nothing else is written anywhere.
+//  No table: an invite is a broadcast on the recipient's own topic and nothing
+//  is written anywhere. It does have a migration —
+//  `0005_invite_topic_authorization.sql` carries the `realtime.messages`
+//  policies that make `invites:*` a private topic, and the `isPrivate` flags
+//  below are the client half of that pair.
 //
 
 import Foundation
@@ -18,8 +21,8 @@ import Realtime
 /// One `RealtimeChannelV2` on topic `invites:<user uuid>`.
 ///
 /// Broadcast only — no presence, no postgres changes. The topic is named for
-/// the *recipient*, so sending is "open theirs, say it, leave" and listening is
-/// "stay on mine".
+/// the *recipient*, so sending is "post to theirs over REST" and listening is
+/// "stay on mine". Private, so the server enforces both halves of that.
 final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable {
 
     /// The broadcast event every invite travels as.
@@ -46,22 +49,19 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
 
     init(realtime: RealtimeClientV2, userID: UUID) {
         self.realtime = realtime
-        // ponytail: a public channel. The topic is unguessable in practice (a
-        // user's own uuid) but not secret, and this project has no
-        // `realtime.messages` authorization policy — so a client holding the
-        // shipped anon key and someone's id could subscribe to their invites or
-        // broadcast a spoofed frame at them. `ShellModel` is the mitigation
-        // that ships with this item: an invite whose `hostID` is not an
-        // accepted friend is dropped, so a spoofed frame reaches no banner.
-        // It does *not* cover the other half: a listener on someone else's
-        // topic reads live `inviteCode`s and can join that lobby ahead of the
-        // friend it was meant for. That is lobby griefing rather than data
-        // exposure — an invite carries a code, a name and two ids and nothing
-        // private — but it is only fixed on the server.
-        // Upgrade to `config.isPrivate = true` together with a
-        // `realtime.messages` policy — which is a migration, and this item may
-        // not write one. Setting `isPrivate` without the policy breaks invites.
+        // A private channel: every join and every broadcast on `invites:*` is
+        // checked against the `realtime.messages` policies in
+        // `0005_invite_topic_authorization.sql`. The two halves only work
+        // together — `isPrivate` with no policy denies everything and invites
+        // stop arriving, and the policies with a public channel are never
+        // consulted. Change one, change both.
+        //
+        // What it buys: a listener can only ever join its own topic, so nobody
+        // reads someone else's live `inviteCode` and races them into the lobby.
+        // `ShellModel` still drops an invite from a non-friend — that covers
+        // the sending half, and the two are independent.
         channel = realtime.channel(Self.topic(for: userID)) { config in
+            config.isPrivate = true
             // Nobody invites themselves, and an echo would put a banner over
             // the host's own lobby.
             config.broadcast.receiveOwnBroadcasts = false
@@ -82,26 +82,31 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
         try await channel.subscribeWithError()
     }
 
-    /// Opens the recipient's topic, says it, and leaves again.
+    /// Posts the invite to the recipient's topic over REST, without joining it.
     ///
-    /// Subscribed first rather than broadcast cold: a channel the client has
-    /// never joined has no socket behind it, and this is the same
-    /// subscribe-then-broadcast order `SupabaseMatchChannel` proved live.
+    /// `httpSend` rather than `subscribeWithError` then `broadcast`, and the
+    /// difference is the whole security model: joining a private channel is a
+    /// *read*, and `invites_listen_on_own_topic` grants a read on your own
+    /// topic only. A sender that joined would need a select policy letting
+    /// friends listen to each other's invites, which is a smaller copy of the
+    /// hole `0005` closes. `httpSend` needs only the insert policy, so the
+    /// sender writes and never listens.
+    ///
+    /// It throws on anything but a 202, so a policy refusal surfaces here
+    /// rather than vanishing the way a broadcast into the void does.
     func send(_ invite: MatchInvite, to recipientID: UUID) async throws {
-        let target = realtime.channel(Self.topic(for: recipientID))
-        do {
-            try await target.subscribeWithError()
-            try await target.broadcast(event: Self.inviteEvent, message: Self.payload(for: invite))
-        } catch {
-            await target.unsubscribe()
-            await realtime.removeChannel(target)
-            throw error
+        let target = realtime.channel(Self.topic(for: recipientID)) { config in
+            config.isPrivate = true
         }
-        // `removeChannel`, not `unsubscribe` alone: unsubscribing leaves the
-        // entry in `RealtimeClientV2.channels`, so every invite would leak one
-        // and the socket would never tear down. Same rule as `MatchChannel`.
-        await target.unsubscribe()
-        await realtime.removeChannel(target)
+        defer {
+            // `removeChannel`, not `unsubscribe`: `channel(_:)` registers the
+            // instance in `RealtimeClientV2.channels` whether or not it is ever
+            // subscribed, so every invite would leak one entry. Same rule as
+            // `MatchChannel`. Nothing here subscribes, so there is no socket to
+            // tear down and no removal for a later channel to wait out.
+            Task { await realtime.removeChannel(target) }
+        }
+        try await target.httpSend(event: Self.inviteEvent, message: Self.payload(for: invite))
     }
 
     func leave() {

@@ -47,6 +47,35 @@ alter default privileges in schema public
     grant all on tables to anon, authenticated, service_role;
 alter default privileges in schema public
     grant all on sequences to anon, authenticated, service_role;
+
+-- What Realtime Authorization needs and plain Postgres does not: the table the
+-- policies in 0005 attach to, and the function they read the topic out of.
+-- Supabase's own definitions, again copied rather than approximated —
+-- realtime.topic() reads a GUC the Realtime server sets before it evaluates a
+-- policy, and the fixture sets the same GUC.
+--
+-- One deliberate difference: on Supabase `realtime.messages` is partitioned by
+-- `inserted_at` with a partition per day. That matters to retention and to
+-- nothing the policies say, and a stub that reproduced it would be reproducing
+-- Supabase's cron rather than testing a rule. Plain table here.
+create schema if not exists realtime;
+create or replace function realtime.topic() returns text
+language sql stable as $$
+    select nullif(current_setting('realtime.topic', true), '')::text
+$$;
+create table if not exists realtime.messages (
+    id          uuid not null default gen_random_uuid(),
+    topic       text not null,
+    extension   text not null,
+    event       text,
+    payload     jsonb,
+    private     boolean default false,
+    inserted_at timestamptz not null default now(),
+    updated_at  timestamptz not null default now()
+);
+grant usage on schema realtime to anon, authenticated, service_role;
+grant all on realtime.messages to anon, authenticated, service_role;
+grant execute on function realtime.topic() to anon, authenticated, service_role;
 SQL
 
 for f in supabase/migrations/*.sql; do

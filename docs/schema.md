@@ -103,9 +103,11 @@ here so the `online` lane does not assume the database is holding them:
 
 ## Row level security
 
-RLS is on for all four tables, and every table carries at least one policy. This
-is not optional here: the anon key that reaches these tables ships inside the
-app binary and is readable by anyone who downloads it.
+RLS is on for all four tables, and every table carries at least one policy.
+Since `0005` it is on for `realtime.messages` too, which carries two of its own
+— those are described under "Realtime topics" below. This is not optional
+here: the anon key that reaches these tables ships inside the app binary and is
+readable by anyone who downloads it.
 
 - **`profiles` are readable by any signed-in player.** Deliberate. A friend code
   is looked up by someone who is not yet your friend, and the stats are what the
@@ -142,9 +144,43 @@ app binary and is readable by anyone who downloads it.
   is the crossing that proves they agree. `display_name` and `friend_code` are
   untouched by it and stay reachable only through `profiles_update_self`.
 
+### Realtime topics
+
+`realtime.messages` carries two policies of its own (`0005`), and they are the
+only rules here whose subject is a topic rather than a row.
+
+- **`invites:<uuid>` is a private channel.** A private channel is one the
+  Realtime server checks against these policies; a public one it does not check
+  at all. Both halves are required and they live in different languages: the
+  policies are here, and `SupabaseMatchInviteChannel` sets `config.isPrivate =
+  true` on both the channel it listens on and the one it sends to. Setting one
+  without the other either denies every invite or checks nothing.
+- **You may listen only on your own topic.** `auth.uid()` is the only uuid that
+  can appear on the right-hand side, so there is no topic name a caller can
+  build that reads someone else's invites. Before `0005` this was a public
+  channel, which meant anyone who resolved a friend code to a uuid could
+  subscribe and read live `invite_code`s as they were sent, then join that lobby
+  ahead of the friend it was meant for.
+- **You may write to an accepted friend's topic, and you never gain a read on
+  it.** That asymmetry is why the client sends over the REST broadcast endpoint
+  (`httpSend`) rather than joining first: joining is a read, and a sender that
+  joined would need a select policy letting friends listen to each other's
+  invites — a smaller copy of the same hole. `'accepted'` only; a pending
+  request is not a friendship and `'blocked'` is its opposite.
+- **`public.invite_topic_recipient(text)`** pulls the recipient out of the topic
+  name and answers null for anything that is not `invites:<uuid>`. It exists
+  because a policy is one boolean expression, `and` does not promise to
+  short-circuit, and a bare cast of a non-uuid raises — so a stranger joining
+  `invites:hello` would get a 500 out of a rule that meant to say no.
+- **`match:<uuid>` is still a public channel.** It is reached only by a player
+  `join_match` already seated, and a match id is not derivable from a profile.
+  Making it private is a separate decision with its own live test; nothing in
+  `0005` matches its topic, so nothing in `0005` can break it.
+
 No seed data and no service-role key appears in any migration. Three `security
 definer` functions do — `is_match_participant` (0002), `join_match` (0003) and
-`record_outcome` (0004). All three pin `search_path = public, pg_temp` and are
+`record_outcome` (0004). `invite_topic_recipient` (0005) is not one of them: it
+reads no table, so it has no reason to run as anyone but its caller. All three pin `search_path = public, pg_temp` and are
 executable by `authenticated` only. The first two are definer because a policy
 cannot answer its own question; the third is definer because as an invoker
 function `auth.uid()` becomes a grant the caller must hold, and because a policy
