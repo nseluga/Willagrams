@@ -508,8 +508,8 @@ each scoped to the named edit only:**
     every `fastest_win_seconds` to null (a resign win cannot be told apart after
     the fact; Nate's call). No applied migration is edited. Written and
     scratch-verified during lane setup (the fixture's null cases fail without
-    it). **Nate applies it** with `bash scripts/apply-0006-live.sh` before any
-    build that sends a null ships. Never `supabase db push` on this project:
+    it). **Applied live by Nate on 2026-09-15** with `bash scripts/apply-0006-live.sh`:
+    40 of 1,274 fastest wins cleared, null guard present, anon has no execute. Never `supabase db push` on this project:
     its migration history is empty (0001–0005 went in by script), so a push
     would re-run them all.
 No wire, `BackendContracts.swift`, `MatchOptions` or `Terminology.swift` change.
