@@ -347,4 +347,27 @@ final class BoardRenderTests: XCTestCase {
             XCTAssertEqual(camera.coord(at: CGPoint(x: entry.point.x + size / 2, y: entry.point.y + size / 2)), entry.coord)
         }
     }
+
+    // MARK: - Arrival transition: only an id actually arriving flies in
+
+    /// A pan changes which coords `cells(board:camera:in:)` returns, so a tile
+    /// already on the board can be re-inserted into `BoardView`'s ForEach just
+    /// by scrolling back into view. That must not replay the bag flight — only
+    /// an id the caller names as `arriving` gets it, whether or not it also
+    /// happens to be newly visible.
+    func testArrivalTransitionIsFromBagOnlyForArrivingIDs() {
+        let arriving = UUID()
+        let onlyNewlyVisible = UUID()
+
+        XCTAssertEqual(
+            BoardRender.arrivalTransition(for: arriving, arriving: [arriving]),
+            .fromBag,
+            "an id in arriving must fly in from the bag"
+        )
+        XCTAssertEqual(
+            BoardRender.arrivalTransition(for: onlyNewlyVisible, arriving: [arriving]),
+            .none,
+            "a tile that merely scrolled back into view, and is not in arriving, must not fly in"
+        )
+    }
 }
