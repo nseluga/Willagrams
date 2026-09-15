@@ -7,7 +7,7 @@ Willagrams feels finished on an iPhone: it opens on a loading animation into a p
 Lane done when:
 - On an iPhone 13 mini (or SE 3rd gen) Simulator, a cold `xcrun simctl launch` screenshotted at ~1s shows the loading wordmark in portrait, and at ~10s shows Home in portrait with no "shared Pool" line, a disabled Multiplayer button and no Join button. On an iPad Simulator the same launch lands on a landscape Home. All screenshots attached to the run summary.
 - Every package suite is green run serially, no count below its floor, and `xcodebuild` reports BUILD SUCCEEDED on the merged branch.
-- `supabase/migrations/0006_fastest_win_skips_null.sql` exists, is NOT applied to the live project, and the run summary tells Nate to push it before installing this build on a device that plays online.
+- `scripts/scratch-verify.sh` still runs 0001–0006 and both SQL fixtures green on the merged branch, and the run summary says whether Nate has applied 0006 live (`bash scripts/apply-0006-live.sh`). If he has not, it says to before installing this build on a device that plays online.
 
 Status: cut 2026-09-15 from `lane/polish` @ `c1f038b` (polish 14/14 done, not yet merged to `integration`). Plan: `~/.claude/plans/willagrams-final-scalable-crescent.md`. Nate's decisions: iPad stays landscape everywhere; the drag symptom is "tile follows the finger, then flies back home on release"; restyle all six comp screens while keeping every feature the comp omits; reset every `fastest_win_seconds` to null.
 
@@ -16,7 +16,7 @@ Lane: final — The final-adjustments pass after the polish hand test — iPhone
 Owned — this lane's items live inside these paths:
   none of its own (a pass, like `polish`), plus two scoped grants from MAP.md "Tuning":
   Willagrams.xcodeproj/project.pbxproj — ONLY the `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone` value (items 3) and the launch-screen background colour (item 8)
-  supabase/migrations/0006_fastest_win_skips_null.sql — new file only (item 2)
+  supabase/migrations/0006_fastest_win_skips_null.sql — already written and scratch-verified during setup; no item edits it
 
 Open — merged lanes. Wiring items may edit these; rebase onto `integration` first:
   Willagrams/Style/**, Willagrams/Resources/Branding/**, Willagrams/Assets.xcassets/**, Tests/StyleTests/**, docs/ip-review.md
@@ -31,7 +31,7 @@ Open — merged lanes. Wiring items may edit these; rebase onto `integration` fi
   Willagrams/Audio/**, Tests/AudioTests/**
 
 Stop and report if an item requires changing a path outside both lists:
-  protected — Sources/WillagramsRules/** (Contracts, BoardAnalysis, Pool, GameState, MatchMessage, MatchOptions, WordList, Resources/dictionary.txt), Tests/WillagramsRulesTests/**, Willagrams/Match/MatchTransport.swift, Willagrams/Style/DesignTokens.swift (key names — values may change and keys may be added), Willagrams/Style/Terminology.swift, Willagrams.entitlements, Package.swift, supabase/migrations/** (except the new 0006), Willagrams/Online/BackendContracts.swift, Willagrams/Audio/AudioPlayer.swift
+  protected — Sources/WillagramsRules/** (Contracts, BoardAnalysis, Pool, GameState, MatchMessage, MatchOptions, WordList, Resources/dictionary.txt), Tests/WillagramsRulesTests/**, Willagrams/Match/MatchTransport.swift, Willagrams/Style/DesignTokens.swift (key names — values may change and keys may be added), Willagrams/Style/Terminology.swift, Willagrams.entitlements, Package.swift, supabase/migrations/** (0006 included), Willagrams/Online/BackendContracts.swift, Willagrams/Audio/AudioPlayer.swift
   an unmerged lane's — fastlane/**, docs/store/** (launch)
   unowned — repo root files, .claude/**, docs/*.md, progress/**, Willagrams.xcodeproj/** (except the two pbxproj edits above)
 
@@ -51,7 +51,7 @@ Frozen contracts — build and test against these; they will not move:
 - **Nested-package symlinks.** `Tests/ShellTests/BoardSrc` and `Tests/ShellTests/StyleSrc` are directories of per-file symlinks. A new file under `Willagrams/Board/` or `Willagrams/Style/` stays invisible to ShellTests until it is symlinked there. Every other `*Src` is a directory symlink. The app target uses file-system synchronized groups, so a new source file needs no project-file entry.
 - **Size decisions live in plain structs** (not `View`s), so ShellTests/StyleTests can assert on them. Landscape phone stays `verticalSizeClass == .compact`; portrait phone is `horizontalSizeClass == .compact` with a regular vertical class. **One exception to "no idiom checks":** the orientation lock in `Willagrams/App/` may read the idiom, because iPad must stay landscape while iPhone rotates, and no size class distinguishes them at launch. Nowhere else.
 - **`MatchSession` is at a Swift 6.3.3 toolchain limit.** One more *observed* stored property aborts MatchTests with `swift_task_dealloc`. New storage is `@ObservationIgnored`. Run MatchTests after every edit to that file.
-- **Never touch the live backend.** No `supabase db push`, no `supabase link`, and no Supabase MCP `execute_sql`/`apply_migration` against any project. `0006` is written and tested offline; Nate pushes it. Gated live OnlineTests may run with `WILLAGRAMS_LIVE_TESTS=1` only for cases that do not depend on 0006. Never print or commit `.env` or `Config/Secrets.local.xcconfig`.
+- **Never touch the live backend.** No `supabase db push`, no `supabase link`, and no Supabase MCP `execute_sql`/`apply_migration` against any project. `0006` was written and scratch-verified during setup; Nate applies it with `bash scripts/apply-0006-live.sh`. **Never `supabase db push`**: the live migration history is empty, so a push would re-run 0001–0005. Gated live OnlineTests may run with `WILLAGRAMS_LIVE_TESTS=1` only for cases that do not depend on 0006. Never print or commit `.env` or `Config/Secrets.local.xcconfig`.
 - **Behavioral checks.** The Simulator can be booted, launched (`xcrun simctl launch`), rotated only by the app itself, and screenshotted (`xcrun simctl io booted screenshot`), but nothing can tap it (AXe cannot drive this Xcode). A screen reachable only by tapping is Nate's hand test: name it in the run summary with what to look at, and never claim it verified.
 - **The comp.** `docs/design/willagrams-final.dc.html` is the visual truth for Home, Loading, Play/Join, Profile, Friends and How to Play: layout, type, colour, spacing, radii, copy. The repo is the truth for behaviour, and **this LANE.md wins over the comp** where they disagree (the comp still shows the shared-Pool line and a separate Join button — both go). Map comp values onto existing `DesignTokens` keys; add a key only when none fits. The comp's Replay button and the loading footer line are mock-only — do not build them.
 - Player-facing game vocabulary comes from `Terminology.swift` (protected). No new game term may be inlined. Menu labels ("Solo Practice", "Play a Friend", "Multiplayer", "Coming soon") are screen copy, not game terms; they live beside the existing `title` constants in the Shell models.
@@ -61,7 +61,7 @@ Frozen contracts — build and test against these; they will not move:
 
 - Real Multiplayer (three or more players, matchmaking). Home gets a disabled placeholder only.
 - iPad portrait and iPad multitasking. Nate: iPad stays landscape.
-- Applying `0006` to the live project. Nate runs `supabase db push` from his terminal; his account is passkey-only and the CLI cannot log in from an agent shell.
+- Applying `0006` to the live project. Nate runs `bash scripts/apply-0006-live.sh`; the auto-mode classifier blocks agents from production SQL.
 - A blocked player can delete their own block row (`friendships_delete_own`). Still a separate `/foundation`.
 - Sign in with Apple and the `launch` lane. Both wait on the paid Apple Developer membership.
 
@@ -82,9 +82,9 @@ Frozen contracts — build and test against these; they will not move:
   parallel-group: a
   status: not started
 
-- task: Resign wins stop counting toward fastest win. Today `MatchOutcomeRecorder` (`Willagrams/Online/MatchOutcomeRecorder.swift` ~250) sends `elapsedSeconds` for any win, and SQL `record_outcome` (`supabase/migrations/0004_record_outcome.sql`) folds it into `fastest_win_seconds`. Write `supabase/migrations/0006_fastest_win_skips_null.sql`: `create or replace function public.record_outcome(won boolean, tiles integer, elapsed_seconds integer)` — same signature, same `security definer` and `search_path`, same grants re-stated as 0004 has them — whose update sets `fastest_win_seconds = case when won and elapsed_seconds is not null then least(fastest_win_seconds, greatest(1, elapsed_seconds)) else fastest_win_seconds end`; then `update public.profiles set fastest_win_seconds = null;`. Note that under 0004, `greatest(1, null)` is 1, so a build that sends null before 0006 is applied would record a 1-second win — say so in the migration's header comment. Swift: `recordOutcome(..., elapsedSeconds: Int?)` on `MatchOutcomeStore` (a Willagrams/Online protocol — confirm it is not in `BackendContracts.swift`; if it is, stop and report); the recorder passes nil when the match did not end by the winner's own win claim (`MatchSession.winningPlacements == nil` — verify every `finish(winner:placements:)` caller in `MatchSession.swift` to confirm nil means exactly resign/abandon); `ProfileStats` mirrors it (nil → fastest unchanged); `SupabaseBackend+Outcome.swift` encodes an explicit JSON `null` for the key (a missing key would fail the RPC, which has no default); `FakeBackend` and every test double follow. Extend `supabase/tests/rls_behavior.sql` with a null-elapsed case; run it on a throwaway database via `scripts/scratch-verify.sh` if that works on this machine, else report it unrun.
+- task: Resign wins stop counting toward fastest win. Today `MatchOutcomeRecorder` (`Willagrams/Online/MatchOutcomeRecorder.swift` ~250) sends `elapsedSeconds` for any win, and SQL `record_outcome` (`supabase/migrations/0004_record_outcome.sql`) folds it into `fastest_win_seconds`. **The server half is already done** (setup, 2026-09-15). `supabase/migrations/0006_fastest_win_skips_null.sql` re-creates `record_outcome` so a win with `elapsed_seconds = null` leaves `fastest_win_seconds` alone, and resets every fastest win. `supabase/tests/rls_behavior.sql` has the null cases; they pass on scratch (55 assertions) and fail without 0006. Do not edit either file. This item is the Swift half. Swift: `recordOutcome(..., elapsedSeconds: Int?)` on `MatchOutcomeStore` (a Willagrams/Online protocol — confirm it is not in `BackendContracts.swift`; if it is, stop and report); the recorder passes nil when the match did not end by the winner's own win claim (`MatchSession.winningPlacements == nil` — verify every `finish(winner:placements:)` caller in `MatchSession.swift` to confirm nil means exactly resign/abandon); `ProfileStats` mirrors it (nil → fastest unchanged); `SupabaseBackend+Outcome.swift` encodes an explicit JSON `null` for the key (a missing key would fail the RPC, which has no default); `FakeBackend` and every test double follow. `MatchOutcomeRecorderLiveTests` (gated) must not assert a null-elapsed live call until Nate confirms 0006 is applied.
   guardrails:
-    - No applied migration (0001–0005) is edited; 0006 is additive and re-creates the function with an identical signature
+    - No migration file (0001–0006) and no SQL fixture is edited
     - Nothing is applied to the live project — no `supabase db push`, no MCP SQL
     - A win by the winner's own claim still records its elapsed time exactly as today; played/won/tiles counters are unchanged for every outcome
     - `BackendContracts.swift` does not move
@@ -92,7 +92,7 @@ Frozen contracts — build and test against these; they will not move:
     - An OnlineTests case: a match the local player wins because the opponent resigned leaves `fastestWinSeconds` unchanged (nil stays nil, 42 stays 42) while played and won each go up by 1. It fails if the recorder's nil-for-resign branch is removed (mutation-checked). The existing resign case that expected 7 (`MatchOutcomeRecorderTests` ~162–172) is rewritten to this rule
     - An OnlineTests case: a win by claim in 30s still sets `fastestWinSeconds` to 30 from nil and to 30 from 42
     - An OnlineTests case on the Supabase RPC params encoding: nil elapsed produces JSON containing `"elapsed_seconds":null` (key present), 30 produces `"elapsed_seconds":30`
-    - `0006` exists with the header warning; the run summary quotes `scratch-verify.sh`'s result or states it did not run and why
+    - `ProfileStats` (the Swift mirror every test double applies) gives the same rows as the SQL fixture's null cases: `(6,3,7,20)` + a win with nil elapsed and 2 tiles → `(7,4,9,20)`; a fresh row + a win with nil elapsed and 1 tile → `(1,1,1,nil)`
   caution: true
   parallel-group: a
   status: not started

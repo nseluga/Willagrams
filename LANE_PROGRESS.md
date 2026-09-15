@@ -6,7 +6,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 - **Status:** round 2 (`final`, 10 items) set up on `lane/final`, cut from `lane/polish` @ `c1f038b`; no item started. Run paused at Nate's request before coding
 - **Next:** `/dev-team-auto` from item 1 when Nate says go
-- **Blockers:** none. Migration `0006` must be pushed by Nate before any build with item 2 plays online
+- **Blockers:** none. Migration `0006` is written and scratch-verified; Nate applies it live with `bash scripts/apply-0006-live.sh` (never `supabase db push`) before any build with item 2 plays online
 - **Last updated:** 2026-09-15
 
 ## Round 2 — final adjustments

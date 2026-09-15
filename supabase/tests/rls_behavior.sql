@@ -543,6 +543,15 @@ select pg_temp.must_equal(
     '(6,3,7,20)',
     'a negative tile count cannot take the tally down');
 
+-- A win with no elapsed time — the opponent resigned. It counts as a win but is
+-- not a race, so the record stands. Under 0004 this set the record to 1
+-- (`greatest(1, null)`); 0006's null guard is what this pins.
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(true, 2, null) p$$,
+    '(7,4,9,20)',
+    'a win with no elapsed time counts the win and leaves the fastest time');
+
 -- There is no player-id parameter, so the row is the caller's by construction.
 -- This pins that the returned row is in fact theirs.
 select pg_temp.must_equal(
@@ -550,23 +559,30 @@ select pg_temp.must_equal(
     '11111111-1111-1111-1111-111111111111',
     'the row returned is the caller''s own');
 
--- Seven calls by Ada, and the other seeded player has not moved. The "wrote to
+-- Eight calls by Ada, and the other seeded player has not moved. The "wrote to
 -- somebody else's row" failure, which no error would report.
 select pg_temp.must_equal(
     $$select (matches_played, matches_won, tiles_placed, fastest_win_seconds)::text
         from public.profiles where id = '22222222-2222-2222-2222-222222222222'$$,
     '(0,0,0,)',
-    'another player''s counters are untouched by seven of Ada''s matches');
+    'another player''s counters are untouched by eight of Ada''s matches');
 
 -- The column's own check is `null or > 0`, so a match won inside a second has
 -- to floor rather than be rejected. Without the floor this raises 23514 and the
 -- player loses the win as well as the time.
 select pg_temp.acting_as('22222222-2222-2222-2222-222222222222');
 
+-- A first win with no elapsed time leaves "no fastest win yet" as it was.
+select pg_temp.must_equal(
+    $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
+        from public.record_outcome(true, 1, null) p$$,
+    '(1,1,1,)',
+    'a first win with no elapsed time records no fastest time');
+
 select pg_temp.must_equal(
     $$select (p.matches_played, p.matches_won, p.tiles_placed, p.fastest_win_seconds)::text
         from public.record_outcome(true, 1, 0) p$$,
-    '(1,1,1,1)',
+    '(2,2,2,1)',
     'a win inside a second floors at one rather than failing the check');
 
 -- A session whose profile row was never created, or has been deleted. Under

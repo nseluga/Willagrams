@@ -506,9 +506,12 @@ each scoped to the named edit only:**
     migration only, re-creating `record_outcome` with the same signature so a
     null `elapsed_seconds` leaves `fastest_win_seconds` untouched, and resetting
     every `fastest_win_seconds` to null (a resign win cannot be told apart after
-    the fact; Nate's call). No applied migration is edited. The lane writes it;
-    **Nate applies it** (`supabase db push` from his terminal — passkey account)
-    before any build that sends a null ships.
+    the fact; Nate's call). No applied migration is edited. Written and
+    scratch-verified during lane setup (the fixture's null cases fail without
+    it). **Nate applies it** with `bash scripts/apply-0006-live.sh` before any
+    build that sends a null ships. Never `supabase db push` on this project:
+    its migration history is empty (0001–0005 went in by script), so a push
+    would re-run them all.
 No wire, `BackendContracts.swift`, `MatchOptions` or `Terminology.swift` change.
 
 ---
