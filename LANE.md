@@ -95,7 +95,7 @@ Frozen contracts — build and test against these; they will not move:
     - `ProfileStats` (the Swift mirror every test double applies) gives the same rows as the SQL fixture's null cases: `(6,3,7,20)` + a win with nil elapsed and 2 tiles → `(7,4,9,20)`; a fresh row + a win with nil elapsed and 1 tile → `(1,1,1,nil)`
   caution: true
   parallel-group: a
-  status: not started
+  status: done (2026-09-15, 4bdb10a — QA PASS, review 0/0/2; Nate signs off on the `elapsedIsMeasuredFromPlaying` driver change)
 
 - task: iPhone plays portrait everywhere except the game. Add `AppRoute.isGameplay` (`Willagrams/Shell/AppRoute.swift`): true for `.countdown`, `.match`, `.results`, false for every other route. Add `Willagrams/App/OrientationLock.swift`: a `UIApplicationDelegate` adopted via `@UIApplicationDelegateAdaptor` in `WillagramsApp.swift`, whose `application(_:supportedInterfaceOrientationsFor:)` returns a static mask. A plain `OrientationPolicy.mask(isGameplay:isPad:) -> UIInterfaceOrientationMask` decides it: iPad → `.landscape` always; iPhone → `.landscape` in gameplay, `.portrait` otherwise. `ShellRootView` (`Willagrams/Shell/ShellRootView.swift`) observes `route.isGameplay` with `.onChange(of:initial: true)`, sets the mask, calls `setNeedsUpdateOfSupportedInterfaceOrientations()` on the key window's root view controller, and `windowScene.requestGeometryUpdate(.iOS(interfaceOrientations:))`. In `project.pbxproj` change only `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone` (Debug and Release, ~lines 208/235) to add `UIInterfaceOrientationPortrait`; the iPad key is untouched. The app keeps its pure SwiftUI `App` lifecycle — the adaptor is the only delegate, and it does nothing else.
   guardrails:

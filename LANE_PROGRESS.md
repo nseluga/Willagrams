@@ -14,7 +14,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Item | Status |
 |------|--------|
 | Fast drag never flies home | not started |
-| Resign wins skip fastest win | not started |
+| Resign wins skip fastest win | done — A win because your opponent resigned or left now counts as a win but never sets your fastest-win time; winning by playing out still records it. (2026-09-15) |
 | iPhone portrait except gameplay | not started |
 | Tighter phone margins | not started |
 | Home rebuilt | not started |
