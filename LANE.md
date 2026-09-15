@@ -168,7 +168,7 @@ Frozen contracts — build and test against these; they will not move:
     - A BoardTests case: `BoardLayout.framing` for a 20-column by 12-row spread, in an 812×375 view with the iPhone HUD insets, returns a camera where every occupied cell's rect lies inside the inset rect
     - A BoardTests case: a spread wider than 16pt cells can fit comes back at cell size 16, centered on the occupied bounds' midpoint
     - `xcodebuild` BUILD SUCCEEDED
-  status: not started
+  status: done — self-verified, 3 mutation checks red; recenter button's own footprint not in insets
 
 - task: Stop tiles already on the board from re-animating when panned back into view. `BoardSurface` culls to `visibleCoords`, so a pan changes the rendered id set, and the `FromBag` insertion transition (BoardView ~lines 561–578) fires on tiles that were always there. Apply `FromBag` only to ids in `arriving` (tiles that are actually new), and key the animation on `arrivalToken`, not the visible set. Pull the transition choice into a plain function BoardTests can call.
   guardrails:

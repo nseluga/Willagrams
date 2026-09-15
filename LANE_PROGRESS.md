@@ -5,7 +5,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 ## Current position
 
 - **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** item 9 — recenter frames every tile (item 12 running in parallel)
+- **Next:** item 10 — no fly-in on pan (item 12 running in parallel)
 - **Blockers:** none
 - **Last updated:** 2026-09-14
 
@@ -21,7 +21,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Unfriend | done — Each friend's row has an Unfriend button that asks first; unfriending never removes a block. |
 | Zoom further out | done — You can pinch the board out further, to smaller tiles, so big boards fit on screen. |
 | No drag snap-back | done — A tile you let go of stays where it lands, even on a fast drag; only an occupied cell sends it back. |
-| Recenter frames every tile | not started |
+| Recenter frames every tile | done — Recenter now fits every tile on screen, clear of the bag and buttons, zooming out as far as needed. |
 | No fly-in on pan | not started |
 | Drawn tiles land near the board | not started |
 | Early start fix | not started |

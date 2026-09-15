@@ -46,3 +46,9 @@
 - **What happened:** Repro proved a lost onEnded (system edge gesture cancels the DragGesture; the next touch's began() dropped the held tile). Deleted the dead distance guard, added cancel-path landing via @GestureState, deferred edge gestures while input is live. Attempt 1 passed QA but review caught the leftover tile landing after the new touch's hit test; attempt 2 fixed it.
 - **What failed:** QA can't drive BoardView's gesture wiring; only review caught the guardrail break.
 - **Remember next run:** Removing the occupied check in BoardDrag alone fails no test (`Board.place` also refuses) — bypass both. `threshold` is now dead but threaded through ~100 test call sites. BoardSourceTests pins BoardView source; new modifiers naming `inputLocked` need an exact-line exemption. Merge with item 7 conflicted in BoardDragGateTests (resolved to zoom 0.25).
+
+## 2026-09-15 00:30 — dev-team-auto — Make recenter actually frame every tile (item 9)
+- **Outcome:** DONE — 1 attempt — caution: no — team: dt-engineer (opus, high) — auto/polish, 395cbce
+- **What happened:** `BoardInsets` plain struct threaded through `BoardLayout.framing` / `BoardCamera.recenter`; both recenter sites go through one `recentered(in:)`; `MatchHUDLayout.boardInsets` derives from the real bag/control tokens and is symlinked into BoardTests. Mutations (insets ignored, 16pt clamp removed, zoom-in cap removed) all red. Top-level re-run: Board 256, Shell 227.
+- **Open:** the recenter button's own footprint (top-right) is not in chromeInsets — a tile can sit under it.
+- **Remember next run:** ShellTests timing cases (countdown/deal waits) flake under concurrent agent load; compare against a clean-HEAD run before calling it a regression. BoardSourceTests' networking-word guard scans doc comments too.
