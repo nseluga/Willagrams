@@ -92,4 +92,93 @@ struct HowToPlayTests {
         #expect(AppRoute.howToPlay == AppRoute.howToPlay)
         #expect(AppRoute.howToPlay != AppRoute.menu)
     }
+
+    // MARK: - The view wiring (source scan — HowToPlayView imports SwiftUI and
+    // is excluded from this target, so its claims are only checkable as text)
+
+    @Test("The view pages through HowToPlay.rules with a HowToPlayPager, not a grid of all of them")
+    func viewPagesRatherThanGrids() throws {
+        let text = try HowToPlayTests.viewSource()
+        let scope = try #require(
+            HowToPlayTests.declaration("struct HowToPlayView", in: text),
+            "HowToPlayView declaration not found"
+        )
+        #expect(scope.contains("HowToPlayPager"), "the view does not hold a HowToPlayPager")
+        #expect(scope.contains("pager.pageLabel"), "the view does not show the pager's page label")
+        #expect(scope.contains("pager.primaryLabel"), "the view does not show the pager's primary label")
+        #expect(!scope.contains("LazyVGrid"), "the view still lays every rule out in a grid")
+    }
+
+    private static func viewSource() throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Cases
+            .deletingLastPathComponent()   // ShellTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("Willagrams/Shell/HowToPlayView.swift")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// The text from `header` to the file's end — good enough when the file
+    /// holds exactly one declaration of interest, which both views here do.
+    private static func declaration(_ header: String, in text: String) -> String? {
+        guard let range = text.range(of: header) else { return nil }
+        return String(text[range.lowerBound...])
+    }
+}
+
+/// `HowToPlayPager` is a plain value, so its logic is reachable directly —
+/// no view, no `ShellModel`, no `@MainActor`.
+@Suite("How to play pager")
+struct HowToPlayPagerTests {
+
+    @Test("Starts on page 1 of however many rules there are")
+    func startsOnPageOne() {
+        let pager = HowToPlayPager(count: HowToPlay.rules.count)
+        #expect(pager.page == 1)
+        #expect(pager.pageLabel == "1 OF \(HowToPlay.rules.count)")
+    }
+
+    @Test("Next advances the page")
+    func nextAdvances() {
+        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        pager.next()
+        #expect(pager.page == 2)
+    }
+
+    @Test("Back at page 1 stays at page 1")
+    func backClampsAtOne() {
+        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        pager.back()
+        #expect(pager.page == 1)
+    }
+
+    @Test("The last page's primary label is Done")
+    func lastPageReadsDone() {
+        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        for _ in 1..<HowToPlay.rules.count { pager.next() }
+        #expect(pager.isLastPage)
+        #expect(pager.primaryLabel == "Done")
+    }
+
+    @Test("A page short of the last reads Next")
+    func midPageReadsNext() {
+        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        pager.next()
+        #expect(pager.primaryLabel == "Next")
+    }
+
+    @Test("The page label reads N OF M, the comp's format")
+    func pageLabelFormat() {
+        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        pager.next()
+        #expect(pager.pageLabel == "2 OF \(HowToPlay.rules.count)")
+    }
+
+    @Test("Next never advances past the last page")
+    func nextStopsAtTheLastPage() {
+        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        for _ in 0..<(HowToPlay.rules.count + 5) { pager.next() }
+        #expect(pager.page == HowToPlay.rules.count)
+    }
 }
