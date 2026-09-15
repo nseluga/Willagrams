@@ -30,21 +30,24 @@ struct MenuView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let layout = Layout(width: proxy.size.width)
+            let widths = WidthLayout(width: proxy.size.width)
+            let layout = MenuLayout(size: proxy.size)
 
-            // A phone in landscape is shorter than the action column. Scroll
-            // there, and only there: where the columns fit, the first branch
-            // wins and they stay centred exactly as drawn.
+            // The compact grid and the smaller wordmark/spacing are the
+            // primary sizing mechanism — they are what fits a landscape
+            // phone. `ViewThatFits` stays only as the fallback for the
+            // largest accessibility Dynamic Type sizes, where scrolling
+            // beats clipping.
             ViewThatFits(in: .vertical) {
-                columns(layout)
-                ScrollView { columns(layout) }
+                columns(widths, layout)
+                ScrollView { columns(widths, layout) }
             }
             // Capped and centred rather than pinned to the screen edges. Past
             // the cap a wider device gets margin, not a wider dead band between
             // the two columns.
-            .frame(maxWidth: layout.contentWidth)
+            .frame(maxWidth: widths.contentWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(DesignTokens.Space.xl)
+            .screenPadding()
         }
         .background {
             LinearGradient(
@@ -67,18 +70,12 @@ struct MenuView: View {
     /// while handing the app a phone-width window — are four different widths,
     /// and a size class answers none of them. The comp was drawn at
     /// ``compWidth``; everything here is that drawing read at the width to hand.
-    private struct Layout {
+    private struct WidthLayout {
 
         let contentWidth: CGFloat
 
         init(width: CGFloat) {
             contentWidth = min(width, MenuView.contentMaxWidth)
-        }
-
-        /// Clamped at both ends: the mark is the screen, so it may not shrink
-        /// to a stamp on a phone or swell past the tagline on a 13-inch iPad.
-        var wordmarkCell: CGFloat {
-            min(max((contentWidth * 0.052).rounded(), 26), 64)
         }
 
         var taglineWidth: CGFloat { (contentWidth * 0.32).rounded() }
@@ -88,26 +85,28 @@ struct MenuView: View {
         }
     }
 
-    private func columns(_ layout: Layout) -> some View {
+    private func columns(_ widths: WidthLayout, _ layout: MenuLayout) -> some View {
         HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
-            identity(layout)
+            identity(widths, layout)
 
             Spacer(minLength: DesignTokens.Space.xl)
 
-            actions
+            actions(layout)
                 // The action column is fixed in proportion, not in points:
                 // two buttons with short labels, sized off the same measure
                 // as the rest so they neither strand mid-air on a 13-inch
                 // iPad nor crowd the mark on a phone.
-                .frame(width: layout.actionColumnWidth)
+                .frame(width: widths.actionColumnWidth)
         }
     }
 
-    private func identity(_ layout: Layout) -> some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+    private func identity(_ widths: WidthLayout, _ layout: MenuLayout) -> some View {
+        VStack(alignment: .leading, spacing: layout.spacing) {
             Spacer(minLength: 0)
 
-            WordmarkTiles(cell: layout.wordmarkCell)
+            // `MenuLayout.wordmarkHeight` is the mark's overall height; the
+            // 5x5 grid's per-cell size is that divided by its five rows.
+            WordmarkTiles(cell: layout.wordmarkHeight / 5)
                 #if DEBUG
                 // Quiet way in to the style gallery. No visible control, so it
                 // adds nothing to the menu's two actions.
@@ -118,14 +117,14 @@ struct MenuView: View {
                 .font(DesignTokens.Typography.body)
                 .foregroundStyle(DesignTokens.Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: layout.taglineWidth, alignment: .leading)
+                .frame(maxWidth: widths.taglineWidth, alignment: .leading)
 
             Spacer(minLength: 0)
         }
     }
 
-    private var actions: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
+    private func actions(_ layout: MenuLayout) -> some View {
+        VStack(alignment: .leading, spacing: layout.spacing) {
             Spacer(minLength: 0)
 
             // The mute control rides the section label rather than the button
@@ -166,6 +165,28 @@ struct MenuView: View {
             .buttonStyle(.brandPrimary)
             .disabled(!shell.canPlayOnline)
 
+            // The four quiet actions, in a grid: two columns on a landscape
+            // phone so they read as two rows instead of four, one column on
+            // an iPad where height was never the constraint.
+            quietActions(layout)
+
+            if let reason = shell.onlineUnavailableReason {
+                Text(reason)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func quietActions(_ layout: MenuLayout) -> some View {
+        let columns = Array(
+            repeating: GridItem(.flexible(), spacing: DesignTokens.Space.m, alignment: .top),
+            count: layout.quietColumns
+        )
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: layout.spacing) {
             // The other end of the same handoff: one side shows a code, the
             // other types it. Two actions rather than one screen with both,
             // because a host and a guest are doing different things and a
@@ -194,19 +215,10 @@ struct MenuView: View {
             .buttonStyle(.brandQuiet)
             .disabled(shell.currentProfile == nil)
 
-            if let reason = shell.onlineUnavailableReason {
-                Text(reason)
-                    .font(DesignTokens.Typography.caption)
-                    .foregroundStyle(DesignTokens.Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             Button { shell.showHowToPlay() } label: {
                 Text(HowToPlay.title).menuActionLabel()
             }
             .buttonStyle(.brandQuiet)
-
-            Spacer(minLength: 0)
         }
     }
 
