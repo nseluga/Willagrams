@@ -4,7 +4,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 ## Current position
 
-- **Status:** round 2 run 2 (2026-09-15) — items 1, 2 and 4 done and merged; item 3 blocked, built and gate-closed but unmerged on `auto/final-a3` @ `4533ac0`; items 9 and 10 in flight; items 5–8 not started
+- **Status:** round 2 run 2 (2026-09-15) — items 1, 2, 4, 9 and 10 done and merged (`auto/final` @ `1684348`); item 3 blocked, built and gate-closed but unmerged on `auto/final-a3` @ `4533ac0`; items 5–8 not started
 - **Next:** Nate revises item 3's screenshot criterion (see its `status:`), then continue — merge `auto/final-a3` only with or after item 5 (Home rebuilt), or the portrait iPhone Home is cut off
 - **Blockers:** item 3's iPad check needs a human-rotated Simulator or a revised criterion. Migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here
 - **Last updated:** 2026-09-15
@@ -21,8 +21,8 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | One Play / Join a Friend screen | not started |
 | Play a Friend match settings | not started |
 | Looping loading screen | not started |
-| Profile and Friends restyle | not started |
-| How to Play pager + Solo setup portrait | not started |
+| Profile and Friends restyle | done — Profile and Friends now match the final design: an avatar card, stat cards with a win-rate bar, and friend rows as tiles, with Fastest win, Block and Unfriend all kept. (2026-09-15) |
+| How to Play pager + Solo setup portrait | done — How to Play is now one rule per page with Back and Next and a Done on the last page, and Solo setup fits an upright phone in a single column. (2026-09-15) |
 
 ## Round 1 — phone polish (shipped 2026-09-15)
 

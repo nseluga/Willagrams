@@ -182,7 +182,7 @@ Frozen contracts — build and test against these; they will not move:
     - AccountTests and FriendsTests green at or above floors; `xcodebuild` BUILD SUCCEEDED; "Profile and Friends in portrait against the comp" is named as Nate's hand test
   ui: true
   parallel-group: e
-  status: not started
+  status: done (2026-09-15, 0b9b5d7, merged into auto/final — QA PASS first attempt; AccountTests 16 (floor 15), FriendsTests 49, BUILD SUCCEEDED. `ProfileModel.winRatePercent` mutation-checked with both guards isolated. Hand test cannot run until item 3 merges — the app is still landscape-only. Carried for Nate: the Friends accepted-row's three fixed-width buttons are tight at iPhone SE width; `SourceGuardrailTests` literal source-string scans bent production shape into a single-use `doneButton(onBack:)` helper and should be scoped to the declaration before the next screen restyle)
 
 - task: How to Play as a pager, from comp screen 06, and Solo setup fitting portrait. `Willagrams/Shell/HowToPlayView.swift`: Back · "N OF M" mono label; one rule per page — accent number tile, large title, body — with dots and Back / Next buttons at the bottom; Next on the last page reads Done and returns to Home. Rule titles and bodies stay verbatim from `Willagrams/Shell/HowToPlay.swift` (M is however many rules it has). Page state lives in a plain `HowToPlayPager` value. `Willagrams/Shell/SoloSetupView.swift`: lay its existing controls out as a single portrait column with the start action anchored at the bottom, using item 4's margins, so it fits a 375×812 phone without clipping.
   guardrails:
@@ -193,4 +193,4 @@ Frozen contracts — build and test against these; they will not move:
     - `xcodebuild` BUILD SUCCEEDED; "How to Play paging and Solo setup in portrait" is named as Nate's hand test
   ui: true
   parallel-group: e
-  status: not started
+  status: done (2026-09-15, 570c80c, merged into auto/final — QA PASS; ShellTests 238 (floor 227), BUILD SUCCEEDED. M = 6 rules. Carried for Nate: two of the five pager mutations (initial page, Next advance) are structurally non-isolable — `pageLabel` derives from `page` and `next()` is the only forward transition — so they fail 2–3 named assertions rather than one; the other three are clean. Portrait fit and comp fidelity are deferred to the named hand test, which needs item 3 merged)
