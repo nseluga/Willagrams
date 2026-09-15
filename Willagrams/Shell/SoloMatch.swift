@@ -145,8 +145,8 @@ public final class SoloMatch {
 
     /// Opens the match, and sets the far end thinking if it has a brain.
     ///
-    /// The local player is host, so this never hits the host rejection in
-    /// `startMatch` and `session.lastNote` stays nil. The brain is started after
+    /// The local player is roster[0], so it holds the pool and
+    /// `session.lastNote` stays nil. The brain is started after
     /// the deal is on the wire, never before: a brain that runs first would take
     /// its first look at an empty rack.
     public func start() {

@@ -82,9 +82,8 @@ struct SoloMatchTests {
         solo.leave()
     }
 
-    /// The other half of the same criterion: the note this factory must never
-    /// produce is a note the engine really does produce for a non-host, so the
-    /// assertion above is not passing because the string was retired.
+    /// Any player in the roster may open the match, and the pool still lives on
+    /// roster[0] only, whoever pressed Start.
     @Test("A non-pool-host may open, and the pool still stays on roster[0]")
     func aNonPoolHostOpensButThePoolStaysOnRosterZero() async throws {
         let low = PlayerID(rawValue: "aaa")
