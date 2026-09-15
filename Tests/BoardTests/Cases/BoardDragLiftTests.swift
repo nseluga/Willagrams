@@ -142,4 +142,26 @@ final class BoardDragLiftTests: XCTestCase {
         XCTAssertEqual(after, board, "a group landed although one target was taken")
         XCTAssertEqual(feel.events, [.pickup, .reject])
     }
+
+    /// At 16pt the lift is half a cell: a release a fraction of a cell up from
+    /// home puts the lifted centre in the row above. The tile must stay home,
+    /// whether that row is empty or taken.
+    func testASubCellReleaseAtTheSixteenPointFloorStaysHome() throws {
+        let camera = Self.camera(cell: 16)
+        let home = Coord(row: 5, col: 5)
+        for aboveTaken in [false, true] {
+            let mover = Tile(letter: "A")
+            var entries = [(home, mover)]
+            if aboveTaken { entries.append((Coord(row: 4, col: 5), Tile(letter: "B"))) }
+            let board = Self.board(entries)
+            let drag = try XCTUnwrap(TileDrag(origins: [home], anchor: home, haptics: Feel()))
+            let translation = CGSize(width: 0, height: -1.6)
+            let after = drag.drop(translation: translation, on: board, camera: camera, threshold: 22, lift: Self.lift)
+            XCTAssertEqual(after.tile(at: home)?.id, mover.id, "above taken \(aboveTaken): a no-move release left home")
+            XCTAssertEqual(
+                drag.landed(translation: translation, on: board, camera: camera, threshold: 22, lift: Self.lift),
+                [home]
+            )
+        }
+    }
 }

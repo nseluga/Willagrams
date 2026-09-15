@@ -206,6 +206,15 @@ public struct TileDrag: Sendable {
               (dropped.y - corner.y).magnitude <= size
         else { return nil }
 
+        // At the 16pt floor the lift is half a cell, so a no-move release puts
+        // the lifted centre on the cell's top edge and any sub-point offset
+        // floors it one row up. A single tile whose UN-lifted centre is still
+        // on its anchor stays home.
+        if origins.count == 1, target != anchor,
+           camera.coord(at: CGPoint(x: dropped.x, y: dropped.y - lift)) == anchor {
+            target = anchor
+        }
+
         // One-cell forgiveness, single tile only: released on an occupied cell,
         // it lands on the EMPTY cell within one cell whose centre is nearest the
         // release point. None empty → refused below. A group stays
