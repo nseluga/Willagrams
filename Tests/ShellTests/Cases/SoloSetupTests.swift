@@ -219,4 +219,27 @@ struct SoloSetupTests {
         #expect(SoloSetup.difficulties.count == BotDifficultyMenu.choices.count)
         #expect(SoloSetup.difficulties.map(\.difficulty) == [.easy, .medium, .hard])
     }
+
+    // MARK: - The view wiring (source scan — SoloSetupView imports SwiftUI and
+    // is excluded from this target, so its claims are only checkable as text)
+
+    @Test("The screen lays out as a single column and reads item 4's margins")
+    func viewIsASingleColumnOnScreenPadding() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Cases
+            .deletingLastPathComponent()   // ShellTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo root
+            .appendingPathComponent("Willagrams/Shell/SoloSetupView.swift")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let scope = try #require(
+            {
+                guard let range = text.range(of: "struct SoloSetupView") else { return nil as String? }
+                return String(text[range.lowerBound...])
+            }(),
+            "SoloSetupView declaration not found"
+        )
+        #expect(!scope.contains("ViewThatFits"), "the screen still branches between a one- and two-column layout")
+        #expect(scope.contains(".screenPadding()"), "the screen does not use item 4's margins")
+    }
 }

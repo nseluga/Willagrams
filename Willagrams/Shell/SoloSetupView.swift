@@ -26,19 +26,14 @@ struct SoloSetupView: View {
                 .foregroundStyle(DesignTokens.Palette.textPrimary)
                 .accessibilityAddTraits(.isHeader)
 
-            // Two columns side by side when the screen is wide, one under the
-            // other when it is not. `ViewThatFits` measures — no size class is
-            // read and no branch is taken on state.
+            // A single portrait column: the opponent presets over the match
+            // rules, scrolled so a small phone never clips them. The start
+            // action sits outside this scroll view, anchored to the screen's
+            // bottom edge below.
             ScrollView {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
-                        opponent(setup: setup).frame(minWidth: Self.columnWidth)
-                        rules(setup: setup).frame(minWidth: Self.columnWidth)
-                    }
-                    VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-                        opponent(setup: setup)
-                        rules(setup: setup)
-                    }
+                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                    opponent(setup: setup)
+                    rules(setup: setup)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, DesignTokens.Space.m)
@@ -63,9 +58,6 @@ struct SoloSetupView: View {
             .ignoresSafeArea()
         }
     }
-
-    /// How narrow a column may get before the two stop sitting side by side.
-    private static let columnWidth: CGFloat = 340
 
     /// What the match itself is played under: the starting hand, which is this
     /// screen's own, and then the settings lane's own options screen, embedded
