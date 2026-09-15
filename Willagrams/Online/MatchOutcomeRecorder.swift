@@ -86,7 +86,7 @@ public struct ProfileStats: Sendable, Equatable, Encodable {
         _ current: Profile,
         won: Bool,
         tilesPlaced: Int,
-        elapsedSeconds: Int
+        elapsedSeconds: Int?
     ) -> ProfileStats {
         ProfileStats(
             matchesPlayed: current.matchesPlayed + 1,
@@ -105,11 +105,13 @@ public struct ProfileStats: Sendable, Equatable, Encodable {
     /// - A loss never touches it, whatever the elapsed time was.
     /// - A win with nothing recorded sets it.
     /// - A win sets it only if it beats what is there.
+    /// - A win with no elapsed time (a resign or abandon, not a claim) leaves
+    ///   it alone — `record_outcome` since 0006 does the same with `null`.
     ///
     /// The floor of 1 is the database's, not a preference: `fastest_win_seconds`
     /// is `null or > 0`, and a match won inside a second rounds to zero.
-    public static func fastestWin(current: Int?, won: Bool, elapsedSeconds: Int) -> Int? {
-        guard won else { return current }
+    public static func fastestWin(current: Int?, won: Bool, elapsedSeconds: Int?) -> Int? {
+        guard won, let elapsedSeconds else { return current }
         let elapsed = max(1, elapsedSeconds)
         guard let current else { return elapsed }
         return elapsed < current ? elapsed : current
@@ -142,7 +144,7 @@ public protocol MatchOutcomeStore: Sendable {
     /// double applies ``ProfileStats/after`` to say the same thing.
     @discardableResult
     func recordOutcome(
-        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int?
     ) async throws -> Profile
 }
 
@@ -248,7 +250,11 @@ public final class MatchOutcomeRecorder {
 
         guard !didRecordStats, let localID = Self.uuid(localPlayer) else { return }
         didRecordStats = true
-        let elapsed = Int(now().timeIntervalSince(startedAt).rounded())
+        // Only a win the winner claimed is a timed win. `winningPlacements` is
+        // nil exactly when `finish` came from `depart` — a resign or abandon —
+        // and a resign-by-opponent must not set the fastest-win record.
+        let elapsed: Int? = session.winningPlacements == nil
+            ? nil : Int(now().timeIntervalSince(startedAt).rounded())
         let won = winner == localPlayer
         // Each player's board is their own private table, so this is this
         // device's own count and nobody else's.

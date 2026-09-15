@@ -106,15 +106,29 @@ struct SupabaseOutcomeQueries: MatchOutcomeStore {
     /// The three deltas `record_outcome` takes. `id` is deliberately not among
     /// them: the function reads the caller from `auth.uid()`, so there is no
     /// row for a client to name and therefore no wrong one it can name.
-    private struct OutcomeParams: Encodable {
+    struct OutcomeParams: Encodable {
         let won: Bool
         let tiles: Int
-        let elapsedSeconds: Int
+        let elapsedSeconds: Int?
 
         enum CodingKeys: String, CodingKey {
             case won
             case tiles
             case elapsedSeconds = "elapsed_seconds"
+        }
+
+        /// Hand-written because the synthesized one drops a nil key, and
+        /// `record_outcome` has no default for `elapsed_seconds`: a missing key
+        /// fails the RPC, an explicit `null` means "not a timed win".
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(won, forKey: .won)
+            try container.encode(tiles, forKey: .tiles)
+            if let elapsedSeconds {
+                try container.encode(elapsedSeconds, forKey: .elapsedSeconds)
+            } else {
+                try container.encodeNil(forKey: .elapsedSeconds)
+            }
         }
     }
 
@@ -127,7 +141,7 @@ struct SupabaseOutcomeQueries: MatchOutcomeStore {
     /// row and have to be told which.
     @discardableResult
     func recordOutcome(
-        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int?
     ) async throws -> Profile {
         let row = try await mapping {
             try await rest

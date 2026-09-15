@@ -169,7 +169,8 @@ struct MatchOutcomeRecorderTests {
         #expect(stats.map(\.id) == [Self.bobUUID])
         #expect(stats.first?.stats.matchesPlayed == 1)
         #expect(stats.first?.stats.matchesWon == 1)
-        #expect(stats.first?.stats.fastestWinSeconds == 7)
+        // Won because the host resigned: not a timed win, so no record.
+        #expect(stats.first?.stats.fastestWinSeconds == nil)
     }
 
     // MARK: - Exactly once
@@ -274,7 +275,8 @@ struct MatchOutcomeRecorderTests {
         #expect(recorder.startedAt == Date(timeIntervalSince1970: 150))
 
         clock.advance(40)
-        host.resign()
+        _ = host
+        guest.claimWin()                   // a claimed win: the only kind that is timed
         try await Self.waitUntil("the guest has won") { guest.winner == Self.bob }
         await recorder.sync()
 
@@ -417,6 +419,70 @@ struct MatchOutcomeRecorderTests {
         #expect(await store.profileUpdates.first?.stats.matchesWon == 1)
         #expect(await store.profileUpdates.first?.stats.fastestWinSeconds == 11)
     }
+
+    // MARK: - Resign wins are not timed wins
+
+    /// Bob (the guest) wins after `seconds`, either by his own claim or because
+    /// the host resigned, starting from `seed`. Returns the one stats write.
+    static func guestWin(
+        from seed: Profile, byClaim: Bool, seconds: TimeInterval
+    ) async throws -> ProfileStats {
+        let store = RecordingOutcomeStore(profiles: [bobUUID: seed])
+        let clock = TestClock(start: Date(timeIntervalSince1970: 0))
+        let (host, guest) = try await playingPair()
+        let recorder = MatchOutcomeRecorder(
+            record: lobby(), localPlayer: bob, session: guest, store: store, now: clock.now
+        )
+        await recorder.sync()
+        clock.advance(seconds)
+        if byClaim { guest.claimWin() } else { host.resign() }
+        try await waitUntil("the guest has won") { guest.winner == bob }
+        await recorder.sync()
+        let updates = await store.profileUpdates
+        #expect(updates.count == 1)
+        return try #require(updates.first?.stats)
+    }
+
+    @Test("A win by the opponent's resignation leaves fastest win unchanged", arguments: [nil, 42] as [Int?])
+    func resignWinIsNotTimed(fastest: Int?) async throws {
+        let seed = Self.profile(Self.bobUUID, played: 7, won: 4, tiles: 61, fastest: fastest)
+        let after = try await Self.guestWin(from: seed, byClaim: false, seconds: 5)
+        #expect(after.fastestWinSeconds == fastest)
+        #expect(after.matchesPlayed == 8)
+        #expect(after.matchesWon == 5)
+    }
+
+    @Test("A win by claim in 30s still sets fastest win", arguments: [nil, 42] as [Int?])
+    func claimWinIsTimed(fastest: Int?) async throws {
+        let seed = Self.profile(Self.bobUUID, played: 7, won: 4, tiles: 61, fastest: fastest)
+        let after = try await Self.guestWin(from: seed, byClaim: true, seconds: 30)
+        #expect(after.fastestWinSeconds == 30)
+        #expect(after.matchesPlayed == 8)
+        #expect(after.matchesWon == 5)
+    }
+
+    /// The same rows as the null cases in `supabase/tests/rls_behavior.sql`.
+    @Test("ProfileStats matches the SQL fixture's null-elapsed rows")
+    func profileStatsMatchesSQLNullCases() {
+        let seeded = ProfileStats.after(
+            Self.profile(Self.bobUUID, played: 6, won: 3, tiles: 7, fastest: 20),
+            won: true, tilesPlaced: 2, elapsedSeconds: nil)
+        #expect(seeded == ProfileStats(matchesPlayed: 7, matchesWon: 4, tilesPlaced: 9, fastestWinSeconds: 20))
+        let fresh = ProfileStats.after(
+            Self.profile(Self.bobUUID), won: true, tilesPlaced: 1, elapsedSeconds: nil)
+        #expect(fresh == ProfileStats(matchesPlayed: 1, matchesWon: 1, tilesPlaced: 1, fastestWinSeconds: nil))
+    }
+
+    @Test("record_outcome params carry elapsed_seconds as an explicit null or a number")
+    func outcomeParamsEncodeNull() throws {
+        let encoder = JSONEncoder()
+        let none = try encoder.encode(
+            SupabaseOutcomeQueries.OutcomeParams(won: true, tiles: 1, elapsedSeconds: nil))
+        #expect(String(decoding: none, as: UTF8.self).contains(#""elapsed_seconds":null"#))
+        let thirty = try encoder.encode(
+            SupabaseOutcomeQueries.OutcomeParams(won: true, tiles: 1, elapsedSeconds: 30))
+        #expect(String(decoding: thirty, as: UTF8.self).contains(#""elapsed_seconds":30"#))
+    }
 }
 
 // MARK: - Doubles
@@ -453,7 +519,7 @@ actor RecordingOutcomeStore: MatchOutcomeStore {
     /// it wrote so "never decrements" and "exactly once" stay assertable.
     @discardableResult
     func recordOutcome(
-        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int?
     ) async throws -> Profile {
         guard var row = profiles[id] else { throw BackendError.notFound }
         let stats = ProfileStats.after(

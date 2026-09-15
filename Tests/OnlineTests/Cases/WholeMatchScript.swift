@@ -262,7 +262,7 @@ final class MemoryOutcomeStore: MatchOutcomeStore, @unchecked Sendable {
     /// lock, which is what the server's single statement gives for free.
     @discardableResult
     func recordOutcome(
-        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int?
     ) async throws -> Profile {
         try lock.withLock {
             guard var row = rows[id] else { throw BackendError.notFound }

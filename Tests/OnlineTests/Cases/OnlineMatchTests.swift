@@ -526,7 +526,7 @@ final class SpyOutcomeStore: MatchOutcomeStore, @unchecked Sendable {
 
     @discardableResult
     func recordOutcome(
-        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int
+        _ id: UUID, won: Bool, tilesPlaced: Int, elapsedSeconds: Int?
     ) async throws -> Profile {
         lock.withLock { storedCalls.append(.recordOutcome(id)) }
         return Profile(
