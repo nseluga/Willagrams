@@ -82,24 +82,32 @@ struct SoloMatchTests {
         solo.leave()
     }
 
-    /// The other half of the same criterion: the note this factory must never
-    /// produce is a note the engine really does produce for a non-host, so the
-    /// assertion above is not passing because the string was retired.
-    @Test("The host rejection is real, and solo is on the right side of it")
-    func hostRejectionExistsForANonHost() async throws {
+    /// Any player in the roster may open the match, and the pool still lives on
+    /// roster[0] only, whoever pressed Start.
+    @Test("A non-pool-host may open, and the pool still stays on roster[0]")
+    func aNonPoolHostOpensButThePoolStaysOnRosterZero() async throws {
         let low = PlayerID(rawValue: "aaa")
         let high = PlayerID(rawValue: "zzz")
-        let (_, guestWire) = FakeTransport.pair(low, high)
-        let guest = MatchSession(
-            transport: guestWire,
+        let (lowWire, highWire) = FakeTransport.pair(low, high)
+        let pooled = MatchSession(
+            transport: lowWire,
+            peerPlayerID: high,
+            dictionary: EveryWordIsReal(),
+            sleepFor: { _ in }
+        )
+        let opener = MatchSession(
+            transport: highWire,
             peerPlayerID: low,
             dictionary: EveryWordIsReal(),
             sleepFor: { _ in }
         )
-        guest.startMatch(seed: 1, startingHandSize: 21, countdownSeconds: 0)
-        #expect(guest.lastNote == "only the host opens the match")
-        #expect(guest.state.status != .playing)
-        guest.leave()
+        opener.startMatch(seed: 1, startingHandSize: 21, countdownSeconds: 0)
+        #expect(opener.lastNote == nil)
+        try await Self.waitUntil("the pool host to receive the start") { pooled.state.status == .playing }
+        #expect(pooled.poolRemaining != nil)
+        #expect(opener.poolRemaining == nil)
+        pooled.leave()
+        opener.leave()
     }
 
     // MARK: - Criterion 2

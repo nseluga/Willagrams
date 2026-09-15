@@ -114,8 +114,8 @@ struct HostPoolAdversarialTests {
         #expect(Set(granted.map(\.player)) == [hostID, guestID], "both players should have been served once")
         #expect(Set(granted.flatMap { $0.tiles.map(\.id) }).count == 2, "the same tile went to both players")
 
-        // The peer sees its own grant and the refusal, in some order.
-        #expect(messages.count == 2, "expected the peer's grant and the refusal, got \(messages)")
+        // The peer sees its own grant (with the count after it) and the refusal.
+        #expect(messages.count == 3, "expected the peer's grant, the count and the refusal, got \(messages)")
         #expect(grants(in: messages).allSatisfy { $0.player == guestID }, "the host's tile reached the peer")
         #expect(messages.contains(.poolExhausted), "the peer was never told the pool had run out")
 
@@ -158,7 +158,8 @@ struct HostPoolAdversarialTests {
 
             // The peer asked, so its answer belongs on the wire either way.
             let messages = try #require(await drain(host, guest), "no reply reached the peer")
-            #expect(messages.count == 1, "expected exactly one reply for \(count) tiles, got \(messages)")
+            // A granted swap is followed by the pool count; a refusal is not.
+            #expect(messages.count == (count == 3 ? 2 : 1), "expected one reply for \(count) tiles, got \(messages)")
 
             let after = await authority.pool
             if count == 3 {

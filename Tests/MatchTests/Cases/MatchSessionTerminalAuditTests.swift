@@ -157,7 +157,8 @@ struct MatchSessionTerminalAuditTests {
         // One round left the pool — the one already in the pool's hands. The
         // second never reached it: no second grant on the wire, and no second
         // tile in the host's own rack, which is where the host takes its half.
-        #expect(await wire.count == 2)
+        // The start, then the one round's peer grant and its pool count.
+        #expect(await wire.count == 3)
         let landed = await wire.wire
         let grantsToPeer = landed.filter { message in
             if case let .grant(player, _) = message { return player == Self.bob }
@@ -523,7 +524,8 @@ struct MatchSessionTerminalAuditTests {
         #expect(host.winner == Self.alice)
         await wire.releaseAll()
         try await Terminal.settle()
-        #expect(await wire.count == 2)
+        // The start, then the one round's peer grant and its pool count.
+        #expect(await wire.count == 3)
         #expect(host.state.hand.count == 1)
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

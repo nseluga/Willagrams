@@ -247,6 +247,10 @@ struct MatchSessionHardeningTests {
         #expect(host.draw())
 
         await wire.releaseOne()
+        // The pool count follows the peer's grant on the same send path, and
+        // the host applies its half only once both have gone.
+        try await Self.waitUntil("the peer's pool count to park mid-send") { await wire.parkedCount == 1 }
+        await wire.releaseOne()
         // The peer's answer is applied by the time this device's own round has
         // reached its send — the chain runs one submission at a time.
         try await Self.waitUntil("this device's own round to park mid-send") { await wire.parkedCount == 1 }
@@ -682,16 +686,27 @@ struct MatchSessionHardeningTests {
 
     // MARK: - Minor: who may open a match, and when the board stops moving
 
-    @Test("Only the elected device opens the match, and a finished board stays still")
-    func onlyTheElectedDeviceOpensTheMatchAndAFinishedBoardStaysStill() async throws {
-        // --- The election. `bob` is not the host, so this is not bob's to send.
+    @Test("A player who is not the pool host may open, a second start is ignored, and a finished board stays still")
+    func aNonPoolHostOpensOnceAndAFinishedBoardStaysStill() async throws {
+        // --- `bob` is not `roster[0]`, but is in the match: the creator's
+        // Start press may come from either side of the sort.
         let wire = ScriptedTransport(localPlayerID: Self.bob)
         let guest = MatchSession(transport: wire, peerPlayerID: Self.alice, dictionary: EveryWordIsReal())
         guest.startMatch(seed: 4, startingHandSize: 0, countdownSeconds: 0, options: .standard)
 
-        #expect(guest.state.status == .countdown(secondsRemaining: 0))
-        #expect(guest.lastNote == "only the host opens the match")
-        #expect(await wire.count == 0)
+        #expect(guest.state.status == .playing)
+        #expect(guest.lastNote == nil)
+        try await Self.waitUntil("bob's start to reach the wire") { await wire.count == 1 }
+        // The pool stays with `roster[0]`: bob sent the start but holds none.
+        #expect(guest.poolRemaining == nil)
+
+        // A second start is ignored: without the guard it would reopen a
+        // five-second countdown. The grant behind it is the fence that proves
+        // the start was processed, not merely still in flight.
+        wire.deliver(.start(version: WireFormat.current, seed: 9, startingHandSize: 0, countdownSeconds: 5, options: .standard, roster: [Self.alice, Self.bob]))
+        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
+        try await Self.waitUntil("the fence grant") { guest.pendingDrawTiles.count == 1 }
+        #expect(guest.state.status == .playing, "a second start reopened the countdown")
 
         // The elected device's own call is the control: the same call works.
         let (host, hostWire) = Self.playingHost()
@@ -723,8 +738,8 @@ struct MatchSessionHardeningTests {
         #expect(other.state.hand.map(\.id) == [pair[1].id])
         #expect(other.draw() == false)
 
-        // Re-read at the end of the test, by which point a start enqueued by the
-        // device that had no standing to send one would long since have landed.
-        #expect(await wire.count == 0)
+        // Re-read at the end of the test: bob's one start, and nothing more —
+        // the ignored second start sent nothing back.
+        #expect(await wire.count == 1)
     }
 }

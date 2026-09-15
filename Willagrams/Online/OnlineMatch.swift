@@ -355,18 +355,15 @@ public final class OnlineMatch {
     /// Refuses — writing nothing and sending nothing — unless the lobby holds
     /// exactly two players.
     ///
-    /// Creating the lobby is not what opens the match: the frozen rule gives
-    /// the pool, and with it the `.start`, to `roster[0]`. A creator that does
-    /// not sort first gets a perfectly live session that plays the receiving
-    /// side, rather than an error — a match must not be undealable because two
-    /// UUIDs happened to fall the wrong way round.
+    /// The creator's Start press is the only thing that opens the match: this
+    /// always sends the `.start`, whichever way the roster sorts. The pool
+    /// still belongs to `roster[0]` — a creator that does not sort first sends
+    /// the start and then plays the receiving side of the deal.
     public func start() async throws -> MatchSession {
         guard lobby.count == 2 else { throw OnlineMatchError.lobbyNotReady(lobby.count) }
         let roster = Self.roster(from: lobby)
         let session = makeSession(roster: roster)
-        // Never `record.hostID`. Both devices compute this from the same sorted
-        // roster, so exactly one of them opens and there is no negotiation.
-        if HostPool.host(of: roster) == localPlayer { open(session) }
+        open(session)
         attachRecorder(to: session)
         return session
     }
@@ -375,26 +372,22 @@ public final class OnlineMatch {
     ///
     /// The roster comes from `match_players` rather than from presence: it is
     /// the same set that travels on `.start`, sorted the same way, so both
-    /// devices elect the same opener and the message validates on arrival.
+    /// devices agree on `roster[0]` and the message validates on arrival.
     ///
-    /// Opens the match itself when this device is `roster[0]`; otherwise the
-    /// session takes the opener's `.start` off the transport by itself.
+    /// Never opens the match, even when this device is `roster[0]`: the session
+    /// waits for the creator's `.start` off the transport.
     public func awaitStart() async throws -> MatchSession {
         let rows = try await backend.players(inMatch: record.id)
         let roster = Self.roster(from: rows.map { PlayerID(rawValue: $0.playerID.uuidString) })
         guard roster.count == 2 else { throw OnlineMatchError.lobbyNotReady(roster.count) }
         let session = makeSession(roster: roster)
-        if HostPool.host(of: roster) == localPlayer { open(session) }
         attachRecorder(to: session)
         return session
     }
 
-    /// Sends the `.start` and applies it locally, from the one device the
-    /// roster elects.
+    /// Sends the `.start` and applies it locally, from the creator.
     ///
-    /// `MatchSession.startMatch` carries its own `roster[0]` guard, so this is
-    /// belt and braces rather than the only rule — but the seed and the two
-    /// constants are read here, in one place, whichever entry point called.
+    /// The seed and the two constants are read here, in one place.
     private func open(_ session: MatchSession) {
         session.startMatch(
             seed: record.poolSeed,

@@ -228,9 +228,9 @@ struct MatchSessionTests {
         let mostInFlight = await probe.mostInFlight
 
         #expect(mostInFlight == 1)
-        // The start, then one grant per round to the peer. The grant addressed
-        // to the host never travels.
-        #expect(sent.count == rounds + 1)
+        // The start, then per round the peer's grant and the pool count. The
+        // grant addressed to the host never travels.
+        #expect(sent.count == 2 * rounds + 1)
     }
 
     @Test("A start on an unknown wire version is ignored rather than trusted")

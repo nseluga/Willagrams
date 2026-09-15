@@ -138,8 +138,8 @@ struct HostPoolTests {
             // the host's business, whoever asked for the round.
             let guestTiles = try #require(granted.first { $0.player == self.guestID }?.tiles)
             #expect(
-                received == [.grant(player: guestID, tiles: guestTiles)],
-                "the wire should carry the peer's own grant and only that, got \(received)"
+                received == [.grant(player: guestID, tiles: guestTiles), .poolCount(remaining: after.count)],
+                "the wire should carry the peer's own grant and the pool count, got \(received)"
             )
         }
     }
@@ -236,7 +236,10 @@ struct HostPoolTests {
 
         #expect(produced.count == 1, "expected exactly one answer, got \(produced)")
         // The player who asked is the peer, so this one does belong on the wire.
-        #expect(received == produced, "the peer's own swap did not reach it: \(received)")
+        #expect(
+            received == produced + [.poolCount(remaining: await authority.pool.count)],
+            "the peer's own swap, then the count, should reach it: \(received)"
+        )
 
         guard case let .swapGrant(player, tiles, echoed) = try #require(produced.first) else {
             Issue.record("expected a swapGrant, got \(produced)")
