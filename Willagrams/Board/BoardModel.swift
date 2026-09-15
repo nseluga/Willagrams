@@ -107,6 +107,15 @@ public struct BoardModel: Sendable {
     /// flash can never outlive the board it was an answer about.
     public private(set) var flashedInvalid: Set<Coord> = []
 
+    /// Every maximal horizontal or vertical run spelling WILLA, one coord set
+    /// each. The surface tints these with the accent.
+    public private(set) var willaRuns: [Set<Coord>] = []
+
+    /// Bumped once whenever a commit leaves a WILLA run the previous board did
+    /// not have. The sparkle keys on this model-side record, never on a view
+    /// appearing, so a pan or an unrelated move cannot replay it.
+    public private(set) var willaSparkles = 0
+
     /// The player pressed Draw or claimed the win. Lights the bad runs when the
     /// board is not finished, and returns whether the claim stands.
     ///
@@ -451,10 +460,30 @@ public struct BoardModel: Sendable {
         validation = board.validate(against: dictionary)
         invalidRuns = Self.runs(of: validation)
         strandedCoords = Self.stranded(board)
+        let runs = Self.willaRuns(of: board)
+        if runs.contains(where: { !willaRuns.contains($0) }) { willaSparkles &+= 1 }
+        willaRuns = runs
         // Any commit ends a flash: it was an answer about the board as it stood
         // when the player claimed to be done, and that board no longer exists.
         flashedInvalid = []
         tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
+    }
+
+    /// Each maximal run reading W-I-L-L-A left to right or top to bottom.
+    static func willaRuns(of board: Board) -> [Set<Coord>] {
+        let word = Array("WILLA")
+        var runs: [Set<Coord>] = []
+        for start in board.placementList.map(\.coord) {
+            for (dr, dc) in [(0, 1), (1, 0)] {
+                let at = { (i: Int) in Coord(row: start.row + dr * i, col: start.col + dc * i) }
+                // Maximal only: WILLAS or AWILLA is a different word.
+                guard board.tile(at: at(-1)) == nil, board.tile(at: at(word.count)) == nil else { continue }
+                if (0..<word.count).allSatisfy({ board.tile(at: at($0))?.letter.uppercased() == String(word[$0]) }) {
+                    runs.append(Set((0..<word.count).map(at)))
+                }
+            }
+        }
+        return runs
     }
 
     /// One coord set per bad word. Shared by the committed tint and the tint of

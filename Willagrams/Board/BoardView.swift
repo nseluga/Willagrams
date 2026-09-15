@@ -124,6 +124,10 @@ public struct BoardView: View {
     /// which is exactly how it arrived.
     @State private var arrivedToken = 0
 
+    /// The WILLA sparkle: 0 just fired, 1 spent. Rests at 1, so a tile
+    /// re-inserted by a pan draws it fully faded — nothing replays.
+    @State private var sparkle: CGFloat = 1
+
     /// What `BoardSurface` is actually told is "arriving" this frame: `arriving`
     /// itself for as long as its token hasn't finished playing, empty once it
     /// has. A pan after that point re-inserts a culled tile's view with this
@@ -175,7 +179,9 @@ public struct BoardView: View {
                 invalid: model.flashedInvalid,
                 offsets: model.tileOffsets,
                 arriving: activeArriving,
-                arrivalProgress: arrivalProgress
+                arrivalProgress: arrivalProgress,
+                willa: Set(model.willaRuns.joined()),
+                sparkle: sparkle
             )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
@@ -250,6 +256,16 @@ public struct BoardView: View {
                 // second call here to forget. `initial: true` because a view
                 // reconstructed around a live lock must not come back unlocked.
                 .onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }
+                // Keyed on the model's count of new WILLA runs, never `initial`:
+                // an appearance is not a new run. Two turns for the same reason
+                // as the flight below — one turn would interpolate nothing.
+                .onChange(of: model.willaSparkles) {
+                    sparkle = 0
+                    Task {
+                        try? await Task.sleep(for: .seconds(Self.flightPause))
+                        withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) { sparkle = 1 }
+                    }
+                }
                 // The first and only unforced check: the starting board has
                 // never been committed here, so without this a board that
                 // arrives already refused would draw untinted until the player
@@ -551,6 +567,9 @@ private struct BoardSurface: View, Animatable {
     /// owner writing `arrivalProgress`, not by interpolating this view.
     let arriving: Set<UUID>
     let arrivalProgress: CGFloat
+    /// Tiles in a WILLA run, and how far the one-shot sparkle has faded.
+    let willa: Set<Coord>
+    let sparkle: CGFloat
 
     /// Where an arrival comes from, in the surface's own coordinates: the
     /// corner the HUD draws the bag in. One constant rather than a plumbed
@@ -628,7 +647,19 @@ private struct BoardSurface: View, Animatable {
                     // good or bad, and the released tile's slide into its cell
                     // would cut. The colour is the only decision here, and it
                     // is read from published state, never computed.
-                    .colorMultiply(cell.isInvalid ? DesignTokens.Palette.danger : .white)
+                    .colorMultiply(
+                        cell.isInvalid ? DesignTokens.Palette.danger
+                            : willa.contains(cell.coord) ? DesignTokens.Palette.accent : .white
+                    )
+                    .overlay {
+                        if willa.contains(cell.coord) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: cellSize / 2))
+                                .foregroundStyle(DesignTokens.Palette.accent)
+                                .scaleEffect(1 + sparkle)
+                                .opacity(1 - sparkle)
+                        }
+                    }
                     .offset(x: tilePoint.x, y: tilePoint.y)
                     // `cells` arrives in `visibleCoords` row-major order, so a
                     // tile dragged down or right would otherwise draw BEHIND

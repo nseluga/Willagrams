@@ -63,11 +63,15 @@ public final class ShellModel {
 
     private func loadedDictionary() -> any WordList {
         if let cachedDictionary { return cachedDictionary }
-        let loaded = dictionary()
+        let raw = dictionary()
+        // Wrapped here rather than in the default closure alone, so an injected
+        // list gets WILLA too. The hash gate is untouched: the wrapper reports
+        // its base's hash.
+        let loaded = WillaWordList(base: raw)
         // A failed bundle read degrades to a list that accepts no word. Caching
         // that would make every match of the process unwinnable off one bad
         // read, so it is returned uncached and the next match retries the load.
-        if (loaded as? EnableWordList)?.count == 0 { return loaded }
+        if (raw as? EnableWordList)?.count == 0 { return loaded }
         cachedDictionary = loaded
         return loaded
     }

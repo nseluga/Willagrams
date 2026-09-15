@@ -255,6 +255,16 @@ struct MatchRunTests {
         // The recovered list is cached like any other.
         #expect(shell.startSoloPractice())
         #expect(builds.count == 2, "the recovered list was rebuilt")
+
+        // WILLA is the board's only word outside the injected list, and solo
+        // practice still lets it Draw: the shell wraps whatever it loads.
+        let run = try #require(shell.run)
+        var willa = Board()
+        for (i, letter) in "WILLA".enumerated() {
+            try willa.place(Tile(letter: letter), at: Coord(row: 0, col: i))
+        }
+        run.board.model.seed(willa, against: run.dictionary)
+        #expect(run.board.canDraw, "WILLA did not pass the Draw gate")
         shell.returnToMenu()
     }
 

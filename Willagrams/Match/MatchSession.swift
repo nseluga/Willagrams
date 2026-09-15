@@ -991,6 +991,10 @@ public final class MatchSession {
         storedOptions = options
         // Wrap once, here, so the minimum reaches every existing reader of
         // `dictionary` — `canDraw` above included — instead of one call site.
+        // WILLA first, so a minimum above five still refuses it.
+        if !(dictionary is WillaWordList) {
+            dictionary = WillaWordList(base: dictionary)
+        }
         if options.minimumWordLength > MatchOptions.lengthRange.lowerBound {
             dictionary = MinimumLengthWordList(
                 base: dictionary,
