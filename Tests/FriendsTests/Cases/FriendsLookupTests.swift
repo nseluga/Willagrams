@@ -49,13 +49,32 @@ struct FriendsLookupTests {
     func fieldClampsAndGates() async throws {
         let (_, _, model) = try await Self.counting()
 
+        model.setLookupCode("  -- ")
+        #expect(model.lookupCode.isEmpty)
+        #expect(!model.canLookup, "an empty field disables the button")
+
         model.setLookupCode("ab-3d")
         #expect(model.lookupCode == "AB3D")
-        #expect(!model.canLookup, "four characters is not a friend code")
+        #expect(model.canLookup, "a short code stays pressable so the refusal shows")
 
         model.setLookupCode("ab-3d ef 9 zzz")
         #expect(model.lookupCode == "AB3DEF9Z")
         #expect(model.canLookup)
+    }
+
+    @Test("A 7-character code keeps the button live and is refused without a call")
+    func sevenCharacterCodeIsRefusedReachably() async throws {
+        let (_, backend, model) = try await Self.counting()
+
+        model.setLookupCode("AB3DEF9")
+        #expect(model.lookupCode.count == 7)
+        #expect(model.canLookup)
+
+        await model.lookup(code: model.lookupCode)
+
+        #expect(model.message == "A friend code is 8 characters.")
+        #expect(model.lookupResult == nil)
+        #expect(await backend.friendCodeLookups.isEmpty)
     }
 
     @Test("A code that is too short is refused without a call")

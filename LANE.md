@@ -117,7 +117,7 @@ Frozen contracts — build and test against these; they will not move:
     - A FriendsTests case: a 7-character code leaves `canLookup` true, and lookup sets "A friend code is 8 characters." with zero backend calls. A ShellTests case: a 5-character join code leaves `canJoin` true, and join sets "Enter the six-character code." with zero backend calls
     - Each case fails if the model's own length check is deleted (mutation-checked), and an empty field still disables its button
     - Existing passing tests remain passing
-  status: not started
+  status: done — 6 mutation checks red
 
 - task: Unfriend. Add a `FriendForgetting` side protocol in `Willagrams/Online/`, following `FriendRequestForgetting.swift` exactly, so `BackendContracts.swift` does not move. Its one call deletes the friendship between the caller and a friend **filtered to `status = accepted`**. Implement it on `SupabaseBackend` (`SupabaseBackend+Friends.swift`) and on `FakeBackend`. `FriendsModel.unfriend(_:)` calls it through the existing `perform(failure:)` path and removes the row from the list on success. `FriendsView` gets an Unfriend button on each accepted friend's row, beside Block, behind a `.confirmationDialog`. The RLS policy `friendships_delete_own` (0001_init.sql:189) already allows the delete, so no migration is needed. Row buttons use item 1's compact sizing.
   guardrails:
@@ -139,7 +139,7 @@ Frozen contracts — build and test against these; they will not move:
     - A BoardTests case pinches out from the default zoom and settles at a cell size of 16, not 24
     - Existing BoardTests remain passing, with any assertion that hard-coded 24 as the floor updated to the new floor
   parallel-group: c
-  status: not started
+  status: done
 
 - task: Remove drag snap-back. A tile released anywhere stays where it was dropped unless the target cell is occupied. Today a fast drag snaps the tile back to its origin. **Reproduce before fixing.** The distance guard in `TileDrag.landing` (`Willagrams/Board/BoardDrag.swift` ~line 201) looks nearly dead at threshold 96, so the real cause is unproven. Suspects to rule in or out, in order:
     - a stray second touch reaching `cancel()` through `BoardPinchReporter`

@@ -129,7 +129,9 @@ public final class JoinModel {
 
     /// Whether the Join button does anything. One question, asked here, so the
     /// view that draws the button and the call that honours it cannot disagree.
-    public var canJoin: Bool { phase == .entering && code.count == Self.codeLength }
+    /// Only an empty code disables it: a short one stays pressable so
+    /// ``join()`` can refuse it with ``shortCodeMessage``.
+    public var canJoin: Bool { phase == .entering && !code.isEmpty }
 
     /// The waiting line, host included once the name is in.
     public var waitingLine: String {

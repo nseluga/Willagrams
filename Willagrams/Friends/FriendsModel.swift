@@ -341,9 +341,10 @@ public final class FriendsModel {
         lookupCode = Self.normalize(raw)
     }
 
-    /// Whether ``lookup(code:)`` would reach the backend at all. Asked here so
-    /// the button can disable itself without holding the rule.
-    public var canLookup: Bool { lookupCode.count == Self.codeLength }
+    /// Whether the Look up button is enabled. Only an empty field or a request
+    /// in flight disables it: a short code stays pressable so
+    /// ``lookup(code:)`` can refuse it with ``codeLengthMessage``.
+    public var canLookup: Bool { !lookupCode.isEmpty && !isLoading }
 
     /// Looks a stranger up by the code they gave you.
     ///

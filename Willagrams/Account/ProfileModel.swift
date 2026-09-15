@@ -105,11 +105,11 @@ public final class ProfileModel {
         draftName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Whether ``save()`` would reach the backend. The same 1–24 the
-    /// `display_name` column checks, asked here so a refusal costs no round
-    /// trip and the field can disable its own button.
+    /// Whether the Save button is enabled. Only an empty draft or a save in
+    /// flight disables it: a too-long name stays pressable so ``save()`` can
+    /// refuse it with ``nameLengthMessage`` — no round trip either way.
     public var canSave: Bool {
-        isEditable && Self.nameLength.contains(trimmedDraft.count) && !isSaving
+        isEditable && !trimmedDraft.isEmpty && !isSaving
     }
 
     /// Sends the draft, and adopts whatever comes back.

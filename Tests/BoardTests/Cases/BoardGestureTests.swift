@@ -242,7 +242,7 @@ final class BoardGestureTests: XCTestCase {
         }
     }
 
-    // MARK: - Criterion 2: pinch holds its midpoint, cell size stops at 24 and 72
+    // MARK: - Criterion 2: pinch holds its midpoint, cell size stops at 16 and 72
 
     func testMagnifyKeepsTheBoardPositionUnderTheAnchorFixed() {
         let cameras = [
@@ -275,11 +275,11 @@ final class BoardGestureTests: XCTestCase {
         }
     }
 
-    func testRenderedCellSizeStopsAtTwentyFourAndSeventyTwo() {
+    func testRenderedCellSizeStopsAtSixteenAndSeventyTwo() {
         let camera = BoardCamera(pan: CGSize(width: 12, height: -34), zoom: 1, baseCellSize: 48)
         let anchor = CGPoint(x: 300, y: 200)
 
-        XCTAssertEqual(camera.magnified(by: 0.0001, about: anchor).cellSize, 24, accuracy: 1e-9)
+        XCTAssertEqual(camera.magnified(by: 0.0001, about: anchor).cellSize, 16, accuracy: 1e-9)
         XCTAssertEqual(camera.magnified(by: 10000, about: anchor).cellSize, 72, accuracy: 1e-9)
 
         // And nothing in between escapes the range, at any base cell size.

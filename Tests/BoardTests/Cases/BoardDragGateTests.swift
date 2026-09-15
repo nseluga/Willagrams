@@ -59,9 +59,9 @@ final class BoardDragGateTests: XCTestCase {
 
     func testAtTheCellSizeFloorACornerReleaseLandsAndOnlyAnOccupiedCellRefuses() throws {
         // There is no reach limit (the `threshold` parameter is ignored): at the
-        // 24pt floor a release at a cell's far corner still lands, and only an
+        // 16pt floor a release at a cell's far corner still lands, and only an
         // OCCUPIED destination refuses.
-        let floored = BoardCamera(pan: .zero, zoom: 0.5, baseCellSize: 48)
+        let floored = BoardCamera(pan: .zero, zoom: 0.25, baseCellSize: 48)
         XCTAssertEqual(floored.cellSize, BoardCamera.minCellSize)
 
         let tile = Tile(letter: "A")
@@ -69,7 +69,7 @@ final class BoardDragGateTests: XCTestCase {
         let board = Self.board([(home, tile)])
 
         // The worst case: a release at the far corner of a cell, both axes.
-        for offset in [CGSize(width: 11.9, height: 11.9), CGSize(width: -11.9, height: -11.9)] {
+        for offset in [CGSize(width: 7.9, height: 7.9), CGSize(width: -7.9, height: -7.9)] {
             let after = try drag([home], anchor: home).drop(
                 translation: offset, on: board, camera: floored, threshold: Self.threshold
             )
@@ -81,7 +81,7 @@ final class BoardDragGateTests: XCTestCase {
         let blocked = Self.board([(home, tile), (Coord(row: 0, col: 1), Tile(letter: "B"))])
         let haptics = Recorder()
         let after = try drag([home], anchor: home, haptics).drop(
-            translation: CGSize(width: 24, height: 0),
+            translation: CGSize(width: 16, height: 0),
             on: blocked, camera: floored, threshold: Self.threshold
         )
         XCTAssertEqual(after.placementList, blocked.placementList)

@@ -157,6 +157,10 @@ struct FriendsView: View {
                     .autocorrectionDisabled()
                     .accessibilityLabel(FriendsModel.codeFieldLabel)
                     .focused($codeFieldFocused)
+                    .onSubmit {
+                        guard model.canLookup else { return }
+                        Task { await model.lookup(code: model.lookupCode) }
+                    }
 
                 Button(FriendsModel.lookupLabel) {
                     Task { await model.lookup(code: model.lookupCode) }

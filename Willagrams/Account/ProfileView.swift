@@ -83,6 +83,10 @@ struct ProfileView: View {
                         .foregroundStyle(DesignTokens.Palette.textPrimary)
                         .autocorrectionDisabled()
                         .focused($nameFieldFocused)
+                        .onSubmit {
+                            guard model.canSave else { return }
+                            Task { await model.save() }
+                        }
 
                     Button(ProfileModel.saveLabel) {
                         Task { await model.save() }
