@@ -5,7 +5,7 @@ import UIKit
 /// route crosses into or out of gameplay.
 final class OrientationLock: NSObject, UIApplicationDelegate {
 
-    @MainActor static var mask: UIInterfaceOrientationMask = .all
+    @MainActor static var mask: UIInterfaceOrientationMask = mask(isGameplay: false)
 
     /// The one place the idiom is read (App only, by rule).
     @MainActor static func mask(isGameplay: Bool) -> UIInterfaceOrientationMask {
