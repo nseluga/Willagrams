@@ -5,7 +5,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 ## Current position
 
 - **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** item 11 — drawn tiles land near the board (item 12 done on auto/polish-d12, item 13 running there)
+- **Next:** merge items 12–13 from auto/polish-d12, then item 14 — WILLA word + flourish
 - **Blockers:** none
 - **Last updated:** 2026-09-14
 
@@ -23,7 +23,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | No drag snap-back | done — A tile you let go of stays where it lands, even on a fast drag; only an occupied cell sends it back. |
 | Recenter frames every tile | done — Recenter now fits every tile on screen, clear of the bag and buttons, zooming out as far as needed. |
 | No fly-in on pan | done — Tiles already on the board no longer fly in from the bag when you pan them back into view; new tiles still do. |
-| Drawn tiles land near the board | not started |
+| Drawn tiles land near the board | done — Tiles from a Draw now land just below or beside your largest group of tiles. |
 | Early start fix | not started |
 | Guest bag count | not started |
 | WILLA word + flourish | not started |

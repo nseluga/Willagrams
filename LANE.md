@@ -190,7 +190,7 @@ Frozen contracts — build and test against these; they will not move:
     - A ShellTests case: after BoardView reports a settled camera, `MatchBoard.camera` equals it, and the next Draw delivers inside that camera's inset rect
     - Each case fails with its fix reverted (mutation-checked); existing BoardTests and ShellTests remain passing
   caution: true
-  status: not started
+  status: done — QA PASS, review 0/0/2; open: tiles land off screen when the cluster is off screen, L-cluster corner ranking
 
 - task: Fix the early start. Only the lobby creator's Start button opens an online match. Root cause: `OnlineMatch.awaitStart()` (`Willagrams/Online/OnlineMatch.swift` ~line 387) calls `open(session)` on the joiner when `HostPool.host(of: roster)` names it. That is the gameplay host, the lowest id, not `matches.host_id`. So a joiner with a lower id started the match itself, the creator became a guest, and its bag showed no count. Change: `awaitStart()` never opens; the creator's `start()` always opens; `MatchSession.startMatch`'s guard (~line 644) becomes `roster.contains(localPlayerID)`, so the creator may send `.start` even when it is not the pool host. The pool host is still `roster[0]` and still deals on `applyStart`. Rewrite the tests that pinned the old rule (`MatchSessionHardeningTests` ~line 693, `SoloMatchTests` ~line 100) to the new one, rather than deleting them.
   guardrails:

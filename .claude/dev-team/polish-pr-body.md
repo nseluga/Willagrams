@@ -58,3 +58,9 @@
 - **What happened:** Pure `BoardRender.arrivalTransition(for:arriving:)` (`.fromBag`/`.none`); BoardSurface's transition gated on token-scoped `activeArriving`, so an arriving tile culled through its flight doesn't fly in later. Culling untouched. BoardTests 258; hand test done live in an iPad mini Simulator.
 - **Open (unfixed):** the swap put-back fly-to-bag animation is likely lost — `.transition` covers removal too and now resolves `.identity` for non-arriving ids. An `.asymmetric` always-on removal would NOT be safe: recenter animates the camera inside `withAnimation`, so culled tiles would fly to the bag on every recenter. A real fix needs a "departing" signal from the swap path.
 - **Remember next run:** Conditioning a tile `.transition` changes both insertion AND removal; check both directions.
+
+## 2026-09-15 01:30 — dev-team-auto — item 11 drawn tiles land near the board
+- **Outcome:** DONE — 1 attempt — caution: yes — team: dt-engineer opus/high, dt-qa opus/high, dt-review opus/high — auto/polish, a12e037 + c6f0ca5 — QA PASS, review 0/0/2
+- **What happened:** `BoardView.onCameraSettled` → `MatchBoard.cameraSettled` (pan/pinch end, first framing, recenter — not per frame); `BoardLayout.delivered` anchors below (else beside) the largest ≥2-tile cluster, clamped to item 9's inset rect when the cluster is on screen; old rule kept as `viewportDelivered` fallback. Mutations a–d red.
+- **Open:** (1) cluster off screen → tiles land beside it, off screen (spec allows; pulls against "forgiving"); (2) L-shaped cluster can take the empty bbox corner; (3) `MatchBoard.camera` could be `@ObservationIgnored` to skip MatchView redraws on settle.
+- **Remember next run:** Overwrite mutations must bypass `Board.place` too. Shared no-adjacency test helper flags a cluster's own tiles — use `assertLandedClear` for cluster fixtures.
