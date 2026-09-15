@@ -8,6 +8,10 @@ struct WillagramsApp: App {
     /// `body` is evaluated, so the route survives every re-render.
     @State private var shell: ShellModel
 
+    /// Only here to answer `supportedInterfaceOrientationsFor`; the app is
+    /// still a pure SwiftUI `App`.
+    @UIApplicationDelegateAdaptor(OrientationLock.self) private var orientationLock
+
     init() {
         // Must stay on the launch path: without it every custom face falls
         // back to San Francisco, silently. `registerOnce` is idempotent.

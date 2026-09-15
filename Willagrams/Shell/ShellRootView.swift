@@ -47,6 +47,17 @@ struct ShellRootView: View {
         // exists at all — this renders what it publishes and branches on
         // nothing, which is why there is no route check here.
         .overlay(alignment: .top) { inviteBanner }
+        // iPhone is portrait off the match screens and landscape on them; the
+        // policy is `OrientationPolicy`'s, this only tells UIKit it changed.
+        .onChange(of: shell.route.isGameplay, initial: true) { _, isGameplay in
+            OrientationLock.mask = OrientationLock.mask(isGameplay: isGameplay)
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive } ??
+                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+            scene?.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+            scene?.requestGeometryUpdate(.iOS(interfaceOrientations: OrientationLock.mask))
+        }
     }
 
     /// "<name> wants to play", with the way in. Both the line and the decision

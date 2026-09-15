@@ -74,3 +74,15 @@ public enum AppRoute: Hashable, Sendable {
     /// left before either player claimed.
     case results(winner: PlayerID?)
 }
+
+extension AppRoute {
+    /// The three match screens. On iPhone these are the only landscape routes —
+    /// ``OrientationPolicy`` reads this. An exhaustive switch, so a new route
+    /// has to decide which side it is on.
+    public var isGameplay: Bool {
+        switch self {
+        case .countdown, .match, .results: true
+        case .menu, .soloSetup, .howToPlay, .hostLobby, .join, .profile, .friends: false
+        }
+    }
+}
