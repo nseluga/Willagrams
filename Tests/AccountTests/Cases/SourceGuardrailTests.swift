@@ -208,8 +208,8 @@ struct SourceGuardrailTests {
     func oneClamp() throws {
         let model = try Self.text("ProfileModel.swift")
         #expect(model.contains("public static let nameLength = 1...24"))
-        // Two uses and one definition: `canSave` and `save()` ask the same
-        // question of the same constant.
-        #expect(model.components(separatedBy: "Self.nameLength.contains").count == 3)
+        // One use: `save()` is the only place the clamp is asked; `canSave`
+        // only gates on empty so the refusal message stays reachable.
+        #expect(model.components(separatedBy: "Self.nameLength.contains").count == 2)
     }
 }

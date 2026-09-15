@@ -298,7 +298,8 @@ struct JoinTests {
         model.code = "  ab-1 "
         // The clamp ran on the way in, not on the way out.
         #expect(model.code == "AB1")
-        #expect(model.canJoin == false)
+        // Pressable, so the refusal below is reachable.
+        #expect(model.canJoin)
 
         model.join()
         #expect(model.message == JoinModel.shortCodeMessage)
@@ -309,6 +310,21 @@ struct JoinTests {
         let rows = try await f.backend.players(inMatch: f.hostMatch.record.id)
         #expect(rows.count == 1, "a short code reached joinMatch")
         #expect(f.guestWire.hasLeft == false)
+
+        // Only an empty code disables Join.
+        model.code = ""
+        #expect(model.canJoin == false, "an empty code disables Join")
+
+        // Five characters: pressable, refused with the message, no call.
+        model.code = "AB123"
+        #expect(model.code.count == 5)
+        #expect(model.canJoin)
+        model.join()
+        #expect(model.message == "Enter the six-character code.")
+        #expect(model.phase == .entering)
+        #expect(model.work == nil)
+        #expect(try await f.backend.players(inMatch: f.hostMatch.record.id).count == 1,
+                "a 5-character code reached joinMatch")
 
         // Typing the rest clears the refusal and arms the button.
         model.code = "AB1234"

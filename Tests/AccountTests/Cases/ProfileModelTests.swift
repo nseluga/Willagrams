@@ -77,7 +77,8 @@ struct ProfileModelTests {
         #expect(tooLong.count == ProfileModel.nameLength.upperBound + 1)
 
         f.model.draftName = tooLong
-        #expect(f.model.canSave == false)
+        // The button stays pressable so the refusal below is reachable.
+        #expect(f.model.canSave)
 
         await f.model.save()
 
