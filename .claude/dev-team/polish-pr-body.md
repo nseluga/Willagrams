@@ -77,3 +77,9 @@
 - **What happened:** HostPool.answer gained `broadcastingCount:` at deal/draw round/swap; MatchSession receive handles `.poolCount` with 3 guards (no pool here, in range, keep min). New MatchSessionPoolCountTests; 7 wire-exact MatchTests files updated for the trailing `.poolCount` (QA: none weakened). Mutations a, b-lo, b-hi, c, d×3 red.
 - **Note for Nate:** `MatchHUDModel.poolCanServeASwap` now reads the guest's received count, so the guest's Swap disables below 3. The received count only lags high, so it never blocks a swap the host would allow.
 - **Remember next run:** Any new host→peer message breaks the exact-message asserts in HostPool/Adversarial/Stress/MatchSession/TerminalAudit/Hardening tests. Check `uptime` before counting ShellTests timeouts. Test "host ignores X" with a sentinel (`.drawRequest` from a stranger), not a sleep (open Minor: a 200ms wait in MatchSessionPoolCountTests:92).
+
+## 2026-09-15 01:26 — dev-team-auto — item 14 WILLA word + flourish
+- **Outcome:** DONE — 1 attempt — caution: no — team: dt-engineer (opus, high), dt-qa (opus, high) — auto/polish-e14, 1b2e6e6 — QA PASS
+- **What happened:** `WillaWordList` (Match/) wraps any WordList, forwards the base's hash; wrapped in `ShellModel.loadedDictionary()` and inside `MinimumLengthWordList` in `MatchSession.applyStart`. `BoardModel.willaRuns` + a `willaSparkles` counter that bumps only on a new run; BoardView tints and sparkles off `onChange(of: willaSparkles)` (no `initial`), so pan re-insertion can't replay it. 4 mutations red.
+- **Open:** no Simulator screenshot — visual is Nate's hand test; lifting and re-dropping a WILLA tile replays the sparkle (a new run per spec); several runs in one move share one sparkle.
+- **Remember next run:** Key one-shot board effects on a model-side counter, never on view appearance (BoardSurface culls).

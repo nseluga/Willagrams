@@ -228,4 +228,4 @@ Frozen contracts — build and test against these; they will not move:
     - A ShellTests case: a board whose only non-dictionary word is WILLA passes the Draw gate in solo practice
     - `xcodebuild` BUILD SUCCEEDED; "spell WILLA — tint and sparkle once" is named as Nate's hand test
   ui: true
-  status: not started
+  status: done — QA PASS, 4 mutation checks red; hand test: spell WILLA — tint and sparkle once

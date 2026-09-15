@@ -5,7 +5,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 ## Current position
 
 - **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** item 14 — WILLA word + flourish
+- **Next:** none — all 14 items done; shutdown checks, then Nate's two-device hand tests
 - **Blockers:** none
 - **Last updated:** 2026-09-14
 
@@ -26,4 +26,4 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Drawn tiles land near the board | done — Tiles from a Draw now land just below or beside your largest group of tiles. |
 | Early start fix | done — An online match now starts only when the lobby creator presses Start. |
 | Guest bag count | done — Both players now see how many tiles are left in the bag. |
-| WILLA word + flourish | not started |
+| WILLA word + flourish | done — WILLA now counts as a word, and spelling it tints the tiles with a one-time sparkle. |
