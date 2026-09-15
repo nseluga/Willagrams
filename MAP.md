@@ -488,6 +488,12 @@ is a **pass**, run after every lane merges and before `launch` closes: token
 values, bot difficulty constants, animation durations, sound levels. Each edit
 lands in the lane that owns the file.
 
+**The 2026-09-14 phone-polish pass runs as lane `polish`**, so one LANE.md can
+drive it after the two-device hand test. It owns nothing of its own. Every path
+it edits belongs to a merged lane, and those are open to any lane, so it needs
+no grant. `protected:` still fences it: its only wire change landed first as
+the v4 amendment.
+
 ---
 
 - lane: style
@@ -506,7 +512,7 @@ lands in the lane that owns the file.
   area: The match session — message codec, host-authoritative pool, draw/swap/grow broadcast, win claim, disconnect freeze and reconnect. Transport-agnostic: it owns the MatchTransport protocol and never imports a networking framework. Reopens this round for wire v3 (up to 6 players).
   owns: [ Willagrams/Match/**, Tests/MatchTests/** ]
   assignee: nate
-  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v3.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. The wire v3 amendment landed 2026-08-19 in `83e300c`, so this lane is unblocked.
+  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v4.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. The wire v3 amendment landed 2026-08-19 in `83e300c`, so this lane is unblocked.
 
 - lane: settings
   area: Match configuration and rule variants — the host's pre-match options screen, local persistence of chosen defaults, and showing both players which rules are in force. Ships the disable-swap, minimum-word-length, and selectable-dictionary controls.
@@ -555,3 +561,9 @@ lands in the lane that owns the file.
   owns: [ fastlane/**, docs/store/** ]
   assignee: nate
   depends on: every other lane (sequenced — the audit runs against a complete build)
+
+- lane: polish
+  area: The phone-polish tuning pass after the two-device hand test — proportional layout at landscape phone height, keyboard-visible typing, reachable validation, forgiving board handling (no snap-back, no fly-in, recenter that fits, drawn tiles near the board), unfriend, the early-start fix, the guest's bag count, and the WILLA word.
+  owns: [ ] — a pass, not a feature lane. Every path it edits is a merged lane's, open to any lane
+  assignee: nate
+  depends on: — every lane it edits is merged; the wire v4 amendment it needs landed 2026-09-14
