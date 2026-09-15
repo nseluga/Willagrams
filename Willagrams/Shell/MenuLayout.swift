@@ -31,18 +31,47 @@ public struct MenuLayout: Equatable {
     /// The regular button's height, same arithmetic with `Space.s`.
     private static let regularButtonHeight: CGFloat = 52
 
+    /// The wordmark is square, so its one dimension is bounded by two things:
+    /// the identity column's width (it should fill most of it, not sit tiny
+    /// in the corner) and the vertical room the column actually has. Width
+    /// wins on a wide iPad, height wins on a short landscape phone — either
+    /// way the mark reads as the dominant shape in its column instead of a
+    /// fixed-size logo.
+    ///
+    /// The width clamp is kept in sync by hand with `MenuView.WidthLayout`'s
+    /// `identityColumnWidth` (`MenuLayout` cannot import that private type —
+    /// see the header note on why it cannot import SwiftUI at all).
+    private static let identityWidthFraction: CGFloat = 0.34
+    private static let identityWidthMin: CGFloat = 260
+    private static let identityWidthMax: CGFloat = 420
+
+    /// Fraction of the screen height the mark is allowed to claim: more on a
+    /// landscape phone, where width is the scarce dimension and the mark is
+    /// the only thing racing the actions column for space; less on an iPad,
+    /// where the identity column's width is the binding constraint anyway
+    /// and a shorter mark leaves more air around the tagline.
+    private static let compactHeightFraction: CGFloat = 0.55
+    private static let regularHeightFraction: CGFloat = 0.40
+
     /// True under a landscape phone's height, false on an iPad.
     public let isCompact: Bool
-    /// Scales with the available height; capped so a tall iPad window
-    /// doesn't blow the mark up past a readable size.
+    /// Scales with the screen: bounded by the identity column's width and by
+    /// the available height, whichever is tighter.
     public let wordmarkHeight: CGFloat
     /// The spacing to use between the identity/action rows.
     public let spacing: CGFloat
 
     public init(size: CGSize) {
         isCompact = size.height < Self.compactHeightThreshold
-        wordmarkHeight = min(max(size.height * 0.12, 32), 88)
         spacing = isCompact ? Self.compactSpacing : Self.regularSpacing
+
+        let widthBudget = min(
+            max(size.width * Self.identityWidthFraction, Self.identityWidthMin),
+            Self.identityWidthMax
+        )
+        let heightBudget = size.height
+            * (isCompact ? Self.compactHeightFraction : Self.regularHeightFraction)
+        wordmarkHeight = min(widthBudget, heightBudget)
     }
 
     /// Two columns on a phone so the four quiet actions read as two rows

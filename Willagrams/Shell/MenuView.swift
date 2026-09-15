@@ -78,18 +78,29 @@ struct MenuView: View {
             contentWidth = min(width, MenuView.contentMaxWidth)
         }
 
-        var taglineWidth: CGFloat { (contentWidth * 0.32).rounded() }
+        /// Kept in sync by hand with `MenuLayout`'s own width clamp for the
+        /// wordmark — see the note there on why the two can't share code.
+        var identityColumnWidth: CGFloat {
+            min(max((contentWidth * 0.34).rounded(), 260), 420)
+        }
+
+        var taglineWidth: CGFloat { identityColumnWidth }
 
         var actionColumnWidth: CGFloat {
             min(max((contentWidth * 0.30).rounded(), 220), 340)
         }
     }
 
+    /// The two columns as a centered group with a fixed gutter between them
+    /// — not an expanding spacer stretched to the content width, which is
+    /// what used to strand the mark in the top-left corner and the actions
+    /// against the right edge with a dead gap in between. Both columns have
+    /// a bounded width, so the `HStack`'s intrinsic width is less than the
+    /// screen's, and the enclosing `.frame(maxWidth: .infinity)` centers it.
     private func columns(_ widths: WidthLayout, _ layout: MenuLayout) -> some View {
         HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
             identity(widths, layout)
-
-            Spacer(minLength: DesignTokens.Space.xl)
+                .frame(width: widths.identityColumnWidth)
 
             actions(layout)
                 // The action column is fixed in proportion, not in points:
