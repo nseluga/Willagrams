@@ -47,6 +47,16 @@ final class BoardDragTests: XCTestCase {
         return board
     }
 
+    /// The eight cells around (row, col), each holding a tile. `board(_:)` skips
+    /// a cell already taken (the mover's home), so it is safe to append.
+    private static func ring(row: Int, col: Int) -> [(Coord, Tile)] {
+        var out: [(Coord, Tile)] = []
+        for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
+            out.append((Coord(row: row + dr, col: col + dc), Tile(letter: "Z")))
+        } }
+        return out
+    }
+
     private func drag(
         _ origins: Set<Coord>,
         anchor: Coord,
@@ -194,7 +204,9 @@ final class BoardDragTests: XCTestCase {
 
     // MARK: - Criterion 3 — a refused drop leaves the board exactly as it was
 
-    func testADropOnAnOccupiedCellIsRefusedAndTheBoardIsUntouched() throws {
+    // Rewritten for one-cell forgiveness: a single tile released on an occupied
+    // cell lands on the nearest free neighbour instead of flying home.
+    func testADropOnAnOccupiedCellLandsOnTheNearestFreeNeighbour() throws {
         let mover = Tile(letter: "A")
         let sitter = Tile(letter: "B")
         let home = Coord(row: 0, col: 0)
@@ -204,15 +216,15 @@ final class BoardDragTests: XCTestCase {
         let inFlight = try drag([home], anchor: home, haptics)
 
         let after = inFlight.drop(
-            translation: CGSize(width: 48, height: 0),
+            translation: CGSize(width: 48 + 10, height: 0),
             on: board, camera: Self.camera, threshold: Self.threshold
         )
 
-        XCTAssertEqual(after, board)
-        XCTAssertEqual(after.placementList, before)
+        XCTAssertEqual(after.placementList.count, before.count)
         XCTAssertEqual(after.tile(at: Coord(row: 0, col: 1))?.id, sitter.id)
-        XCTAssertEqual(after.tile(at: home)?.id, mover.id)
-        XCTAssertEqual(haptics.events, [.pickup, .reject])
+        XCTAssertEqual(after.tile(at: Coord(row: 0, col: 2))?.id, mover.id)
+        XCTAssertNil(after.tile(at: home))
+        XCTAssertEqual(haptics.events, [.pickup, .snap])
     }
 
     func testANonFiniteTranslationIsRefusedRatherThanTrapping() throws {
@@ -361,10 +373,13 @@ final class BoardDragTests: XCTestCase {
         )
         XCTAssertEqual(landing.events, [.pickup, .snap])
 
+        // Every cell within one of the target taken, so forgiveness has nowhere
+        // to put it and the release is a refusal.
+        let surrounded = Self.board([(home, mover), (Coord(row: 0, col: 1), Tile(letter: "B"))] + Self.ring(row: 0, col: 1))
         let onTaken = RecordedHaptics()
         _ = try drag([home], anchor: home, onTaken).drop(
             translation: CGSize(width: 48, height: 0),
-            on: board, camera: Self.camera, threshold: Self.threshold
+            on: surrounded, camera: Self.camera, threshold: Self.threshold
         )
         XCTAssertEqual(onTaken.events, [.pickup, .reject])
     }
@@ -523,7 +538,8 @@ final class BoardDragTests: XCTestCase {
         let mover = Tile(letter: "A")
         let sitter = Tile(letter: "B")
         let home = Coord(row: 0, col: 0)
-        let board = Self.board([(home, mover), (Self.flickTarget, sitter)])
+        // Every cell within one of the target taken: no forgiveness, so home.
+        let board = Self.board([(home, mover), (Self.flickTarget, sitter)] + Self.ring(row: 0, col: 25))
         let haptics = RecordedHaptics()
         let inFlight = try drag([home], anchor: home, haptics)
 

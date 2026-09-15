@@ -386,7 +386,16 @@ final class BoardSourceTests: XCTestCase {
         )
         // BrandTile applies Motion.tileLift for .selected itself. Naming it here
         // would be a second lift on top of the one the tile already has.
-        XCTAssertFalse(text.contains("tileLift"), "BoardView applies its own lift")
+        // Handing the SAME token to the drop (so it measures from where the
+        // tile is drawn) is not a second lift; that exact argument is exempt.
+        XCTAssertEqual(
+            text.components(separatedBy: "lift: DesignTokens.Motion.tileLift").count - 1, 2,
+            "BoardView does not pass Motion.tileLift to both the commit and the interrupted landing"
+        )
+        XCTAssertFalse(
+            text.replacingOccurrences(of: "lift: DesignTokens.Motion.tileLift", with: "").contains("tileLift"),
+            "BoardView applies its own lift"
+        )
         XCTAssertFalse(text.contains(".offset(y:"), "BoardView lifts the tile itself")
     }
 

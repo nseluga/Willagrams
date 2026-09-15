@@ -47,6 +47,16 @@ final class BoardDragGateTests: XCTestCase {
         return board
     }
 
+    /// The eight cells around (row, col), each holding a tile. `board(_:)` skips
+    /// a cell already taken (the mover's home), so it is safe to append.
+    private static func ring(row: Int, col: Int) -> [(Coord, Tile)] {
+        var out: [(Coord, Tile)] = []
+        for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
+            out.append((Coord(row: row + dr, col: col + dc), Tile(letter: "Z")))
+        } }
+        return out
+    }
+
     private func drag(
         _ origins: Set<Coord>,
         anchor: Coord,
@@ -78,7 +88,8 @@ final class BoardDragGateTests: XCTestCase {
         }
 
         // Distance cannot refuse here, but an occupied destination still must.
-        let blocked = Self.board([(home, tile), (Coord(row: 0, col: 1), Tile(letter: "B"))])
+        // Every cell within one of the target taken, so forgiveness cannot land it.
+        let blocked = Self.board([(home, tile), (Coord(row: 0, col: 1), Tile(letter: "B"))] + Self.ring(row: 0, col: 1))
         let haptics = Recorder()
         let after = try drag([home], anchor: home, haptics).drop(
             translation: CGSize(width: 16, height: 0),
@@ -150,7 +161,8 @@ final class BoardDragGateTests: XCTestCase {
         let sitter = Tile(letter: "B")
         let home = Coord(row: -9, col: -9)
         let taken = Coord(row: -9, col: -8)
-        let board = Self.board([(home, mover), (taken, sitter)])
+        // Every cell within one of the target taken, so forgiveness cannot land it.
+        let board = Self.board([(home, mover), (taken, sitter)] + Self.ring(row: -9, col: -8))
         let before = board.placementList
         let haptics = Recorder()
 
@@ -201,7 +213,7 @@ final class BoardDragGateTests: XCTestCase {
             (Coord(row: -4, col: -4), Tile(letter: "C")),
             (Coord(row: 7, col: -2), Tile(letter: "D")),
             (Coord(row: -1, col: 6), Tile(letter: "E")),
-        ])
+        ] + Self.ring(row: 0, col: 1))
         let before = board.placementList
         let beforeIDs = before.map(\.tileID)
         let beforeCoords = before.map(\.coord)
@@ -290,11 +302,12 @@ final class BoardDragGateTests: XCTestCase {
         XCTAssertEqual(landed.events.filter { $0 == .reject }.count, 0, "a landed drag fired a reject")
         XCTAssertEqual(landed.events.count, 2)
 
-        // Refused: exactly one pickup, exactly one reject, zero snaps.
+        // Refused: exactly one pickup, exactly one reject, zero snaps. Every
+        // cell within one of the target taken, so forgiveness cannot land it.
         let refused = Recorder()
         _ = try drag([home], anchor: home, refused).drop(
             translation: CGSize(width: 48, height: 0),
-            on: board, camera: Self.camera, threshold: Self.threshold
+            on: Self.board([(home, mover), (Coord(row: 0, col: 1), Tile(letter: "B"))] + Self.ring(row: 0, col: 1)), camera: Self.camera, threshold: Self.threshold
         )
         XCTAssertEqual(refused.events.filter { $0 == .pickup }.count, 1)
         XCTAssertEqual(refused.events.filter { $0 == .reject }.count, 1)
@@ -420,7 +433,8 @@ final class BoardDragGateTests: XCTestCase {
         let mover = Tile(letter: "A")
         let home = Coord(row: 0, col: 0)
         let taken = Coord(row: 0, col: 1)
-        let board = Self.board([(home, mover), (taken, Tile(letter: "B"))])
+        // Every cell within one of the target taken, so forgiveness cannot land it.
+        let board = Self.board([(home, mover), (taken, Tile(letter: "B"))] + Self.ring(row: taken.row, col: taken.col))
         let inFlight = try drag([home], anchor: home)
 
         let lifted = BoardRender.cells(
