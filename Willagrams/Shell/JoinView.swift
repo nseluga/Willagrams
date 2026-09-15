@@ -16,26 +16,31 @@ struct JoinView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-            Text(JoinModel.title)
-                .font(DesignTokens.Typography.title)
-                .foregroundStyle(DesignTokens.Palette.textPrimary)
+            // Scrolls so a phone in landscape, keyboard up, still reaches the
+            // field; the buttons below stay pinned.
+            ScrollView {
+                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                    Text(JoinModel.title)
+                        .font(DesignTokens.Typography.title)
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
 
-            if join.phase == .waiting {
-                Text(join.waitingLine)
-                    .font(DesignTokens.Typography.body)
-                    .foregroundStyle(DesignTokens.Palette.textSecondary)
-            } else {
-                field
+                    if join.phase == .waiting {
+                        Text(join.waitingLine)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundStyle(DesignTokens.Palette.textSecondary)
+                    } else {
+                        field
+                    }
+
+                    if let message = join.message {
+                        Text(message)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            if let message = join.message {
-                Text(message)
-                    .font(DesignTokens.Typography.caption)
-                    .foregroundStyle(DesignTokens.Palette.danger)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
 
             actions
         }

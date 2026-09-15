@@ -32,17 +32,12 @@ struct MenuView: View {
         GeometryReader { proxy in
             let layout = Layout(width: proxy.size.width)
 
-            HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
-                identity(layout)
-
-                Spacer(minLength: DesignTokens.Space.xl)
-
-                actions
-                    // The action column is fixed in proportion, not in points:
-                    // two buttons with short labels, sized off the same measure
-                    // as the rest so they neither strand mid-air on a 13-inch
-                    // iPad nor crowd the mark on a phone.
-                    .frame(width: layout.actionColumnWidth)
+            // A phone in landscape is shorter than the action column. Scroll
+            // there, and only there: where the columns fit, the first branch
+            // wins and they stay centred exactly as drawn.
+            ViewThatFits(in: .vertical) {
+                columns(layout)
+                ScrollView { columns(layout) }
             }
             // Capped and centred rather than pinned to the screen edges. Past
             // the cap a wider device gets margin, not a wider dead band between
@@ -90,6 +85,21 @@ struct MenuView: View {
 
         var actionColumnWidth: CGFloat {
             min(max((contentWidth * 0.30).rounded(), 220), 340)
+        }
+    }
+
+    private func columns(_ layout: Layout) -> some View {
+        HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
+            identity(layout)
+
+            Spacer(minLength: DesignTokens.Space.xl)
+
+            actions
+                // The action column is fixed in proportion, not in points:
+                // two buttons with short labels, sized off the same measure
+                // as the rest so they neither strand mid-air on a 13-inch
+                // iPad nor crowd the mark on a phone.
+                .frame(width: layout.actionColumnWidth)
         }
     }
 

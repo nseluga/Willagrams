@@ -16,22 +16,27 @@ struct HostLobbyView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-            Text(HostLobbyModel.title)
-                .font(DesignTokens.Typography.title)
-                .foregroundStyle(DesignTokens.Palette.textPrimary)
+            // Scrolls so a phone in landscape reaches the roster; Start and
+            // Cancel stay pinned below.
+            ScrollView {
+                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                    Text(HostLobbyModel.title)
+                        .font(DesignTokens.Typography.title)
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
 
-            code
+                    code
 
-            roster
+                    roster
 
-            if let message = lobby.message {
-                Text(message)
-                    .font(DesignTokens.Typography.caption)
-                    .foregroundStyle(DesignTokens.Palette.danger)
-                    .fixedSize(horizontal: false, vertical: true)
+                    if let message = lobby.message {
+                        Text(message)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Spacer(minLength: 0)
 
             actions
         }

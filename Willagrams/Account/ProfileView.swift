@@ -27,13 +27,18 @@ struct ProfileView: View {
                 onBack: onBack
             )
 
-            name
+            // The header stays put and the rest scrolls, as on `FriendsView`:
+            // a phone in landscape is shorter than this screen, and Done must
+            // never be the thing that scrolls away.
+            ScrollView {
+                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                    name
 
-            friendCode
+                    friendCode
 
-            stats
-
-            Spacer(minLength: 0)
+                    stats
+                }
+            }
         }
         .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
