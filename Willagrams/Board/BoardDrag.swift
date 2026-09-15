@@ -97,11 +97,12 @@ public struct TileDrag: Sendable {
         on board: Board,
         camera: BoardCamera,
         threshold: CGFloat,
+        lift: CGFloat = 0,
         offsets: [UUID: CGSize] = [:]
     ) -> Board {
         guard let next = landing(
             translation: translation, on: board, camera: camera,
-            threshold: threshold, offsets: offsets
+            threshold: threshold, lift: lift, offsets: offsets
         )
         else {
             haptics.fire(.reject)
@@ -123,11 +124,12 @@ public struct TileDrag: Sendable {
         on board: Board,
         camera: BoardCamera,
         threshold: CGFloat,
+        lift: CGFloat = 0,
         offsets: [UUID: CGSize] = [:]
     ) -> Set<Coord>? {
         landing(
             translation: translation, on: board, camera: camera,
-            threshold: threshold, offsets: offsets
+            threshold: threshold, lift: lift, offsets: offsets
         )?.origins
     }
 
@@ -144,6 +146,7 @@ public struct TileDrag: Sendable {
         on board: Board,
         camera: BoardCamera,
         threshold: CGFloat,
+        lift: CGFloat,
         offsets: [UUID: CGSize]
     ) -> (board: Board, origins: Set<Coord>)? {
         // Live gesture floats. A NaN sails through every comparison below as
@@ -152,7 +155,7 @@ public struct TileDrag: Sendable {
         // being a refusal (a release lands wherever it is, unless occupied).
         // Kept so ~100 call sites don't churn; drop the parameter when next
         // touching them.
-        guard translation.width.isFinite, translation.height.isFinite
+        guard translation.width.isFinite, translation.height.isFinite, lift.isFinite
         else { return nil }
 
         let size = camera.cellSize
@@ -180,7 +183,10 @@ public struct TileDrag: Sendable {
         } ?? camera.point(for: anchor)
         let dropped = CGPoint(
             x: start.x + translation.width + half,
-            y: start.y + translation.height + half
+            // `lift` is the vertical offset the held tile is DRAWN at
+            // (BrandTile's `Motion.tileLift` for `.selected`, injected by the
+            // view), so the cell measured is the cell the eye aims at.
+            y: start.y + translation.height + half + lift
         )
         guard dropped.x.isFinite, dropped.y.isFinite else { return nil }
 
@@ -194,11 +200,44 @@ public struct TileDrag: Sendable {
         // one a correct hit lands in: it has to reject the non-finite and the
         // astronomical, and a slack window does that while leaving room for a
         // float ULP at a cell edge a thousand cells out.
-        let target = camera.coord(at: dropped)
+        var target = camera.coord(at: dropped)
         let corner = camera.point(for: target)
         guard (dropped.x - corner.x).magnitude <= size,
               (dropped.y - corner.y).magnitude <= size
         else { return nil }
+
+        // At the 16pt floor the lift is half a cell, so a no-move release puts
+        // the lifted centre on the cell's top edge and any sub-point offset
+        // floors it one row up. A single tile whose UN-lifted centre is still
+        // on its anchor stays home.
+        if origins.count == 1, target != anchor,
+           camera.coord(at: CGPoint(x: dropped.x, y: dropped.y - lift)) == anchor {
+            target = anchor
+        }
+
+        // One-cell forgiveness, single tile only: released on an occupied cell,
+        // it lands on the EMPTY cell within one cell whose centre is nearest the
+        // release point. None empty → refused below. A group stays
+        // all-or-nothing. Its own origin is not empty, so it never "forgives"
+        // back home with a snap.
+        if origins.count == 1, !origins.contains(target), board.tile(at: target) != nil {
+            var best: (coord: Coord, distance: CGFloat)?
+            for dr in -1...1 {
+                for dc in -1...1 where dr != 0 || dc != 0 {
+                    let (row, rowWrap) = target.row.addingReportingOverflow(dr)
+                    let (col, colWrap) = target.col.addingReportingOverflow(dc)
+                    guard !rowWrap, !colWrap else { continue }
+                    let cell = Coord(row: row, col: col)
+                    guard board.tile(at: cell) == nil else { continue }
+                    let point = camera.point(for: cell)
+                    let dx = point.x + half - dropped.x, dy = point.y + half - dropped.y
+                    let distance = dx * dx + dy * dy
+                    if best == nil || distance < best!.distance { best = (cell, distance) }
+                }
+            }
+            guard let best else { return nil }
+            target = best.coord
+        }
 
         // The lattice delta, once, from the anchor. `Coord` is unbounded and
         // signed in all four directions, so the only bound worth guarding is

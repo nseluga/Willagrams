@@ -405,6 +405,7 @@ public struct BoardModel: Sendable {
         on board: Board,
         camera: BoardCamera,
         threshold: CGFloat,
+        lift: CGFloat = 0,
         against dictionary: some WordList
     ) -> Board {
         guard let tileDrag else { return board }
@@ -415,7 +416,7 @@ public struct BoardModel: Sendable {
         let drawn = tileOffsets
         let next = tileDrag.drop(
             translation: translation, on: board, camera: camera,
-            threshold: threshold, offsets: drawn
+            threshold: threshold, lift: lift, offsets: drawn
         )
         // The selection follows the tiles it was holding. Asked of the drag
         // rather than derived from the board that came back: the drag is the
@@ -425,7 +426,7 @@ public struct BoardModel: Sendable {
         if selection.isActive, tileDrag.origins == selection.coords,
            let landed = tileDrag.landed(
                translation: translation, on: board, camera: camera,
-               threshold: threshold, offsets: drawn
+               threshold: threshold, lift: lift, offsets: drawn
            ) {
             selection.replace(with: landed)
         }
@@ -445,12 +446,13 @@ public struct BoardModel: Sendable {
     public mutating func interrupted(
         on board: Board,
         camera: BoardCamera,
+        lift: CGFloat = 0,
         against dictionary: some WordList
     ) -> Board {
         // `threshold` is ignored — there is no reach limit. 0 on purpose: if a
         // reach guard is ever restored it refuses here, and the interrupted
         // tests go red instead of the lost-release snap-back silently returning.
-        commit(translation: dragTranslation, on: board, camera: camera, threshold: 0, against: dictionary)
+        commit(translation: dragTranslation, on: board, camera: camera, threshold: 0, lift: lift, against: dictionary)
     }
 
     /// The ONE place published validation is written, and the only call to the

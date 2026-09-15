@@ -365,7 +365,9 @@ public struct BoardView: View {
     private func landInterrupted() {
         guard !model.dragging.isEmpty else { return }
         withAnimation(DesignTokens.Motion.snap) {
-            board = model.interrupted(on: board, camera: camera, against: dictionary)
+            board = model.interrupted(
+                on: board, camera: camera, lift: DesignTokens.Motion.tileLift, against: dictionary
+            )
         }
     }
 
@@ -444,6 +446,7 @@ public struct BoardView: View {
                             on: board,
                             camera: camera,
                             threshold: DesignTokens.Motion.snapThreshold,
+                            lift: DesignTokens.Motion.tileLift,
                             against: dictionary
                         )
                     }

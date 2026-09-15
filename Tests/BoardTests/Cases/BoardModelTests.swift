@@ -461,10 +461,16 @@ final class BoardModelTests: XCTestCase {
         var model = BoardModel()
         model.began(.tile(fixture.tile, at: Self.home), haptics: feel)
         model.moved(to: CGSize(width: 48 * 6, height: 48 * 4))  // onto the bystander
+        // Every cell within one of the bystander taken, so one-cell forgiveness
+        // has nowhere to land it and it returns home.
+        var board = fixture.board
+        for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
+            try? board.place(Tile(letter: "Z"), at: Coord(row: Self.bystander.row + dr, col: Self.bystander.col + dc))
+        } }
 
-        let after = model.interrupted(on: fixture.board, camera: Self.camera, against: Self.dictionary)
+        let after = model.interrupted(on: board, camera: Self.camera, against: Self.dictionary)
 
-        XCTAssertEqual(after.placementList, fixture.board.placementList)
+        XCTAssertEqual(after.placementList, board.placementList)
         XCTAssertEqual(feel.events, [.pickup, .reject])
     }
 }
