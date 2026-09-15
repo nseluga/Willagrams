@@ -52,7 +52,7 @@ struct SoloSetupView: View {
                     .buttonStyle(.brandPrimary)
             }
         }
-        .padding(DesignTokens.Space.l)
+        .screenPadding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             LinearGradient(
