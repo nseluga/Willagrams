@@ -5,7 +5,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 ## Current position
 
 - **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** item 6 — unfriend (item 8 running in parallel)
+- **Next:** item 9 — recenter frames every tile (item 12 running in parallel)
 - **Blockers:** none
 - **Last updated:** 2026-09-14
 
@@ -18,9 +18,9 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | HUD bag legible on a phone | done — The bag in the match HUD is smaller on a phone and its count never truncates. |
 | Typing screens keep the field visible | done — Profile, Friends and Join scroll the field you're typing in above the keyboard, and Join's button now sits beside its code field. |
 | Reachable validation messages | done — A too-long name, a short friend code or a short join code now shows its message instead of silently greying out the button, and Return submits. |
-| Unfriend | not started |
+| Unfriend | done — Each friend's row has an Unfriend button that asks first; unfriending never removes a block. |
 | Zoom further out | done — You can pinch the board out further, to smaller tiles, so big boards fit on screen. |
-| No drag snap-back | not started |
+| No drag snap-back | done — A tile you let go of stays where it lands, even on a fast drag; only an occupied cell sends it back. |
 | Recenter frames every tile | not started |
 | No fly-in on pan | not started |
 | Drawn tiles land near the board | not started |

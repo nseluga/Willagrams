@@ -34,3 +34,15 @@
 - **Outcome:** DONE — 1 attempt — caution: no — team: dt-engineer (opus, high) — auto/polish, commit 0a84844
 - **What happened:** BoardCamera.minCellSize 24→16; floor-hardcoded assertions updated (BoardGestureTests pinch-out, BoardDragGateTests zoom 0.5→0.25 and derived offsets). Mutation: reverting to 24 turns the pinch-out case red.
 - **Remember next run:** For a constant change, grep the symptom (`== minCellSize`, `cellSize ==` near zoom literals) too — a derived collision like `zoom: 0.5` reaching the old floor won't show in a literal grep.
+
+## 2026-09-14 23:55 — dev-team-auto — Unfriend (item 6)
+- **Outcome:** DONE — 1 attempt — caution: yes — team: dt-engineer opus/high, dt-qa opus/high, dt-review opus/high — auto/polish, 7efea2e
+- **What happened:** FriendForgetting side protocol (Supabase + Fake), accepted-only delete, FriendsModel.unfriend, FriendsView Unfriend button + confirm dialog. QA re-ran all three mutations plus the live case (ynkayuwwrifluhhqnrjc, passed); review 0/0/3 Minor.
+- **What worked:** Mutation-checking the status filter on both backends — live M2 red on the real project — proved the filter is the only thing protecting a block, since RLS allows deleting any status.
+- **Remember next run:** A new protocol FakeBackend conforms to must be listed in Tests/ShellTests and Tests/AccountTests Package.swift. Open Minors: reload on notFound in unfriend, live-test cleanup on a throw, `.lineLimit(1)` on row buttons (three buttons now on accepted rows).
+
+## 2026-09-14 — dev-team-auto — item 8 remove drag snap-back
+- **Outcome:** DONE — 2 attempts — caution: yes — team: dt-engineer opus/high→xhigh, dt-qa opus/high→xhigh, dt-review opus/high→xhigh — auto/polish-c8, 4e46e3a (merged into auto/polish)
+- **What happened:** Repro proved a lost onEnded (system edge gesture cancels the DragGesture; the next touch's began() dropped the held tile). Deleted the dead distance guard, added cancel-path landing via @GestureState, deferred edge gestures while input is live. Attempt 1 passed QA but review caught the leftover tile landing after the new touch's hit test; attempt 2 fixed it.
+- **What failed:** QA can't drive BoardView's gesture wiring; only review caught the guardrail break.
+- **Remember next run:** Removing the occupied check in BoardDrag alone fails no test (`Board.place` also refuses) — bypass both. `threshold` is now dead but threaded through ~100 test call sites. BoardSourceTests pins BoardView source; new modifiers naming `inputLocked` need an exact-line exemption. Merge with item 7 conflicted in BoardDragGateTests (resolved to zoom 0.25).

@@ -130,7 +130,7 @@ Frozen contracts — build and test against these; they will not move:
     - `xcodebuild` BUILD SUCCEEDED; the confirm dialog is named as Nate's hand test
   caution: true
   ui: true
-  status: not started
+  status: done — QA PASS, live test passed, 3 mutation checks red
 
 - task: Let the board zoom further out. In `Willagrams/Board/BoardCamera.swift`, `minCellSize` goes from 24 to 16 (~line 17), and every clamp that reads it follows. This is also what lets recenter fit a large board (item 9).
   guardrails:
@@ -158,7 +158,7 @@ Frozen contracts — build and test against these; they will not move:
   caution: true
   ui: true
   parallel-group: c
-  status: not started
+  status: done — QA PASS after 2 attempts, 3 mutation checks red
 
 - task: Make recenter actually frame every tile. `BoardView` gains `chromeInsets: EdgeInsets` (the HUD's footprint). `Willagrams/Shell/MatchView.swift` passes the HUD's real insets, and solo and online both go through it. Recenter frames the occupied bounds inside the view rect *minus* those insets, through `BoardLayout.framing`. Wire it at both recenter call sites: the recenter control (~BoardView line 412) and the `.task(id: board)` initial framing (~line 239). With item 7's floor, a board too big to fit at 16pt clamps to 16 and centers on the occupied bounds.
   guardrails:
