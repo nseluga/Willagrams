@@ -125,14 +125,12 @@ public final class MatchHUDModel {
 
     /// The count beside that name, or a placeholder while there is no count to
     /// show. Never a guess.
-    public var poolValue: String {
-        guard let poolRemaining else { return Self.unknownValue }
-        return String(poolRemaining)
-    }
+    public var poolValue: String { MatchHUDLayout.poolValue(poolRemaining) }
 
     /// Local chrome, not `Terminology`: an em dash standing in for a number is
-    /// not a game concept.
-    public static let unknownValue = "—"
+    /// not a game concept. Delegates to `MatchHUDLayout` so the literal lives
+    /// in one place.
+    public static let unknownValue = MatchHUDLayout.unknownValue
 
     // MARK: - Draw
 
