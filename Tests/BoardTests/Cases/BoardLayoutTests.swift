@@ -325,6 +325,22 @@ final class BoardLayoutTests: XCTestCase {
         assertLandedClear(cells, on: next)
     }
 
+    /// A loose tile sits in the first free-looking cell under the cluster: the
+    /// delivery must step around it, never write over it or any placed tile.
+    func testDeliveryNeverWritesOverAPlacedTile() throws {
+        var board = Board()
+        for r in 10...11 { for c in 30...31 { try board.place(Tile(letter: "A"), at: Coord(row: r, col: c)) } }
+        try board.place(Tile(letter: "Q"), at: Coord(row: 13, col: 30))
+        let drawn = tiles(3)
+
+        let next = BoardLayout.delivered(drawn, onto: board, camera: BoardCamera(), in: iPad)
+
+        XCTAssertEqual(next.placementList.count, board.placementList.count + drawn.count, "a tile was overwritten or lost")
+        for placement in board.placementList {
+            XCTAssertEqual(next.tile(at: placement.coord), placement.tile, "\(placement.coord) was written over")
+        }
+    }
+
     /// The guardrail: with no cluster yet — an empty board, or the loose
     /// opening deal — delivery is exactly today's viewport rule.
     func testWithNoClusterDeliveryKeepsTheViewportLayout() {
