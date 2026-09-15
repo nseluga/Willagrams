@@ -5,7 +5,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 ## Current position
 
 - **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** item 5 — reachable validation messages
+- **Next:** item 7 — zoom further out (item 8 running in parallel)
 - **Blockers:** none
 - **Last updated:** 2026-09-14
 
@@ -17,7 +17,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Apply sizing to remaining fixed-size screens | done — The lobby's invite code and buttons, the results and countdown cards, and solo setup all tighten up on a phone. |
 | HUD bag legible on a phone | done — The bag in the match HUD is smaller on a phone and its count never truncates. |
 | Typing screens keep the field visible | done — Profile, Friends and Join scroll the field you're typing in above the keyboard, and Join's button now sits beside its code field. |
-| Reachable validation messages | not started |
+| Reachable validation messages | done — A too-long name, a short friend code or a short join code now shows its message instead of silently greying out the button, and Return submits. |
 | Unfriend | not started |
 | Zoom further out | not started |
 | No drag snap-back | not started |
