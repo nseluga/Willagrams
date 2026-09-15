@@ -109,6 +109,32 @@ struct HowToPlayTests {
         #expect(!scope.contains("LazyVGrid"), "the view still lays every rule out in a grid")
     }
 
+    /// The one place `HowToPlay.rules.count` belongs: sizing the pager to the
+    /// rule set. The pager's own tests spell 6, so that they fail rather than
+    /// follow if the rule set changes; this one asserts the wiring that makes
+    /// the two agree.
+    @Test("The view sizes its pager from the rule set rather than a second count")
+    func viewSizesThePagerFromTheRuleSet() throws {
+        let text = try HowToPlayTests.viewSource()
+        let scope = try #require(
+            HowToPlayTests.declaration("struct HowToPlayView", in: text),
+            "HowToPlayView declaration not found"
+        )
+        #expect(scope.contains("HowToPlay.rules.count"), "the view counts pages some other way than the rule set")
+    }
+
+    @Test("Done on the last page returns home, and the screen reads item 4's margins")
+    func viewFinishesHomeWithItem4Margins() throws {
+        let text = try HowToPlayTests.viewSource()
+        let scope = try #require(
+            HowToPlayTests.declaration("struct HowToPlayView", in: text),
+            "HowToPlayView declaration not found"
+        )
+        #expect(scope.contains("isLastPage"), "the view never branches on the last page")
+        #expect(scope.contains("shell.returnToMenu()"), "the view never returns home")
+        #expect(scope.contains(".screenPadding()"), "the screen does not use item 4's margins")
+    }
+
     private static func viewSource() throws -> String {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // Cases
@@ -129,56 +155,64 @@ struct HowToPlayTests {
 
 /// `HowToPlayPager` is a plain value, so its logic is reachable directly —
 /// no view, no `ShellModel`, no `@MainActor`.
+///
+/// Every number here is a written literal — never `HowToPlay.rules.count`. A
+/// test that reads the same count it is checking follows a changed rule set
+/// instead of failing on it, so `M` is spelled `6`. The wiring that keeps the
+/// view's pager and the rule set in step is asserted once, in
+/// `viewSizesThePagerFromTheRuleSet`, which is where that tie is the subject.
+///
+/// Each test measures one rule and reaches its state by the shortest route, so
+/// a broken rule fails one named assertion wherever `page` and `pageLabel`
+/// permit it.
 @Suite("How to play pager")
 struct HowToPlayPagerTests {
 
-    @Test("Starts on page 1 of however many rules there are")
+    @Test("Starts on page 1")
     func startsOnPageOne() {
-        let pager = HowToPlayPager(count: HowToPlay.rules.count)
-        #expect(pager.page == 1)
-        #expect(pager.pageLabel == "1 OF \(HowToPlay.rules.count)")
+        #expect(HowToPlayPager(count: 6).page == 1)
     }
 
-    @Test("Next advances the page")
+    @Test("Next advances the page by one")
     func nextAdvances() {
-        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        var pager = HowToPlayPager(count: 6)
+        let before = pager.page
         pager.next()
-        #expect(pager.page == 2)
+        #expect(pager.page == before + 1)
     }
 
     @Test("Back at page 1 stays at page 1")
     func backClampsAtOne() {
-        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        var pager = HowToPlayPager(count: 6)
         pager.back()
         #expect(pager.page == 1)
     }
 
     @Test("The last page's primary label is Done")
     func lastPageReadsDone() {
-        var pager = HowToPlayPager(count: HowToPlay.rules.count)
-        for _ in 1..<HowToPlay.rules.count { pager.next() }
-        #expect(pager.isLastPage)
+        var pager = HowToPlayPager(count: 6)
+        for _ in 1..<6 { pager.next() }
         #expect(pager.primaryLabel == "Done")
     }
 
     @Test("A page short of the last reads Next")
     func midPageReadsNext() {
-        var pager = HowToPlayPager(count: HowToPlay.rules.count)
-        pager.next()
-        #expect(pager.primaryLabel == "Next")
+        #expect(HowToPlayPager(count: 6).primaryLabel == "Next")
     }
 
     @Test("The page label reads N OF M, the comp's format")
     func pageLabelFormat() {
-        var pager = HowToPlayPager(count: HowToPlay.rules.count)
+        var pager = HowToPlayPager(count: 6)
         pager.next()
-        #expect(pager.pageLabel == "2 OF \(HowToPlay.rules.count)")
+        #expect(pager.pageLabel == "2 OF 6")
     }
 
     @Test("Next never advances past the last page")
     func nextStopsAtTheLastPage() {
-        var pager = HowToPlayPager(count: HowToPlay.rules.count)
-        for _ in 0..<(HowToPlay.rules.count + 5) { pager.next() }
-        #expect(pager.page == HowToPlay.rules.count)
+        var pager = HowToPlayPager(count: 6)
+        for _ in 1..<6 { pager.next() }
+        let atLast = pager.page
+        pager.next()
+        #expect(pager.page == atLast)
     }
 }
