@@ -148,8 +148,11 @@ public struct TileDrag: Sendable {
     ) -> (board: Board, origins: Set<Coord>)? {
         // Live gesture floats. A NaN sails through every comparison below as
         // "false", so it is refused up front rather than reasoned about.
-        guard translation.width.isFinite, translation.height.isFinite,
-              threshold.isFinite, threshold >= 0
+        // ponytail: `threshold` is accepted and ignored — "too far" stopped
+        // being a refusal (a release lands wherever it is, unless occupied).
+        // Kept so ~100 call sites don't churn; drop the parameter when next
+        // touching them.
+        guard translation.width.isFinite, translation.height.isFinite
         else { return nil }
 
         let size = camera.cellSize
@@ -196,10 +199,6 @@ public struct TileDrag: Sendable {
         guard (dropped.x - corner.x).magnitude <= size,
               (dropped.y - corner.y).magnitude <= size
         else { return nil }
-
-        let centre = CGPoint(x: corner.x + half, y: corner.y + half)
-        let reach = hypot(dropped.x - centre.x, dropped.y - centre.y)
-        guard reach.isFinite, reach <= threshold else { return nil }
 
         // The lattice delta, once, from the anchor. `Coord` is unbounded and
         // signed in all four directions, so the only bound worth guarding is

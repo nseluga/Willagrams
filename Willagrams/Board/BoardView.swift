@@ -166,6 +166,17 @@ public struct BoardView: View {
                 // which is checked state rather than an inferred recognizer
                 // outcome.
                 .gesture(dragGesture)
+                // A cancelled DragGesture skips `onEnded` but always resets
+                // its GestureState — the one signal the drag was interrupted.
+                // `drag` is cleared too, or a later touch with the identical
+                // start point would carry the stale grab and never `began`.
+                .onChange(of: touching) { _, now in
+                    if !now { landInterrupted(); drag = nil }
+                }
+                // Edge swipes (home indicator, Control Center) need a second
+                // swipe over the board, so they stop stealing tile drags —
+                // only while input is live, so locked boards leave them alone.
+                .defersSystemGestures(on: inputLocked ? [] : .all)
                 // The pinch is a UIKit recognizer, not a SwiftUI gesture:
                 // `MagnifyGesture` freezes its midpoint at the instant the
                 // second finger lands, so a pinch could only ever zoom about
@@ -295,8 +306,21 @@ public struct BoardView: View {
     /// a tile lifts it, and at the default the selection, the `tileLift` offset
     /// and the pickup feel all wait for 10pt of travel — a fifth of a cell of
     /// dead movement before the board admits the finger landed.
+    /// True while a finger is down. SwiftUI resets it on end AND on cancel.
+    @GestureState private var touching = false
+
+    /// Lands a hold whose `onEnded` never arrived at its last reported spot.
+    /// A no-op after a normal release, which has already cleared the hold.
+    private func landInterrupted() {
+        guard !model.dragging.isEmpty else { return }
+        withAnimation(DesignTokens.Motion.snap) {
+            board = model.interrupted(on: board, camera: camera, against: dictionary)
+        }
+    }
+
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
+            .updating($touching) { _, state, _ in state = true }
             .onChanged { value in
                 // The other half of dropping `.exclusively(before:)`: while two
                 // fingers are down the pinch owns the camera outright, so the
@@ -315,6 +339,11 @@ public struct BoardView: View {
                 // subtracts, so a mid-gesture rebuild can discount the travel
                 // already spent.
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
+                // A previous hold still here means its release was lost; land it
+                // BEFORE the new touch is hit-tested, so the grab is decided
+                // against the tile where it is drawn — not where `began` would
+                // have snapped it back to.
+                if carried == nil { landInterrupted() }
                 let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, selection: model.selection,
                     camera: camera, inputLocked: model.inputLocked,
@@ -340,6 +369,9 @@ public struct BoardView: View {
             }
             .onEnded { value in
                 if !model.dragging.isEmpty {
+                    // Record the final translation first, so a release and a
+                    // lost release (`landInterrupted`) read the same number.
+                    model.moved(to: value.translation)
                     // The whole commit is one assignment of one value type:
                     // `commit` hands back either the moved board or the one it
                     // was given, so a refused drop cannot leave a partial move
@@ -351,7 +383,7 @@ public struct BoardView: View {
                     // would jump while the board's half slid.
                     withAnimation(DesignTokens.Motion.snap) {
                         board = model.commit(
-                            translation: value.translation,
+                            translation: model.dragTranslation,
                             on: board,
                             camera: camera,
                             threshold: DesignTokens.Motion.snapThreshold,
