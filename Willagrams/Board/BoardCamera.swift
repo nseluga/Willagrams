@@ -11,10 +11,10 @@ import WillagramsRules
 public struct BoardCamera: Sendable {
 
     /// Rendered cell size never drops below this, however far zoomed out.
-    /// Named per the lane spec's 24...72pt zoom range (no DesignTokens key
+    /// Named per the lane spec's 16...72pt zoom range (no DesignTokens key
     /// covers cell size — DesignTokens is a SwiftUI-only file this pure
     /// geometry type cannot import).
-    public static let minCellSize: CGFloat = 24
+    public static let minCellSize: CGFloat = 16
     /// Rendered cell size never exceeds this, however far zoomed in.
     public static let maxCellSize: CGFloat = 72
 
@@ -143,7 +143,7 @@ public struct BoardCamera: Sendable {
     /// to a camera snapshotted at that start rather than to the live one.
     ///
     /// Both halves of the anchor math read the CLAMPED `cellSize`. That is
-    /// what lets the 24...72pt clamp stay here and out of the gesture code:
+    /// what lets the 16...72pt clamp stay here and out of the gesture code:
     /// the board position under the anchor is measured in whatever cell size
     /// is actually rendered and restored in whatever cell size is actually
     /// rendered next, so the anchor still holds exactly once the clamp
@@ -163,7 +163,7 @@ public struct BoardCamera: Sendable {
     public func magnified(by magnification: CGFloat, about anchor: CGPoint) -> BoardCamera {
         let size = cellSize
         // `baseCellSize > 0` is not covered by `size > 0`: `cellSize` floors at
-        // minCellSize, so it is 24 even when `baseCellSize` is 0 — and the zoom
+        // minCellSize, so it is 16 even when `baseCellSize` is 0 — and the zoom
         // bounds below divide by `baseCellSize`.
         guard size > 0, size.isFinite,
               baseCellSize > 0, baseCellSize.isFinite,
@@ -195,8 +195,8 @@ public struct BoardCamera: Sendable {
     /// resulting cell size still inside `minCellSize...maxCellSize`.
     ///
     /// Framing and the cell-size floor genuinely conflict once the span is
-    /// wider than `rect` measured in floor-sized cells — about 42 columns
-    /// across a 1024pt viewport at 24pt — and a late-game board reaches that.
+    /// wider than `rect` measured in floor-sized cells — about 64 columns
+    /// across a 1024pt viewport at 16pt — and a late-game board reaches that.
     /// The floor wins and the content is CENTERED rather than contained, so
     /// the outermost tiles sit off screen. That is the deliberate degradation:
     /// honouring the frame instead would render cells too small to read or to

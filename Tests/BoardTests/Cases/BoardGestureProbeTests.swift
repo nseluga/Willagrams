@@ -301,8 +301,8 @@ final class BoardGestureProbeTests: XCTestCase {
     }
 
     func testRecenterCentersContentTooLargeToFitAtTheCellSizeFloor() {
-        // The 24pt floor and "frame every placed tile" cannot both hold once the
-        // span exceeds the viewport in cells (a 1024pt viewport holds 42 cells
+        // The 16pt floor and "frame every placed tile" cannot both hold once the
+        // span exceeds the viewport in cells (a 1024pt viewport holds 64 cells
         // at the floor). The floor wins — criterion 2 is the harder constraint —
         // so the honest guarantee here is that the content is centered, not that
         // it is contained.

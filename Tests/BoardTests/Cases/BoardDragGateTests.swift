@@ -108,13 +108,13 @@ final class BoardDragGateTests: XCTestCase {
 
     func testAtTheCellSizeFloorTheThresholdCanNeverRefuseADistantDrop() throws {
         // Not a defect — the consequence of a threshold measured in POINTS
-        // against cells that shrink. At the 24pt floor the furthest a release
-        // can be from the centre of the cell it lands in is hypot(12, 12) ≈ 17pt,
+        // against cells that shrink. At the 16pt floor the furthest a release
+        // can be from the centre of the cell it lands in is hypot(8, 8) ≈ 11pt,
         // which is inside a 22pt reach from every corner of every cell. So at
         // maximum zoom-out only an OCCUPIED destination refuses, never distance.
         // Pinned so the next person to touch the threshold sees it deliberately
         // rather than discovering it.
-        let floored = BoardCamera(pan: .zero, zoom: 0.5, baseCellSize: 48)
+        let floored = BoardCamera(pan: .zero, zoom: 0.25, baseCellSize: 48)
         XCTAssertEqual(floored.cellSize, BoardCamera.minCellSize)
 
         let tile = Tile(letter: "A")
@@ -122,7 +122,7 @@ final class BoardDragGateTests: XCTestCase {
         let board = Self.board([(home, tile)])
 
         // The worst case: a release at the far corner of a cell, both axes.
-        for offset in [CGSize(width: 11.9, height: 11.9), CGSize(width: -11.9, height: -11.9)] {
+        for offset in [CGSize(width: 7.9, height: 7.9), CGSize(width: -7.9, height: -7.9)] {
             let after = try drag([home], anchor: home).drop(
                 translation: offset, on: board, camera: floored, threshold: Self.threshold
             )
@@ -134,7 +134,7 @@ final class BoardDragGateTests: XCTestCase {
         let blocked = Self.board([(home, tile), (Coord(row: 0, col: 1), Tile(letter: "B"))])
         let haptics = Recorder()
         let after = try drag([home], anchor: home, haptics).drop(
-            translation: CGSize(width: 24, height: 0),
+            translation: CGSize(width: 16, height: 0),
             on: blocked, camera: floored, threshold: Self.threshold
         )
         XCTAssertEqual(after.placementList, blocked.placementList)
