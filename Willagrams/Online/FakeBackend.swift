@@ -20,7 +20,7 @@ import WillagramsRules
 /// An actor, so the `account` and `friends` lanes exercise the same
 /// serialization the real client has, and a test that races two calls behaves
 /// the same way against both.
-public actor FakeBackend: BackendClient, MatchAbandoning, FriendRequestForgetting {
+public actor FakeBackend: BackendClient, MatchAbandoning, FriendRequestForgetting, FriendForgetting {
 
     private var signedInUser: UUID?
     private var profiles: [UUID: Profile] = [:]
@@ -160,6 +160,19 @@ public actor FakeBackend: BackendClient, MatchAbandoning, FriendRequestForgettin
         guard let index = friendships.firstIndex(where: {
             $0.requesterID == requesterID && $0.addresseeID == me
                 && $0.status == .pending
+        }) else { throw BackendError.notFound }
+        friendships.remove(at: index)
+    }
+
+    /// The offline half of ``FriendForgetting``. The `.accepted` check is the
+    /// Swift-side filter `friendships_delete_own` does not make: without it an
+    /// unfriend would lift a block.
+    public func unfriend(_ friendID: UUID) async throws {
+        let me = try requireUser()
+        guard let index = friendships.firstIndex(where: {
+            (($0.requesterID == me && $0.addresseeID == friendID)
+                || ($0.requesterID == friendID && $0.addresseeID == me))
+                && $0.status == .accepted
         }) else { throw BackendError.notFound }
         friendships.remove(at: index)
     }

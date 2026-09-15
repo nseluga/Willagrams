@@ -238,3 +238,25 @@ extension SupabaseBackend: FriendRequestForgetting {
         }
     }
 }
+
+/// The real client's half. `friendships_delete_own` lets either end delete a
+/// row of any status, so `status = accepted` below is the only thing standing
+/// between an unfriend and a lifted block.
+extension SupabaseBackend: FriendForgetting {
+
+    public func unfriend(_ friendID: UUID) async throws {
+        guard let me = currentUserID else { throw BackendError.notAuthenticated }
+        let rows = try await mapping {
+            try await rest.from("friendships")
+                .delete(returning: .representation)
+                .or(Self.pairFilter(me, friendID))
+                .eq("status", value: FriendshipStatus.accepted.rawValue)
+                .execute()
+                .data
+        }
+        // Zero rows: no accepted friendship — gone already, pending, or blocked.
+        guard try !Self.friendships(fromRows: rows).isEmpty else {
+            throw BackendError.notFound
+        }
+    }
+}

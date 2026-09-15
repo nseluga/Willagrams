@@ -38,6 +38,9 @@ struct FriendsView: View {
     /// view the moment the keyboard covers it — see `addByCode`.
     @FocusState private var codeFieldFocused: Bool
 
+    /// The friend an Unfriend tap is asking about; non-nil shows the confirm.
+    @State private var unfriending: FriendEntry?
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             ScreenHeader(
@@ -97,6 +100,9 @@ struct FriendsView: View {
                         Button(FriendsModel.invitePlayLabel) { onInvite(entry) }
                             .buttonStyle(.brandPrimary)
 
+                        Button(FriendsModel.unfriendLabel) { unfriending = entry }
+                            .buttonStyle(.brandQuiet)
+
                         Button(FriendsModel.blockLabel) {
                             Task { await model.block(entry) }
                         }
@@ -139,6 +145,16 @@ struct FriendsView: View {
             .ignoresSafeArea()
         }
         .task { await model.load() }
+        .confirmationDialog(
+            FriendsModel.unfriendConfirmTitle(unfriending?.profile.displayName ?? ""),
+            isPresented: Binding(get: { unfriending != nil }, set: { if !$0 { unfriending = nil } }),
+            titleVisibility: .visible,
+            presenting: unfriending
+        ) { entry in
+            Button(FriendsModel.unfriendLabel, role: .destructive) {
+                Task { await model.unfriend(entry) }
+            }
+        }
     }
 
     /// Adding a friend by the code they gave you. One field and one button, plus
