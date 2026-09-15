@@ -36,6 +36,8 @@ let package = Package(
                 "OnlineSrc/FakeBackend.swift",
                 // `FakeBackend` conforms to it, so it has to be here even
                 // though the profile screen never declines anything.
+                // The unfriend seam; SDK-free, and `FakeBackend` conforms to it.
+                "OnlineSrc/FriendForgetting.swift",
                 "OnlineSrc/FriendRequestForgetting.swift",
                 "OnlineSrc/MatchOutcomeRecorder.swift",
                 "OnlineSrc/OnlineMatch.swift",

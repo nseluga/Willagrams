@@ -1,4 +1,8 @@
 import CoreGraphics
+// One module in the app; `BoardKit` in `Tests/ShellTests` (see `MatchBoard.swift`).
+#if canImport(BoardKit)
+import BoardKit
+#endif
 
 /// The pool bag's sizing decision, and the count's text formatting, pulled
 /// out of `MatchHUD` and `MatchHUDModel` so both are testable without a
@@ -26,6 +30,28 @@ public struct MatchHUDLayout: Equatable {
     public init(isCompact: Bool) {
         self.isCompact = isCompact
         bagSize = isCompact ? Self.compactBagSize : Self.regularBagSize
+    }
+
+    /// `MatchHUD`'s edge padding. Kept in sync by hand with
+    /// `DesignTokens.Space.m`, which this SwiftUI-free file cannot import —
+    /// the same arrangement as `MenuLayout`.
+    public static let edgePadding: CGFloat = 16
+
+    /// Height reserved for the Draw / Swap / Resign row along the bottom edge.
+    /// Matches `MenuLayout`'s compact / regular button heights.
+    public static let compactControlRowHeight: CGFloat = 44
+    public static let regularControlRowHeight: CGFloat = 52
+
+    /// The HUD's footprint over the board, so recenter frames tiles clear of
+    /// it. The control row always takes the bottom edge. The bag takes the
+    /// leading edge on a landscape phone, where height is what is short, and
+    /// the top edge otherwise, where width is.
+    public var boardInsets: BoardInsets {
+        let bag = Self.edgePadding + bagSize
+        let row = Self.edgePadding + (isCompact ? Self.compactControlRowHeight : Self.regularControlRowHeight)
+        return isCompact
+            ? BoardInsets(leading: bag, bottom: row)
+            : BoardInsets(top: bag, bottom: row)
     }
 
     /// The em dash standing in for a number that is not a game concept —

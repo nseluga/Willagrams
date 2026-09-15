@@ -34,3 +34,27 @@
 - **Outcome:** DONE — 1 attempt — caution: no — team: dt-engineer (opus, high) — auto/polish, commit 0a84844
 - **What happened:** BoardCamera.minCellSize 24→16; floor-hardcoded assertions updated (BoardGestureTests pinch-out, BoardDragGateTests zoom 0.5→0.25 and derived offsets). Mutation: reverting to 24 turns the pinch-out case red.
 - **Remember next run:** For a constant change, grep the symptom (`== minCellSize`, `cellSize ==` near zoom literals) too — a derived collision like `zoom: 0.5` reaching the old floor won't show in a literal grep.
+
+## 2026-09-14 23:55 — dev-team-auto — Unfriend (item 6)
+- **Outcome:** DONE — 1 attempt — caution: yes — team: dt-engineer opus/high, dt-qa opus/high, dt-review opus/high — auto/polish, 7efea2e
+- **What happened:** FriendForgetting side protocol (Supabase + Fake), accepted-only delete, FriendsModel.unfriend, FriendsView Unfriend button + confirm dialog. QA re-ran all three mutations plus the live case (ynkayuwwrifluhhqnrjc, passed); review 0/0/3 Minor.
+- **What worked:** Mutation-checking the status filter on both backends — live M2 red on the real project — proved the filter is the only thing protecting a block, since RLS allows deleting any status.
+- **Remember next run:** A new protocol FakeBackend conforms to must be listed in Tests/ShellTests and Tests/AccountTests Package.swift. Open Minors: reload on notFound in unfriend, live-test cleanup on a throw, `.lineLimit(1)` on row buttons (three buttons now on accepted rows).
+
+## 2026-09-14 — dev-team-auto — item 8 remove drag snap-back
+- **Outcome:** DONE — 2 attempts — caution: yes — team: dt-engineer opus/high→xhigh, dt-qa opus/high→xhigh, dt-review opus/high→xhigh — auto/polish-c8, 4e46e3a (merged into auto/polish)
+- **What happened:** Repro proved a lost onEnded (system edge gesture cancels the DragGesture; the next touch's began() dropped the held tile). Deleted the dead distance guard, added cancel-path landing via @GestureState, deferred edge gestures while input is live. Attempt 1 passed QA but review caught the leftover tile landing after the new touch's hit test; attempt 2 fixed it.
+- **What failed:** QA can't drive BoardView's gesture wiring; only review caught the guardrail break.
+- **Remember next run:** Removing the occupied check in BoardDrag alone fails no test (`Board.place` also refuses) — bypass both. `threshold` is now dead but threaded through ~100 test call sites. BoardSourceTests pins BoardView source; new modifiers naming `inputLocked` need an exact-line exemption. Merge with item 7 conflicted in BoardDragGateTests (resolved to zoom 0.25).
+
+## 2026-09-15 00:30 — dev-team-auto — Make recenter actually frame every tile (item 9)
+- **Outcome:** DONE — 1 attempt — caution: no — team: dt-engineer (opus, high) — auto/polish, 395cbce
+- **What happened:** `BoardInsets` plain struct threaded through `BoardLayout.framing` / `BoardCamera.recenter`; both recenter sites go through one `recentered(in:)`; `MatchHUDLayout.boardInsets` derives from the real bag/control tokens and is symlinked into BoardTests. Mutations (insets ignored, 16pt clamp removed, zoom-in cap removed) all red. Top-level re-run: Board 256, Shell 227.
+- **Open:** the recenter button's own footprint (top-right) is not in chromeInsets — a tile can sit under it.
+- **Remember next run:** ShellTests timing cases (countdown/deal waits) flake under concurrent agent load; compare against a clean-HEAD run before calling it a regression. BoardSourceTests' networking-word guard scans doc comments too.
+
+## 2026-09-15 00:26 — dev-team-auto — Item 10: no re-animation of panned-back tiles
+- **Outcome:** DONE — 1 attempt — caution: no — team: dt-ui (sonnet/high) + dt-qa (opus/high) — auto/polish, 645eaa9 — QA PASS
+- **What happened:** Pure `BoardRender.arrivalTransition(for:arriving:)` (`.fromBag`/`.none`); BoardSurface's transition gated on token-scoped `activeArriving`, so an arriving tile culled through its flight doesn't fly in later. Culling untouched. BoardTests 258; hand test done live in an iPad mini Simulator.
+- **Open (unfixed):** the swap put-back fly-to-bag animation is likely lost — `.transition` covers removal too and now resolves `.identity` for non-arriving ids. An `.asymmetric` always-on removal would NOT be safe: recenter animates the camera inside `withAnimation`, so culled tiles would fly to the bag on every recenter. A real fix needs a "departing" signal from the swap path.
+- **Remember next run:** Conditioning a tile `.transition` changes both insertion AND removal; check both directions.

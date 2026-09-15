@@ -268,6 +268,19 @@ public final class FriendsModel {
         }
     }
 
+    /// Forgets an accepted friendship. The backend deletes only an `accepted`
+    /// row, so a block can never be lifted from here. Failure leaves the list
+    /// as it was and says so; success re-reads, which drops the row.
+    public func unfriend(_ entry: FriendEntry) async {
+        let friendID = entry.profile.id
+        await perform(failure: Self.unfriendFailedMessage) { backend in
+            guard let forgetting = backend as? any FriendForgetting else {
+                throw BackendError.permissionDenied
+            }
+            try await forgetting.unfriend(friendID)
+        }
+    }
+
     private func respond(to entry: FriendEntry, accept: Bool, failure: String) async {
         await perform(failure: failure) {
             _ = try await $0.respondToFriendRequest(
@@ -431,6 +444,8 @@ public final class FriendsModel {
     public static let declineLabel = "Decline"
     public static let declineFootnote = "Declining clears the request. That player can send it again. Block to stop them."
     public static let blockLabel = "Block"
+    public static let unfriendLabel = "Unfriend"
+    public static func unfriendConfirmTitle(_ name: String) -> String { "Unfriend \(name)?" }
     /// Only ever drawn on an accepted row — the screen passes it to that one
     /// section, so a pending row cannot render it.
     public static let invitePlayLabel = "Invite to play"
@@ -441,6 +456,7 @@ public final class FriendsModel {
     public static let acceptFailedMessage = "Couldn't accept that request. Try again."
     public static let declineFailedMessage = "Couldn't decline that request. Try again."
     public static let blockFailedMessage = "Couldn't block that player. Try again."
+    public static let unfriendFailedMessage = "Couldn't unfriend that player. Try again."
     public static let addSectionTitle = "Add a friend"
     public static let codeFieldLabel = "Friend code"
     public static let codeFieldPrompt = "8 characters"

@@ -88,8 +88,9 @@ public enum BoardLayout {
 
     // MARK: - Framing
 
-    /// `camera` framing every tile on `board` with `margin` points of clear
-    /// viewport around the block.
+    /// `camera` framing every tile on `board` inside `rect` minus `insets` (the
+    /// chrome drawn over the board), with `margin` points of clear viewport
+    /// around the block. Never zooms in past the camera's default cell size.
     ///
     /// The framing itself is `BoardCamera.recenter` — this only hands it an
     /// inset rect, so there is no second implementation of fitting content to
@@ -98,9 +99,14 @@ public enum BoardLayout {
         _ board: Board,
         in rect: CGRect,
         camera: BoardCamera,
-        margin: CGFloat = openingMargin
+        margin: CGFloat = openingMargin,
+        insets: BoardInsets = .zero
     ) -> BoardCamera {
-        camera.recenter(over: board.placementList.map(\.coord), in: rect.insetBy(dx: margin, dy: margin))
+        camera.recenter(
+            over: board.placementList.map(\.coord),
+            in: insets.inset(rect).insetBy(dx: margin, dy: margin),
+            ceiling: camera.baseCellSize
+        )
     }
 
     // MARK: - The one free-cell search
@@ -155,5 +161,33 @@ public enum BoardLayout {
     /// Lattice columns wide enough to hold `count` tiles in `openingRows` rows.
     private static func openingWidth(for count: Int) -> Int {
         max(1, Int((Double(count) / Double(openingRows)).rounded(.up)))
+    }
+}
+
+/// Points of the viewport covered by chrome on each edge. SwiftUI-free
+/// stand-in for `EdgeInsets`, so framing stays host-testable.
+public struct BoardInsets: Equatable, Sendable {
+    public var top: CGFloat
+    public var leading: CGFloat
+    public var bottom: CGFloat
+    public var trailing: CGFloat
+
+    public init(top: CGFloat = 0, leading: CGFloat = 0, bottom: CGFloat = 0, trailing: CGFloat = 0) {
+        self.top = top
+        self.leading = leading
+        self.bottom = bottom
+        self.trailing = trailing
+    }
+
+    public static let zero = BoardInsets()
+
+    /// `rect` with these edges taken off (left-to-right layout).
+    public func inset(_ rect: CGRect) -> CGRect {
+        CGRect(
+            x: rect.minX + leading,
+            y: rect.minY + top,
+            width: rect.width - leading - trailing,
+            height: rect.height - top - bottom
+        )
     }
 }

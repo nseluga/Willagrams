@@ -427,6 +427,22 @@ public struct BoardModel: Sendable {
         return next
     }
 
+    /// A drag whose release never arrived — the system took the touch, so
+    /// `DragGesture.onEnded` did not fire. It lands at its last reported
+    /// translation under the same rules as a release (occupied → origin),
+    /// rather than being silently dropped by the next touch's `began`, which
+    /// is what snapped a fast drag's tile back home. No hold → `board` as is.
+    public mutating func interrupted(
+        on board: Board,
+        camera: BoardCamera,
+        against dictionary: some WordList
+    ) -> Board {
+        // `threshold` is ignored — there is no reach limit. 0 on purpose: if a
+        // reach guard is ever restored it refuses here, and the interrupted
+        // tests go red instead of the lost-release snap-back silently returning.
+        commit(translation: dragTranslation, on: board, camera: camera, threshold: 0, against: dictionary)
+    }
+
     /// The ONE place published validation is written, and the only call to the
     /// frozen checker in this lane. Everything here is read back out of
     /// `BoardValidation` — no cluster, run or completeness rule is restated.

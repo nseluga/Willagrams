@@ -97,6 +97,53 @@ final class BoardLayoutTests: XCTestCase {
         }
     }
 
+    // MARK: - Recenter under the HUD
+
+    /// iPhone 13 mini, landscape, with the HUD footprint `MatchView` passes.
+    private let mini = CGRect(x: 0, y: 0, width: 812, height: 375)
+    private var miniHUD: BoardInsets { MatchHUDLayout(isCompact: true).boardInsets }
+
+    /// Tiles at every cell of a `cols` x `rows` block from the origin.
+    private func spread(cols: Int, rows: Int) throws -> Board {
+        var board = Board()
+        for r in 0..<rows { for c in 0..<cols { try board.place(Tile(letter: "A"), at: Coord(row: r, col: c)) } }
+        return board
+    }
+
+    func testFramingKeepsATwentyByTwelveSpreadClearOfTheHUD() throws {
+        let board = try spread(cols: 20, rows: 12)
+        let camera = BoardLayout.framing(board, in: mini, camera: BoardCamera(), insets: miniHUD)
+        let clear = miniHUD.inset(mini)
+        let size = camera.cellSize
+        for placement in board.placementList {
+            let p = camera.point(for: placement.coord)
+            let cell = CGRect(x: p.x, y: p.y, width: size, height: size)
+            XCTAssertTrue(clear.contains(cell), "\(placement.coord) at \(cell) is under the HUD, outside \(clear)")
+        }
+    }
+
+    func testFramingASpreadTooWideForTheFloorClampsAndCenters() throws {
+        let board = try spread(cols: 80, rows: 3)
+        let camera = BoardLayout.framing(board, in: mini, camera: BoardCamera(), insets: miniHUD)
+        XCTAssertEqual(camera.cellSize, BoardCamera.minCellSize, accuracy: 1e-9)
+        XCTAssertEqual(camera.cellSize, 16, accuracy: 1e-9)
+
+        let size = camera.cellSize
+        let first = camera.point(for: Coord(row: 0, col: 0))
+        let last = camera.point(for: Coord(row: 2, col: 79))
+        let clear = miniHUD.inset(mini)
+        XCTAssertEqual((first.x + last.x + size) / 2, clear.midX, accuracy: 1e-6, "not horizontally centered")
+        XCTAssertEqual((first.y + last.y + size) / 2, clear.midY, accuracy: 1e-6, "not vertically centered")
+    }
+
+    func testFramingASmallBoardNeverZoomsInPastTheDefaultCellSize() throws {
+        let board = try spread(cols: 1, rows: 1)
+        for rect in [iPad, iPhone, mini] {
+            let camera = BoardLayout.framing(board, in: rect, camera: BoardCamera(), insets: miniHUD)
+            XCTAssertLessThanOrEqual(camera.cellSize, BoardCamera().baseCellSize, "\(rect) zoomed in past default")
+        }
+    }
+
     // MARK: - Draw landing
 
     /// Delivered tiles are visible without moving the camera.

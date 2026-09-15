@@ -146,6 +146,61 @@ struct FriendsModelTests {
         #expect(model.outgoing.map(\.profile.id) == [f.asked.id])
     }
 
+    // MARK: - Unfriend
+
+    @Test("Unfriending an accepted friend deletes the row and drops them from the list")
+    func unfriendingRemovesTheRow() async throws {
+        let f = try await FriendsFixture.make()
+        let model = await Self.loaded(f)
+
+        let friend = try #require(model.accepted.first { $0.profile.id == f.friend.id })
+        await model.unfriend(friend)
+
+        #expect(model.message == nil)
+        #expect(!model.accepted.contains { $0.profile.id == f.friend.id })
+        _ = try await f.backend.signIn("me")
+        let rows = try await f.backend.friendships()
+        #expect(!rows.contains { $0.other(than: f.me.id) == f.friend.id }, "unfriend left the row behind")
+        // Positive twin: the other rows survived, so the check above is not an empty scan.
+        #expect(rows.contains { $0.other(than: f.me.id) == f.asker.id })
+    }
+
+    /// The accepted-only filter is the one thing protecting a block, because
+    /// `friendships_delete_own` allows deleting any status. Both ends try.
+    @Test("Unfriending a blocked pair, from either end, leaves the block in place")
+    func unfriendingNeverLiftsABlock() async throws {
+        let f = try await FriendsFixture.make()
+
+        _ = try await f.backend.signIn("me")
+        await #expect(throws: BackendError.notFound) { try await f.backend.unfriend(f.blockedThem.id) }
+        await #expect(throws: BackendError.notFound) { try await f.backend.unfriend(f.blockedByMe.id) }
+        _ = try await f.backend.signIn("blocked-them")
+        await #expect(throws: BackendError.notFound) { try await f.backend.unfriend(f.me.id) }
+        // And a pending request is not a friendship either.
+        _ = try await f.backend.signIn("me")
+        await #expect(throws: BackendError.notFound) { try await f.backend.unfriend(f.asker.id) }
+
+        let rows = try await f.backend.friendships()
+        let blocked = Set(rows.filter { $0.status == .blocked }.compactMap { $0.other(than: f.me.id) })
+        #expect(blocked == [f.blockedThem.id, f.blockedByMe.id])
+        #expect(rows.contains { $0.other(than: f.me.id) == f.asker.id && $0.status == .pending })
+    }
+
+    @Test("A failed unfriend keeps the friend listed and says so")
+    func unfriendingFailureKeepsTheFriend() async throws {
+        let f = try await FriendsFixture.make()
+        let model = await Self.loaded(f)
+
+        let friend = try #require(model.accepted.first { $0.profile.id == f.friend.id })
+        // Delete it out from under the model, so the model's own call throws.
+        _ = try await f.backend.signIn("me")
+        try await f.backend.unfriend(f.friend.id)
+
+        await model.unfriend(friend)
+        #expect(model.message == FriendsModel.unfriendFailedMessage)
+        #expect(model.accepted.contains { $0.profile.id == f.friend.id })
+    }
+
     // MARK: - done when: blocked players are hidden everywhere
 
     @Test("A blocked player appears in no section, whichever end blocked")

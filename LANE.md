@@ -130,7 +130,7 @@ Frozen contracts — build and test against these; they will not move:
     - `xcodebuild` BUILD SUCCEEDED; the confirm dialog is named as Nate's hand test
   caution: true
   ui: true
-  status: not started
+  status: done — QA PASS, live test passed, 3 mutation checks red
 
 - task: Let the board zoom further out. In `Willagrams/Board/BoardCamera.swift`, `minCellSize` goes from 24 to 16 (~line 17), and every clamp that reads it follows. This is also what lets recenter fit a large board (item 9).
   guardrails:
@@ -158,7 +158,7 @@ Frozen contracts — build and test against these; they will not move:
   caution: true
   ui: true
   parallel-group: c
-  status: not started
+  status: done — QA PASS after 2 attempts, 3 mutation checks red
 
 - task: Make recenter actually frame every tile. `BoardView` gains `chromeInsets: EdgeInsets` (the HUD's footprint). `Willagrams/Shell/MatchView.swift` passes the HUD's real insets, and solo and online both go through it. Recenter frames the occupied bounds inside the view rect *minus* those insets, through `BoardLayout.framing`. Wire it at both recenter call sites: the recenter control (~BoardView line 412) and the `.task(id: board)` initial framing (~line 239). With item 7's floor, a board too big to fit at 16pt clamps to 16 and centers on the occupied bounds.
   guardrails:
@@ -168,7 +168,7 @@ Frozen contracts — build and test against these; they will not move:
     - A BoardTests case: `BoardLayout.framing` for a 20-column by 12-row spread, in an 812×375 view with the iPhone HUD insets, returns a camera where every occupied cell's rect lies inside the inset rect
     - A BoardTests case: a spread wider than 16pt cells can fit comes back at cell size 16, centered on the occupied bounds' midpoint
     - `xcodebuild` BUILD SUCCEEDED
-  status: not started
+  status: done — self-verified, 3 mutation checks red; recenter button's own footprint not in insets
 
 - task: Stop tiles already on the board from re-animating when panned back into view. `BoardSurface` culls to `visibleCoords`, so a pan changes the rendered id set, and the `FromBag` insertion transition (BoardView ~lines 561–578) fires on tiles that were always there. Apply `FromBag` only to ids in `arriving` (tiles that are actually new), and key the animation on `arrivalToken`, not the visible set. Pull the transition choice into a plain function BoardTests can call.
   guardrails:
@@ -178,7 +178,7 @@ Frozen contracts — build and test against these; they will not move:
     - A BoardTests case: the transition function returns the bag transition for an id in `arriving` and the identity/none transition for an id that only entered `visibleCoords`. It fails if the `arriving` check is removed (mutation-checked)
     - `xcodebuild` BUILD SUCCEEDED; "pan a tile off screen and back — it does not fly in" is named as Nate's hand test
   ui: true
-  status: not started
+  status: done — QA PASS, mutation check red; open: swap put-back fly-to-bag likely lost
 
 - task: Land drawn tiles next to the player's connected board. Two causes, both fixed here. First, `MatchBoard.camera` (`Willagrams/Shell/MatchBoard.swift` ~line 96) is never updated from BoardView's live camera, so delivery places tiles for a stale viewport; wire BoardView's `onCameraSettled` to set it. Second, `BoardLayout.delivered` (~lines 51–87) anchors at the viewport's left edge under the Draw buttons. Make it anchor on the empty cells nearest the largest connected cluster (directly below it first, then beside it), clamped inside the inset view rect from item 9 when the cluster is on screen.
   guardrails:

@@ -40,6 +40,8 @@ let package = Package(
                 "OnlineSrc/FakeBackend.swift",
                 // The decline seam. SDK-free for the same reason the two above
                 // are, and `FakeBackend` conforms to it.
+                // The unfriend seam; SDK-free, and `FakeBackend` conforms to it.
+                "OnlineSrc/FriendForgetting.swift",
                 "OnlineSrc/FriendRequestForgetting.swift",
                 // The invite seam and its in-memory bus. SDK-free on purpose —
                 // `SupabaseMatchInviteChannel.swift` beside it imports Realtime

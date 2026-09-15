@@ -50,6 +50,14 @@ struct MatchView: View {
 
     let dictionary: any WordList
 
+    /// The same switch `MatchHUD` reads for its bag size.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var hudInsets: EdgeInsets {
+        let insets = MatchHUDLayout(isCompact: verticalSizeClass == .compact).boardInsets
+        return EdgeInsets(top: insets.top, leading: insets.leading, bottom: insets.bottom, trailing: insets.trailing)
+    }
+
     var body: some View {
         GeometryReader { proxy in
             BoardView(
@@ -70,7 +78,11 @@ struct MatchView: View {
                 // The delivery, handed straight through: which tiles just came
                 // out of the bag, and a token that changes each time some did.
                 arriving: matchBoard.arrivingTileIDs,
-                arrivalToken: matchBoard.arrivalToken
+                arrivalToken: matchBoard.arrivalToken,
+                // The HUD's footprint, from the same layout `MatchHUD` sizes
+                // itself with, so recenter frames tiles clear of the bag and
+                // the control row. Solo and online both render through here.
+                chromeInsets: hudInsets
             )
             .overlay { MatchHUD(hud: hud) }
             .overlay {

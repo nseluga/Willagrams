@@ -347,4 +347,52 @@ final class BoardRenderTests: XCTestCase {
             XCTAssertEqual(camera.coord(at: CGPoint(x: entry.point.x + size / 2, y: entry.point.y + size / 2)), entry.coord)
         }
     }
+
+    // MARK: - Arrival transition: only an id actually arriving flies in
+
+    /// A pan changes which coords `cells(board:camera:in:)` returns, so a tile
+    /// already on the board can be re-inserted into `BoardView`'s ForEach just
+    /// by scrolling back into view. That must not replay the bag flight — only
+    /// an id the caller names as `arriving` gets it, whether or not it also
+    /// happens to be newly visible.
+    func testArrivalTransitionIsFromBagOnlyForArrivingIDs() {
+        let arriving = UUID()
+        let onlyNewlyVisible = UUID()
+
+        XCTAssertEqual(
+            BoardRender.arrivalTransition(for: arriving, arriving: [arriving]),
+            .fromBag,
+            "an id in arriving must fly in from the bag"
+        )
+        XCTAssertEqual(
+            BoardRender.arrivalTransition(for: onlyNewlyVisible, arriving: [arriving]),
+            .none,
+            "a tile that merely scrolled back into view, and is not in arriving, must not fly in"
+        )
+    }
+
+    /// Real culling, not a bare id: two tiles start culled and a pan brings
+    /// both into view. The arriving one still flies (arriving beats
+    /// visibility); the old one does not; once the arrival has expired
+    /// (caller passes an empty set) neither does.
+    func testPanIntoViewArrivingStillFliesOldTileAndExpiredArrivalDoNot() {
+        var board = Board()
+        let arrivingTile = Tile(letter: "N")
+        let oldTile = Tile(letter: "O")
+        try? board.place(arrivingTile, at: Coord(row: 0, col: 20))
+        try? board.place(oldTile, at: Coord(row: 1, col: 20))
+        let rect = Self.viewport
+
+        let before = Set(BoardRender.cells(board: board, camera: Self.camera(framing: 0, 0), in: rect).compactMap { $0.tile?.id })
+        let after = Set(BoardRender.cells(board: board, camera: Self.camera(framing: 0, 10), in: rect).compactMap { $0.tile?.id })
+        let newlyVisible = after.subtracting(before)
+        XCTAssertEqual(newlyVisible, [arrivingTile.id, oldTile.id], "fixture: both tiles must be culled first, then panned into view")
+
+        XCTAssertEqual(BoardRender.arrivalTransition(for: arrivingTile.id, arriving: [arrivingTile.id]), .fromBag,
+                       "an arriving tile that is also newly visible must still fly in")
+        XCTAssertEqual(BoardRender.arrivalTransition(for: oldTile.id, arriving: [arrivingTile.id]), .none,
+                       "an old tile panned into view must not fly in")
+        XCTAssertEqual(BoardRender.arrivalTransition(for: arrivingTile.id, arriving: []), .none,
+                       "an expired arrival panned into view later must not fly in")
+    }
 }

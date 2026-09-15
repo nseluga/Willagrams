@@ -55,65 +55,12 @@ final class BoardDragGateTests: XCTestCase {
         try XCTUnwrap(TileDrag(origins: origins, anchor: anchor, haptics: haptics))
     }
 
-    // MARK: - Criterion 2 — the threshold boundary, at more than one cell size
+    // MARK: - Criterion 2 — the drop at the cell-size floor
 
-    func testJustInsideAndJustOutsideTheThresholdAtASecondCellSize() throws {
-        // 72pt cells: centres are 72 apart, so the numbers that straddle a 22pt
-        // reach are different ones from the 48pt case. A drop measured against
-        // a cell size baked in anywhere would only be right at one of the two.
-        let tile = Tile(letter: "A")
-        let home = Coord(row: 0, col: 0)
-        let board = Self.board([(home, tile)])
-        let target = Coord(row: 0, col: 1)
-        XCTAssertEqual(Self.wide.cellSize, 72, "fixture no longer exercises a second cell size")
-
-        // Anchor centre starts at 36; +51 puts it at 87, which is 21 short of
-        // the next centre at 108.
-        let landed = try drag([home], anchor: home).drop(
-            translation: CGSize(width: 51, height: 0),
-            on: board, camera: Self.wide, threshold: Self.threshold
-        )
-        XCTAssertEqual(landed.tile(at: target)?.id, tile.id, "21pt is inside a 22pt reach at 72pt cells")
-
-        // +49 leaves it 23 short.
-        let refused = try drag([home], anchor: home).drop(
-            translation: CGSize(width: 49, height: 0),
-            on: board, camera: Self.wide, threshold: Self.threshold
-        )
-        XCTAssertEqual(refused, board, "23pt is outside a 22pt reach at 72pt cells")
-    }
-
-    func testAReachExactlyEqualToTheThresholdLands() throws {
-        // The boundary itself, which neither "just inside" nor "just outside"
-        // touches. 48pt cells, anchor centre 24 + 26 = 50, next centre 72,
-        // reach exactly 22.
-        let tile = Tile(letter: "A")
-        let home = Coord(row: 0, col: 0)
-        let board = Self.board([(home, tile)])
-        let translation = CGSize(width: 26, height: 0)
-
-        let onTheLine = try drag([home], anchor: home).drop(
-            translation: translation, on: board, camera: Self.camera, threshold: 22
-        )
-        XCTAssertEqual(onTheLine.tile(at: Coord(row: 0, col: 1))?.id, tile.id, "reach == threshold must land")
-
-        // Teeth: the same translation against a hair-tighter reach must refuse,
-        // or the assertion above is being carried by something other than the
-        // threshold comparison.
-        let justUnder = try drag([home], anchor: home).drop(
-            translation: translation, on: board, camera: Self.camera, threshold: 21.9
-        )
-        XCTAssertEqual(justUnder, board)
-    }
-
-    func testAtTheCellSizeFloorTheThresholdCanNeverRefuseADistantDrop() throws {
-        // Not a defect — the consequence of a threshold measured in POINTS
-        // against cells that shrink. At the 16pt floor the furthest a release
-        // can be from the centre of the cell it lands in is hypot(8, 8) ≈ 11pt,
-        // which is inside a 22pt reach from every corner of every cell. So at
-        // maximum zoom-out only an OCCUPIED destination refuses, never distance.
-        // Pinned so the next person to touch the threshold sees it deliberately
-        // rather than discovering it.
+    func testAtTheCellSizeFloorACornerReleaseLandsAndOnlyAnOccupiedCellRefuses() throws {
+        // There is no reach limit (the `threshold` parameter is ignored): at the
+        // 16pt floor a release at a cell's far corner still lands, and only an
+        // OCCUPIED destination refuses.
         let floored = BoardCamera(pan: .zero, zoom: 0.25, baseCellSize: 48)
         XCTAssertEqual(floored.cellSize, BoardCamera.minCellSize)
 
@@ -162,7 +109,8 @@ final class BoardDragGateTests: XCTestCase {
             translation: CGSize(width: 4800, height: 0),
             on: board, camera: clamped, threshold: Self.threshold
         )
-        XCTAssertEqual(byRawZoom, board, "the drop measured against the unclamped zoom")
+        // Centre 36 + 4800 = 4836, / 72 = col 67; an unclamped cell says col 1.
+        XCTAssertEqual(byRawZoom.tile(at: Coord(row: 0, col: 67))?.id, tile.id, "the drop measured against the unclamped zoom")
     }
 
     // MARK: - Criterion 2 — the unbounded lattice, across the zero line
@@ -260,11 +208,9 @@ final class BoardDragGateTests: XCTestCase {
 
         let refusals: [(name: String, translation: CGSize, threshold: CGFloat)] = [
             ("onto an occupied cell", CGSize(width: 48, height: 0), Self.threshold),
-            ("halfway between two centres", CGSize(width: 0, height: 24), Self.threshold),
             ("a non-finite translation", CGSize(width: CGFloat.nan, height: 0), Self.threshold),
             ("an unindexable translation", CGSize(width: 1e300, height: 1e300), Self.threshold),
-            ("a generous reach onto the fallback", CGSize(width: 1e300, height: 0), .greatestFiniteMagnitude),
-            ("a non-finite reach", CGSize(width: 48, height: 0), .nan),
+            ("a non-indexable column onto the fallback",CGSize(width: 1e300, height: 0), .greatestFiniteMagnitude),
         ]
 
         for refusal in refusals {
