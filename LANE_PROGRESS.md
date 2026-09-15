@@ -4,8 +4,8 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 ## Current position
 
-- **Status:** round 2 run 1 (2026-09-15, one-hour budget) — items 1 and 2 done and merged; item 3 blocked, built but unmerged on `auto/final-a3` @ `2e9262f`; items 4–10 not started
-- **Next:** Nate revises item 3's screenshot criterion (see its `status:`), then `/dev-team-auto` from item 3 — merge `auto/final-a3` only with or after item 5 (Home rebuilt), or the portrait iPhone Home is cut off
+- **Status:** round 2 run 2 (2026-09-15) — items 1, 2 and 4 done and merged; item 3 blocked, built and gate-closed but unmerged on `auto/final-a3` @ `4533ac0`; items 9 and 10 in flight; items 5–8 not started
+- **Next:** Nate revises item 3's screenshot criterion (see its `status:`), then continue — merge `auto/final-a3` only with or after item 5 (Home rebuilt), or the portrait iPhone Home is cut off
 - **Blockers:** item 3's iPad check needs a human-rotated Simulator or a revised criterion. Migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here
 - **Last updated:** 2026-09-15
 
