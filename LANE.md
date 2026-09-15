@@ -72,7 +72,7 @@ Frozen contracts — build and test against these; they will not move:
     - `xcodebuild` BUILD SUCCEEDED, and an iPhone SE (3rd gen) or 13 mini landscape Simulator screenshot at launch shows every Menu action with no scroll indicator. The screenshot is attached to the run summary
     - Existing passing tests remain passing
   ui: true
-  status: not started
+  status: done — the iPad wordmark cap of ~88pt was lifted on screenshot review ("bigger home image on iPad"); the test now asserts > 88
 
 - task: Apply the sizing mechanism to the remaining fixed-size screens. In `Willagrams/Shell/HostLobbyView.swift`, the invite-code font (44pt fixed, ~line 66) and the button `minHeight: 36` (~lines 106/112) scale down at compact height. In `ResultsView.swift`, the card padding (~line 78) becomes compact-aware. `CountdownView.swift` and `SoloSetupView.swift` adopt `.screenPadding()` in place of their fixed screen margins. Each screen's compact-vs-regular numbers come from item 1's mechanism, with no new per-screen constants where a token fits.
   guardrails:
@@ -84,7 +84,7 @@ Frozen contracts — build and test against these; they will not move:
     - `xcodebuild` BUILD SUCCEEDED; the run summary names HostLobby/Results/Countdown/SoloSetup at iPhone landscape as Nate's hand test
   ui: true
   parallel-group: b
-  status: not started
+  status: done — self-verified (tests, build, diff review); dt-qa not run, its behavioral half is Nate's hand test
 
 - task: Make the HUD bag legible on a phone. In `Willagrams/Shell/MatchHUD.swift` the bag is `bagSize` 96 (~line 118) at every size. At compact height use ~72, and render the count with `.monospacedDigit()` and a `.minimumScaleFactor` so three digits never truncate or wrap. The size choice lives in a testable value, not an inline literal.
   guardrails:
@@ -95,7 +95,7 @@ Frozen contracts — build and test against these; they will not move:
     - `xcodebuild` BUILD SUCCEEDED
   ui: true
   parallel-group: b
-  status: not started
+  status: done — self-verified (tests, build, diff review); dt-qa not run, its behavioral half is Nate's hand test
 
 - task: Keep the field being typed in visible above the keyboard on every typing screen: `Willagrams/Account/ProfileView.swift` (display name), `Willagrams/Friends/FriendsView.swift` (add by friend code), and `Willagrams/Shell/JoinView.swift` (invite code). Each field gets a `@FocusState`; its scroll content is wrapped in `ScrollViewReader`, and on focus it calls `scrollTo(fieldID, anchor: .center)`; each scroll view gets `.scrollDismissesKeyboard(.interactively)`. On JoinView the Join button moves beside the field, so the action stays on screen while the keyboard is up. Tighter margins from item 1 are part of the fix: the hand test found the field hidden behind huge margins plus the keyboard.
   guardrails:
