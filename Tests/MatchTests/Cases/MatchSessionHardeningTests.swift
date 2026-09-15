@@ -247,6 +247,10 @@ struct MatchSessionHardeningTests {
         #expect(host.draw())
 
         await wire.releaseOne()
+        // The pool count follows the peer's grant on the same send path, and
+        // the host applies its half only once both have gone.
+        try await Self.waitUntil("the peer's pool count to park mid-send") { await wire.parkedCount == 1 }
+        await wire.releaseOne()
         // The peer's answer is applied by the time this device's own round has
         // reached its send — the chain runs one submission at a time.
         try await Self.waitUntil("this device's own round to park mid-send") { await wire.parkedCount == 1 }

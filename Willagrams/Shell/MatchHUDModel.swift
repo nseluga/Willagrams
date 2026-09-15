@@ -112,8 +112,8 @@ public final class MatchHUDModel {
     /// How many tiles are left to take, or `nil` when the session cannot say.
     ///
     /// Straight from `MatchSession.poolRemaining`, which reads the host's real
-    /// pool back after every movement of it. `nil` on a device that runs no
-    /// pool — a guest cannot know this number.
+    /// pool back after every movement of it — on a guest, from the host's
+    /// `.poolCount` broadcast. `nil` until a count is known.
     ///
     /// Nothing is counted here on purpose: a shell-side ledger of grants is a
     /// second source of truth that can silently disagree with the pool it
@@ -307,9 +307,11 @@ public final class MatchHUDModel {
     ///
     /// A swap takes ``Pool/swapSize`` and gives one back, and the host refuses
     /// it as a unit — so below that the control cannot work, however many tiles
-    /// are left. `nil` is a guest, which cannot see the count and must not
-    /// guess one: it keeps the old, weaker test and learns the truth from the
-    /// host's refusal.
+    /// are left. `nil` is a count not yet known, which must not be guessed: it
+    /// keeps the old, weaker test and learns the truth from the host's refusal.
+    /// A guest's received count is never below the pool's real one (it keeps
+    /// the minimum of what the host sent), so it can only enable a press the
+    /// host then refuses, never hide one that would work.
     public var poolCanServeASwap: Bool {
         guard let remaining = session.poolRemaining else { return !session.poolIsExhausted }
         return remaining >= Pool.swapSize

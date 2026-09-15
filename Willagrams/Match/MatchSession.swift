@@ -184,20 +184,21 @@ public final class MatchSession {
     // Before adding observed state here, re-run `swift test --package-path
     // Tests/MatchTests`. A green engine suite does not cover this.
 
-    /// The last count read back from ``HostPool/pool``, or `nil` on a device
-    /// that runs no pool. `@ObservationIgnored` for the reason above; observers
+    /// The last count read back from ``HostPool/pool`` or received as
+    /// `.poolCount`, or `nil` before either. `@ObservationIgnored` for the reason above; observers
     /// are driven through ``poolRemaining`` and ``setPoolRemaining(_:)``, which
     /// register and fire on that computed key path directly rather than
     /// borrowing another property's code path.
     @ObservationIgnored private var storedPoolRemaining: Int?
 
-    /// How many tiles the host's pool still holds, or `nil` on a device that
-    /// does not run one — a guest cannot know this number, and no guess is made
-    /// for it.
+    /// How many tiles the host's pool still holds, or `nil` until the number is
+    /// known.
     ///
-    /// Never a tally of grants: the value is read back from ``HostPool/pool``
-    /// itself after every movement of it, so it cannot drift from the pool it
-    /// describes.
+    /// Never a tally of grants. On the pool's device it is read back from
+    /// ``HostPool/pool`` itself after every movement of it. A guest knows it
+    /// too: the host broadcasts `.poolCount` after the deal, every round and
+    /// every swap, and the guest keeps the smallest count it has received —
+    /// `nil` only before the first one lands.
     public var poolRemaining: Int? {
         access(keyPath: \.poolRemaining)
         return storedPoolRemaining
@@ -944,10 +945,14 @@ public final class MatchSession {
                 answeredADraw: reason != .notEnoughTilesToSwap && reason != .swapDisabled
             )
 
-        case .poolCount:
-            // Wire v4 carries it; nothing sends or shows it until the polish
-            // lane wires the guest's bag.
-            break
+        case let .poolCount(remaining):
+            // Informational: the HUD's bag, nothing more. Exhaustion is still
+            // `poolExhausted`'s to latch. A device running the pool trusts only
+            // the pool; a count out of range came from a modified peer; and the
+            // pool never grows, so a larger count is a reordered, stale one.
+            guard hostPool == nil,
+                  (0...MatchLimits.poolSize).contains(remaining) else { break }
+            setPoolRemaining(min(storedPoolRemaining ?? remaining, remaining))
         }
     }
 

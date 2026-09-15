@@ -198,8 +198,11 @@ struct HostPoolStressTests {
             let mine = try #require(granted.first { $0.player == localID }?.tiles, "the pool holder was not granted a tile")
             let theirs = try #require(granted.first { $0.player == peerID }?.tiles, "the peer was not granted a tile")
 
-            // Half one, on the wire: the peer's grant and nothing else.
-            #expect(received == [.grant(player: peerID, tiles: theirs)], "the wire carried \(received)")
+            // Half one, on the wire: the peer's grant and the count, nothing else.
+            #expect(
+                received == [.grant(player: peerID, tiles: theirs), .poolCount(remaining: 4)],
+                "the wire carried \(received)"
+            )
 
             // Half two, in the return value: the host's grant moved real tiles
             // out of the one pool rather than naming tiles it still holds.
