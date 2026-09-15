@@ -168,10 +168,15 @@ public struct BoardView: View {
                 .gesture(dragGesture)
                 // A cancelled DragGesture skips `onEnded` but always resets
                 // its GestureState — the one signal the drag was interrupted.
-                .onChange(of: touching) { _, now in if !now { landInterrupted() } }
+                // `drag` is cleared too, or a later touch with the identical
+                // start point would carry the stale grab and never `began`.
+                .onChange(of: touching) { _, now in
+                    if !now { landInterrupted(); drag = nil }
+                }
                 // Edge swipes (home indicator, Control Center) need a second
-                // swipe over the board, so they stop stealing tile drags.
-                .defersSystemGestures(on: .all)
+                // swipe over the board, so they stop stealing tile drags —
+                // only while input is live, so locked boards leave them alone.
+                .defersSystemGestures(on: inputLocked ? [] : .all)
                 // The pinch is a UIKit recognizer, not a SwiftUI gesture:
                 // `MagnifyGesture` freezes its midpoint at the instant the
                 // second finger lands, so a pinch could only ever zoom about
@@ -334,6 +339,11 @@ public struct BoardView: View {
                 // subtracts, so a mid-gesture rebuild can discount the travel
                 // already spent.
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
+                // A previous hold still here means its release was lost; land it
+                // BEFORE the new touch is hit-tested, so the grab is decided
+                // against the tile where it is drawn — not where `began` would
+                // have snapped it back to.
+                if carried == nil { landInterrupted() }
                 let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, selection: model.selection,
                     camera: camera, inputLocked: model.inputLocked,
@@ -344,9 +354,6 @@ public struct BoardView: View {
                     offsets: model.tileOffsets
                 )
                 if carried == nil {
-                    // A previous hold still here means its release was lost;
-                    // land it before `began` would discard it (the snap-back).
-                    landInterrupted()
                     model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics)
                 }
                 drag = inFlight
@@ -362,6 +369,9 @@ public struct BoardView: View {
             }
             .onEnded { value in
                 if !model.dragging.isEmpty {
+                    // Record the final translation first, so a release and a
+                    // lost release (`landInterrupted`) read the same number.
+                    model.moved(to: value.translation)
                     // The whole commit is one assignment of one value type:
                     // `commit` hands back either the moved board or the one it
                     // was given, so a refused drop cannot leave a partial move
@@ -373,7 +383,7 @@ public struct BoardView: View {
                     // would jump while the board's half slid.
                     withAnimation(DesignTokens.Motion.snap) {
                         board = model.commit(
-                            translation: value.translation,
+                            translation: model.dragTranslation,
                             on: board,
                             camera: camera,
                             threshold: DesignTokens.Motion.snapThreshold,

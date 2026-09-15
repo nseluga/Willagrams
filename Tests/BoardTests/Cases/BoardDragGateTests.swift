@@ -55,16 +55,12 @@ final class BoardDragGateTests: XCTestCase {
         try XCTUnwrap(TileDrag(origins: origins, anchor: anchor, haptics: haptics))
     }
 
-    // MARK: - Criterion 2 — the threshold boundary, at more than one cell size
+    // MARK: - Criterion 2 — the drop at the cell-size floor
 
-    func testAtTheCellSizeFloorTheThresholdCanNeverRefuseADistantDrop() throws {
-        // Not a defect — the consequence of a threshold measured in POINTS
-        // against cells that shrink. At the 24pt floor the furthest a release
-        // can be from the centre of the cell it lands in is hypot(12, 12) ≈ 17pt,
-        // which is inside a 22pt reach from every corner of every cell. So at
-        // maximum zoom-out only an OCCUPIED destination refuses, never distance.
-        // Pinned so the next person to touch the threshold sees it deliberately
-        // rather than discovering it.
+    func testAtTheCellSizeFloorACornerReleaseLandsAndOnlyAnOccupiedCellRefuses() throws {
+        // There is no reach limit (the `threshold` parameter is ignored): at the
+        // 24pt floor a release at a cell's far corner still lands, and only an
+        // OCCUPIED destination refuses.
         let floored = BoardCamera(pan: .zero, zoom: 0.5, baseCellSize: 48)
         XCTAssertEqual(floored.cellSize, BoardCamera.minCellSize)
 
@@ -214,7 +210,7 @@ final class BoardDragGateTests: XCTestCase {
             ("onto an occupied cell", CGSize(width: 48, height: 0), Self.threshold),
             ("a non-finite translation", CGSize(width: CGFloat.nan, height: 0), Self.threshold),
             ("an unindexable translation", CGSize(width: 1e300, height: 1e300), Self.threshold),
-            ("a generous reach onto the fallback", CGSize(width: 1e300, height: 0), .greatestFiniteMagnitude),
+            ("a non-indexable column onto the fallback",CGSize(width: 1e300, height: 0), .greatestFiniteMagnitude),
         ]
 
         for refusal in refusals {

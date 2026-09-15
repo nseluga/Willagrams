@@ -545,8 +545,12 @@ final class BoardSourceTests: XCTestCase {
         }
 
         // The body names the lock exactly once, and that once is the sync into
-        // the session. A second mention is a second decision.
-        let named = body.split(separator: "\n").filter { $0.contains("Locked") }
+        // the session. A second mention is a second decision. The one exemption
+        // is deferring edge swipes: it touches no input on the board, so it
+        // cannot stop the camera, and it must not defer them on a locked board.
+        let named = body.split(separator: "\n").filter {
+            $0.contains("Locked") && !$0.contains(".defersSystemGestures(on: inputLocked ? [] : .all)")
+        }
         XCTAssertEqual(named.count, 1, "BoardView's body reads the lock outside the sync: \(named)")
         XCTAssertTrue(
             named.first?.contains(".onChange(of: inputLocked, initial: true)") == true,

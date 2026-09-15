@@ -1,38 +1,35 @@
 # Engineer Report
-**Task:** LANE item 8: remove drag snap-back (a tile stays where it's released unless the cell is occupied)
+**Task:** LANE item 8 attempt 2: apply the review findings on top of 04bb6a8 (remove drag snap-back)
 **Branch:** auto/polish-c8
 **Date:** 2026-09-14
+**Gates:** BoardTests 253/0 fail · ShellTests 227 passed · xcodebuild BUILD SUCCEEDED
 
-## Proven cause (code-path trace + model-level reproduction; not device-reproduced)
-- CAUSE: suspect 3. The system takes the touch (an edge swipe; nothing defers system gestures), so SwiftUI cancels the DragGesture and `onEnded` never fires. The hold (`model.tileDrag` / `dragTranslation`) stays stale. On the next touch, `onChanged` calls `model.began(...)`, which replaces the hold and zeroes the translation, so the tile is drawn back at its origin.
-- REPRO (written first, run on unmodified code): `BoardModelTests.testReproALostReleaseThenTheNextTouchSnapsTheTileHome` (began → moved 21 cols → no commit → began(.pan)). Red: `XCTAssertNotEqual failed: ("Optional((0.0, 0.0))") is equal to ("Optional((0.0, 0.0))") - tile snapped back to its origin`. It was then replaced by the final cancel-path cases below.
-- RULED OUT, distance guard: dead in the app. The target is the cell containing the drop point, so reach is at most half a cell's diagonal, about 51pt at the 72pt max cell, under 96. It only fired in tests using the fixture threshold of 22.
-- RULED OUT, pinch: `BoardPinchReporter` only reports with 2 or more touches (`numberOfTouches >= 2`), so a one-finger drag cannot reach `cancel()`.
-- RULED OUT, sync(): it writes only on arrivals (not tied to drag speed), and `var next = model` carries the hold across.
+## Proven cause (unchanged from attempt 1)
+- The system takes the touch (an edge swipe), so SwiftUI cancels the DragGesture and `onEnded` never fires. The next touch's `began` then discards the stale hold, and the tile snaps home. Reproduced on unmodified code by `testReproALostReleaseThenTheNextTouchSnapsTheTileHome`, which failed with "tile snapped back to its origin". It was then replaced by the interrupted-path cases.
 
-## Design Decisions
-- Deleted the reach guard. `threshold` stays as an ignored parameter (ponytail note), so about 100 test call sites and the source-pin tests don't churn.
-- Added `BoardModel.interrupted(on:camera:against:)`, which commits at the last reported `dragTranslation`: same occupied-cell and group rules, same haptics.
-- BoardView: a `@GestureState touching` flag, which SwiftUI resets on cancel too, calls `landInterrupted()` when it resets. `onChanged` also lands any stale hold before `began`. `.defersSystemGestures(on: .all)` on the board.
-- Pinch (a second finger) still calls `cancel()` and returns the tile home. That is not a release, and landing there would buzz on every pinch that starts on a tile.
-- The lock cancel is unchanged: it still returns the tile home.
+## Findings applied (all view-only; no model logic changed)
+- Important 1, BoardView onChanged: `landInterrupted()` now runs BEFORE `BoardGesture.Drag(at:in:offsets:)`, so the new touch is hit-tested against the settled board and offsets. Guardrail 3 is restored.
+- Important 2, BoardView onEnded: `model.moved(to: value.translation)` runs first, and `commit` reads `model.dragTranslation`. A release and a lost release now use the same number. Residual: if the `touching` reset ever runs before `onEnded`, the final touch-up delta is still lost, because it never reached the model.
+- Minor 3, BoardView onChange(of: touching): also sets `drag = nil`.
+- Minor 4, BoardView: `.defersSystemGestures(on: inputLocked ? [] : .all)`. The BoardSourceTests "body names the lock once" pin exempts exactly this line, with a comment explaining why.
+- Over-engineering, partial: renamed `testAtTheCellSizeFloorTheThresholdCanNeverRefuseADistantDrop` to `…ACornerReleaseLandsAndOnlyAnOccupiedCellRefuses`, and the refusal row "a generous reach" to "a non-indexable column".
+
+## Disputed / Deferred
+- Removing the `threshold` parameter is deferred. It would churn about 100 test sites and the BoardSourceTests pins that assert its injection (lines 344-378 and 1006-1149).
+- Disputed that `interrupted`'s `threshold: 0` is a trap. The value is ignored, so it does not affect landing. A comment now says 0 is deliberate: a restored guard refuses there, and the interrupted test goes red (confirmed by mutation A).
+- No new BoardTests case. All four fixes are view-only: gesture callback ordering, `@GestureState`, and a system-gesture modifier.
 
 ## Files Changed
-- `Willagrams/Board/BoardDrag.swift`: reach guard and threshold finiteness check deleted.
-- `Willagrams/Board/BoardModel.swift`: new `interrupted()`.
-- `Willagrams/Board/BoardView.swift`: GestureState reset hook, stale-hold landing before `began`, `.defersSystemGestures`.
-- `Tests/BoardTests/Cases/BoardDragTests.swift`: new cases for a 25-cell single update onto an empty cell, the same onto an occupied cell, and a 30-cell group landing (all free) or refused (one taken). Removed 4 tests that asserted distance refusals.
-- `Tests/BoardTests/Cases/BoardModelTests.swift`: new interrupted-lands-at-last-cell and interrupted-onto-occupied-returns-to-origin cases.
-- `Tests/BoardTests/Cases/BoardDragGateTests.swift`: removed 2 threshold-boundary tests and 2 distance-only refusal rows; the raw-zoom test now asserts col 67, not a refusal.
+- `Willagrams/Board/BoardView.swift`: findings 1-4.
+- `Willagrams/Board/BoardModel.swift`: comment on `interrupted`'s threshold.
+- `Tests/BoardTests/Cases/BoardDragGateTests.swift`: one test renamed, one row renamed.
+- `Tests/BoardTests/Cases/BoardSourceTests.swift`: the lock-once pin exempts the `defersSystemGestures` line.
 
-## Mutations (both reverted)
-- A, guard restored (at the fixture threshold): red: FastDragAcrossTwentyFiveCells, FastGroupDragLandsWhole, DragWhoseReleaseNeverArrives, and the gate raw-zoom test.
-- B, occupied-cell rule removed (guard bypassed and the sitter overwritten): red: FastDragReleasedOnAnOccupiedCell, FastGroupDragIsRefusedWhole, InterruptedDragOverAnOccupiedCell, plus 2 existing occupied tests. Bypassing the guard alone stayed green, because `Board.place` throws on an occupied cell too.
+## Mutations (re-run, both reverted)
+- A, reach guard restored: red on FastDragAcrossTwentyFiveCells, FastGroupDragLandsWhole, DragWhoseReleaseNeverArrives, and gate RawZoom.
+- B, occupied rule removed (with overwrite): 15 red, including FastDragReleasedOnAnOccupiedCell, FastGroupDragIsRefusedWhole, and InterruptedDragOverAnOccupiedCell.
 
-## Gates
-- BoardTests: 253 tests, 0 failures. ShellTests: 227 passed. xcodebuild: BUILD SUCCEEDED.
-
-## Flags for Reviewer
-- The GestureState reset may fire before `onEnded` on a normal release. If it does, the landing uses the last `onChanged` translation, and `onEnded` then finds no hold and does nothing. It is idempotent.
-- `.defersSystemGestures(on: .all)` means edge swipes (home indicator, Control Center) need two swipes while the board is on screen.
-- Nate's hand test (not verified): on the iPhone, drag fast and far and release on an empty cell: the tile stays. Release on a tile: it returns. Swipe off the bottom edge mid-drag: the tile lands where the finger last was.
+## Nate's hand test (not verified)
+- Landscape iPhone 13 mini: drag fast and far, release on an empty cell, and the tile stays. Release on a tile, and it returns with the reject buzz.
+- Swipe from the bottom edge mid-drag, then touch the tile where it landed: it lifts rather than panning.
+- Pinch mid-drag: the tile returns home. On a locked board (countdown or results), one edge swipe opens the home indicator or Control Center.

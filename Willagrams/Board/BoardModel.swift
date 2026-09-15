@@ -437,6 +437,9 @@ public struct BoardModel: Sendable {
         camera: BoardCamera,
         against dictionary: some WordList
     ) -> Board {
+        // `threshold` is ignored — there is no reach limit. 0 on purpose: if a
+        // reach guard is ever restored it refuses here, and the interrupted
+        // tests go red instead of the lost-release snap-back silently returning.
         commit(translation: dragTranslation, on: board, camera: camera, threshold: 0, against: dictionary)
     }
 
