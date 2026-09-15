@@ -29,6 +29,15 @@ struct MatchHUD: View {
 
     let hud: MatchHUDModel
 
+    /// Drives the bag's size: smaller on a landscape phone, where compact
+    /// height leaves far less room above the controls. `MatchHUDLayout` is a
+    /// plain struct so this switch is testable without a simulator.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var hudLayout: MatchHUDLayout {
+        MatchHUDLayout(isCompact: verticalSizeClass == .compact)
+    }
+
     /// How much bigger the call reads than an ordinary control. Big enough to
     /// be the thing you see when it appears, which is the whole point of it
     /// only appearing when it is true.
@@ -96,27 +105,30 @@ struct MatchHUD: View {
             // instead of a gap in the silhouette.
             Capsule(style: .continuous)
                 .fill(DesignTokens.Palette.onInk)
-                .frame(width: Self.bagSize * 0.30, height: Self.bagSize * 0.055)
-                .offset(y: -Self.bagSize * 0.19)
+                .frame(width: hudLayout.bagSize * 0.30, height: hudLayout.bagSize * 0.055)
+                .offset(y: -hudLayout.bagSize * 0.19)
 
             // The count in the tile face, not in a mono label: it is a number
             // of tiles, and every other number of tiles in this app is set in
             // that face. Sat on the body, below the neck the drawstring takes.
+            // `.monospacedDigit()` keeps three digits from reflowing as they
+            // change; `.minimumScaleFactor` with `.lineLimit(1)` shrinks the
+            // glyph rather than truncating or wrapping it on the small bag.
             Text(hud.poolValue)
                 .font(DesignTokens.Typography.tileLetter)
                 .foregroundStyle(DesignTokens.Palette.onInk)
-                .offset(y: Self.poolValueDrop)
+                .monospacedDigit()
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+                .offset(y: poolValueDrop)
         }
-        .frame(width: Self.bagSize, height: Self.bagSize)
+        .frame(width: hudLayout.bagSize, height: hudLayout.bagSize)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(hud.poolLabel)
         .accessibilityValue(hud.poolValue)
     }
 
-    /// Half again the old glyph. The bag is the only readout on the board and
-    /// it sits in a corner by itself, so it can afford the room.
-    private static let bagSize: CGFloat = 96
-    private static let poolValueDrop: CGFloat = Self.bagSize * 0.19
+    private var poolValueDrop: CGFloat { hudLayout.bagSize * 0.19 }
 
     /// Two presses, never one: arming shows the confirmation, and only the
     /// confirmation resigns. Both branches render state the model already
