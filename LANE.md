@@ -119,7 +119,7 @@ Frozen contracts — build and test against these; they will not move:
     - A StyleTests case: `ScreenMargin.value` returns 16 for (compact, regular), 12 for (compact, compact) and (regular, compact), 40 for (regular, regular); and `screenMarginCompact < screenMarginPhone < screenMargin`
     - `xcodebuild` BUILD SUCCEEDED
   ui: true
-  status: not started
+  status: done (2026-09-15, e4ef400 — QA PASS, 5 mutations killed; StyleTests 34, xcodebuild SUCCEEDED. The 16pt path is only visible once item 3 lands)
 
 - task: Home, rebuilt from comp screen 01 plus Nate's list. `Willagrams/Shell/MenuView.swift` + `MenuLayout.swift`. On a portrait phone: a single column — mute control top-right, the `WordmarkTiles` crossword near the top sized from the available width, a flexible gap, then the PLAY mono label and the buttons anchored to the bottom. **No tagline**: delete the `"One shared \(Terminology.pool)…"` string (~249–250) and its render site (~127–131). Button slots, in order: **Multiplayer** — primary style, disabled, with a small "Coming soon" caption; **Play a Friend** — primary, opens the merged screen (item 6) via the existing `shell.playAFriend()`; then the quiet two-column grid **Solo Practice · Profile · Friends · How to Play**. Solo Practice moves into the grid slot Join used to hold and keeps its action. Join a Friend leaves Home (it is reached from the Play a Friend screen, item 6). Put the slot list in a plain value (e.g. `MenuLayout.actions`) that ShellTests can read. `MenuLayout` gains a portrait mode (width < height); the iPad landscape two-column layout keeps its structure with the same slot changes. `onlineUnavailableReason`'s caption stays under the online buttons. Fix the stale doc comment (~3–14).
   guardrails:
