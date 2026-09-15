@@ -192,6 +192,40 @@ struct ProfileModelTests {
         #expect(model.message == nil, "a read-only screen has nothing to say about saving")
     }
 
+    // MARK: - win rate
+
+    /// A plain value, worked out in the model so a `swift test` target that
+    /// cannot compile `ProfileView` can still hold it to account. Rounded to
+    /// a whole percent, and `nil` — not zero — before anything is played.
+    @Test("Win rate is won over played, rounded, and absent at zero played")
+    func winRateIsWonOverPlayedRounded() throws {
+        let played = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Ada",
+                friendCode: "ABCD1234",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                matchesPlayed: 3,
+                matchesWon: 2
+            ),
+            isEditable: true
+        )
+        #expect(played.winRatePercent == 67)
+
+        let untouched = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Ada",
+                friendCode: "ABCD1234",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                matchesPlayed: 0,
+                matchesWon: 0
+            ),
+            isEditable: true
+        )
+        #expect(untouched.winRatePercent == nil)
+    }
+
     // MARK: - the friend code
 
     @Test("Copying puts the friend code, not the share sentence, on the clipboard")

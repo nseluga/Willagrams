@@ -98,6 +98,15 @@ public final class ProfileModel {
         ]
     }
 
+    /// Won ÷ played as a whole percent, rounded — `2/3` reads `67`, never
+    /// `66` or `67.0`. `nil` before anything has been played: a rate over
+    /// zero games is not a number, it is a guess dressed as one, and the
+    /// view hides the card rather than draw a guess.
+    public var winRatePercent: Int? {
+        guard profile.matchesPlayed > 0 else { return nil }
+        return Int((Double(profile.matchesWon) / Double(profile.matchesPlayed) * 100).rounded())
+    }
+
     // MARK: - The name
 
     /// The draft with its edges trimmed — what would actually be sent.
@@ -162,10 +171,11 @@ public final class ProfileModel {
     public static let copiedLabel = "Copied"
     public static let shareLabel = "Share"
     public static let backLabel = "Done"
-    public static let matchesPlayedLabel = "Matches played"
-    public static let matchesWonLabel = "Matches won"
+    public static let matchesPlayedLabel = "Played"
+    public static let matchesWonLabel = "Won"
     public static let tilesPlacedLabel = "Tiles placed"
     public static let fastestWinLabel = "Fastest win"
+    public static let winRateLabel = "Win rate"
     public static let noValue = "—"
     public static let shareLead = "Add me on Willagrams — my friend code is"
     public static let nameLengthMessage = "A name is 1 to 24 characters."
