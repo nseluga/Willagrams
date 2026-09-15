@@ -34,6 +34,10 @@ struct FriendsView: View {
         Binding(get: { model.lookupCode }, set: { model.setLookupCode($0) })
     }
 
+    /// Tracks the add-by-code field so its container can be scrolled into
+    /// view the moment the keyboard covers it — see `addByCode`.
+    @FocusState private var codeFieldFocused: Bool
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             ScreenHeader(
@@ -49,9 +53,11 @@ struct FriendsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-                    addByCode
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                        addByCode
+                            .id(Self.codeFieldID)
 
                     // Requests first: the only rows on this screen that are
                     // waiting on the player are the ones they can answer.
@@ -108,6 +114,14 @@ struct FriendsView: View {
                             .foregroundStyle(DesignTokens.Palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    }
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: codeFieldFocused) { _, isFocused in
+                    guard isFocused else { return }
+                    withAnimation {
+                        proxy.scrollTo(Self.codeFieldID, anchor: .center)
+                    }
                 }
             }
 
@@ -115,7 +129,7 @@ struct FriendsView: View {
         }
         .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(DesignTokens.Space.xl)
+        .screenPadding()
         .background {
             LinearGradient(
                 colors: [DesignTokens.Palette.canvasTop, DesignTokens.Palette.canvasBottom],
@@ -142,6 +156,7 @@ struct FriendsView: View {
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .accessibilityLabel(FriendsModel.codeFieldLabel)
+                    .focused($codeFieldFocused)
 
                 Button(FriendsModel.lookupLabel) {
                     Task { await model.lookup(code: model.lookupCode) }
@@ -206,4 +221,5 @@ struct FriendsView: View {
     }
 
     private static let contentMaxWidth: CGFloat = 620
+    private static let codeFieldID = "friends.codeField"
 }

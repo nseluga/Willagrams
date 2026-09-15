@@ -19,6 +19,10 @@ struct ProfileView: View {
     let model: ProfileModel
     let onBack: () -> Void
 
+    /// Tracks the name field so its container can be scrolled into view the
+    /// moment the keyboard covers it — see `name`.
+    @FocusState private var nameFieldFocused: Bool
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             ScreenHeader(
@@ -30,19 +34,29 @@ struct ProfileView: View {
             // The header stays put and the rest scrolls, as on `FriendsView`:
             // a phone in landscape is shorter than this screen, and Done must
             // never be the thing that scrolls away.
-            ScrollView {
-                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-                    name
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                        name
+                            .id(Self.nameFieldID)
 
-                    friendCode
+                        friendCode
 
-                    stats
+                        stats
+                    }
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: nameFieldFocused) { _, isFocused in
+                    guard isFocused else { return }
+                    withAnimation {
+                        proxy.scrollTo(Self.nameFieldID, anchor: .center)
+                    }
                 }
             }
         }
         .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(DesignTokens.Space.xl)
+        .screenPadding()
         .background {
             LinearGradient(
                 colors: [DesignTokens.Palette.canvasTop, DesignTokens.Palette.canvasBottom],
@@ -68,6 +82,7 @@ struct ProfileView: View {
                         .font(DesignTokens.Typography.title)
                         .foregroundStyle(DesignTokens.Palette.textPrimary)
                         .autocorrectionDisabled()
+                        .focused($nameFieldFocused)
 
                     Button(ProfileModel.saveLabel) {
                         Task { await model.save() }
@@ -134,4 +149,5 @@ struct ProfileView: View {
     }
 
     private static let contentMaxWidth: CGFloat = 620
+    private static let nameFieldID = "profile.nameField"
 }
