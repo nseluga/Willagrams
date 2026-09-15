@@ -27,6 +27,8 @@ struct CountdownView: View {
 
     let dictionary: any WordList
 
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     var body: some View {
         BoardView(
             board: $board,
@@ -61,7 +63,7 @@ struct CountdownView: View {
                 // The card must not resize under each new digit.
                 .monospacedDigit()
         }
-        .padding(DesignTokens.Space.xl)
+        .padding(verticalSizeClass == .compact ? DesignTokens.Space.l : DesignTokens.Space.xl)
         .brandCard()
         .accessibilityElement(children: .combine)
     }

@@ -14,7 +14,11 @@ struct HostLobbyView: View {
     let shell: ShellModel
     let lobby: HostLobbyModel
 
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     var body: some View {
+        let layout = HostLobbyLayout(isCompact: verticalSizeClass == .compact)
+
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             // Scrolls so a phone in landscape reaches the roster; Start and
             // Cancel stay pinned below.
@@ -24,7 +28,7 @@ struct HostLobbyView: View {
                         .font(DesignTokens.Typography.title)
                         .foregroundStyle(DesignTokens.Palette.textPrimary)
 
-                    code
+                    code(layout)
 
                     roster
 
@@ -38,11 +42,11 @@ struct HostLobbyView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            actions
+            actions(layout)
         }
         .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(DesignTokens.Space.xl)
+        .screenPadding()
         .background {
             LinearGradient(
                 colors: [DesignTokens.Palette.canvasTop, DesignTokens.Palette.canvasBottom],
@@ -56,14 +60,14 @@ struct HostLobbyView: View {
     /// The code, at display size, with the system share sheet beside it. Big
     /// because it is the one thing on this screen a friend has to read off the
     /// glass — and monospaced so an O and a 0 are not the same shape.
-    @ViewBuilder private var code: some View {
+    @ViewBuilder private func code(_ layout: HostLobbyLayout) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
             Text(HostLobbyModel.inviteCodeLabel).monoLabel()
 
             if let inviteCode = lobby.inviteCode {
                 HStack(spacing: DesignTokens.Space.m) {
                     Text(inviteCode)
-                        .font(.system(size: 44, weight: .bold, design: .monospaced))
+                        .font(.system(size: layout.codeFontSize, weight: .bold, design: .monospaced))
                         .foregroundStyle(DesignTokens.Palette.textPrimary)
                         .textSelection(.enabled)
                         .accessibilityLabel(Text(inviteCode.map(String.init).joined(separator: " ")))
@@ -100,16 +104,16 @@ struct HostLobbyView: View {
         }
     }
 
-    private var actions: some View {
+    private func actions(_ layout: HostLobbyLayout) -> some View {
         HStack(spacing: DesignTokens.Space.m) {
             Button { lobby.start() } label: {
-                Text(Self.startLabel).frame(maxWidth: .infinity, minHeight: 36)
+                Text(Self.startLabel).frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
             }
             .buttonStyle(.brandPrimary)
             .disabled(!lobby.canStart || lobby.phase != .waiting)
 
             Button { lobby.cancel() } label: {
-                Text(Self.cancelLabel).frame(maxWidth: .infinity, minHeight: 36)
+                Text(Self.cancelLabel).frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
             }
             .buttonStyle(.brandQuiet)
         }
