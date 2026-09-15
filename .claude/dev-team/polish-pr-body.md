@@ -64,3 +64,16 @@
 - **What happened:** `BoardView.onCameraSettled` → `MatchBoard.cameraSettled` (pan/pinch end, first framing, recenter — not per frame); `BoardLayout.delivered` anchors below (else beside) the largest ≥2-tile cluster, clamped to item 9's inset rect when the cluster is on screen; old rule kept as `viewportDelivered` fallback. Mutations a–d red.
 - **Open:** (1) cluster off screen → tiles land beside it, off screen (spec allows; pulls against "forgiving"); (2) L-shaped cluster can take the empty bbox corner; (3) `MatchBoard.camera` could be `@ObservationIgnored` to skip MatchView redraws on settle.
 - **Remember next run:** Overwrite mutations must bypass `Board.place` too. Shared no-adjacency test helper flags a cluster's own tiles — use `assertLandedClear` for cluster fixtures.
+
+## 2026-09-15 — dev-team-auto — item 12 Fix the early start
+- **Outcome:** DONE — 1 attempt — caution: yes — team: dt-engineer opus/high, dt-qa opus/high, dt-review opus/high — auto/polish-d12, f661834 (fix d9133f5)
+- **What happened:** `awaitStart()` no longer opens the match; the creator's `start()` always opens; `startMatch` guard is `roster.contains`; pool stays on `roster[0]` via `applyStart`. Old-rule tests rewritten in place. QA PASS first try, review 0/0/4 (2 stale comments fixed).
+- **What worked:** two-device OnlineMatchTests case where the guest sorts first — `startingHandSize` 0 after `awaitStart`, pool on the guest after `start()`; a second `.start` during play, followed by a grant, as the `hasStarted` mutation test.
+- **Mutation checks:** auto-open restored → red; guard back to pool-host-only → red; `hasStarted` removed → red.
+- **Remember next run:** TerminalAudit:292 can't catch a missing `hasStarted` guard (`isMatchOver` drops it first) — test second-start during play. The Online known issue now reports at WholeMatchScript.swift:98 (same test as :471). The `roster.contains` guard can't refuse; only the UI stops a joiner sending `.start` (a modified client could, as before).
+
+## 2026-09-15 — dev-team-auto — item 13 guest pool count
+- **Outcome:** DONE — 1 attempt — caution: yes — team: dt-engineer opus/high, dt-qa opus/high, dt-review opus/high — auto/polish-d12, 00a49e0 — QA PASS, review 0/0/2
+- **What happened:** HostPool.answer gained `broadcastingCount:` at deal/draw round/swap; MatchSession receive handles `.poolCount` with 3 guards (no pool here, in range, keep min). New MatchSessionPoolCountTests; 7 wire-exact MatchTests files updated for the trailing `.poolCount` (QA: none weakened). Mutations a, b-lo, b-hi, c, d×3 red.
+- **Note for Nate:** `MatchHUDModel.poolCanServeASwap` now reads the guest's received count, so the guest's Swap disables below 3. The received count only lags high, so it never blocks a swap the host would allow.
+- **Remember next run:** Any new host→peer message breaks the exact-message asserts in HostPool/Adversarial/Stress/MatchSession/TerminalAudit/Hardening tests. Check `uptime` before counting ShellTests timeouts. Test "host ignores X" with a sentinel (`.drawRequest` from a stranger), not a sleep (open Minor: a 200ms wait in MatchSessionPoolCountTests:92).

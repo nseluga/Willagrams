@@ -203,7 +203,7 @@ Frozen contracts — build and test against these; they will not move:
     - MatchTests, OnlineTests, ShellTests and BotTests are green at or above their floors
   caution: true
   parallel-group: d
-  status: not started
+  status: done — QA PASS, review 0/0/4; a modified client could still send .start (as before)
 
 - task: Show the pool count on the guest. `HostPool` broadcasts `.poolCount(remaining: pool.count)` after the opening deal, after every draw round, and after every swap. It goes out with `.reliable` delivery through the same `answer` path, to peers only. The guest's `MatchSession.receive` handles `.poolCount` by writing through `setPoolRemaining`, reusing `storedPoolRemaining`; add no new observed property. The receive guard: ignore it on a device that runs the pool; drop `remaining < 0` or `> MatchLimits.poolSize`; keep the minimum of the current and received counts, since the pool never grows and Realtime can reorder. Update `poolRemaining`'s doc comment: a guest now knows the number.
   guardrails:
@@ -215,7 +215,7 @@ Frozen contracts — build and test against these; they will not move:
     - A MatchTests case: a guest receiving 90, then a late 95, shows 90; receiving -1 or 145 changes nothing; a host receiving `.poolCount` keeps its own count. Each guard is mutation-checked
     - MatchTests, ShellTests and OnlineTests are green at or above their floors, after `swift package clean` on each
   caution: true
-  status: not started
+  status: done — QA PASS, review 0/0/2; guest Swap button now gated on the received count
 
 - task: WILLA is a valid word, with a small hidden flourish. Add an app-layer `WillaWordList` in `Willagrams/Match/` that wraps any `WordList`, accepts "WILLA" (matching the base's case convention), and defers everything else. Its hash is the **base's** hash, so the start's dictionary-hash gate still matches between devices. Wrap the dictionary once where it is built, at `ShellModel.swift` ~line 129 and next to the `MinimumLengthWordList` wrap in `MatchSession.applyStart` (~line 990), so the board, the Draw gate and the win check all see it. Add `BoardModel.willaRuns`: the coords of every horizontal or vertical run spelling WILLA. When it becomes non-empty, `BoardView` tints those tiles with the accent color and plays a one-shot sparkle, once per new run, using DesignTokens motion values.
   guardrails:
