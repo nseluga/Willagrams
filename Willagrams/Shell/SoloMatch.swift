@@ -38,9 +38,8 @@ import WillagramsRules
 /// an engine built for two, and all three are settled here rather than by
 /// retrying anything:
 ///
-/// 1. **The local player is host by construction.** `MatchSession.startMatch`
-///    silently no-ops for a non-host, and a bot holding the `HostPool` would
-///    mint its own tiles. ``BotMatch`` runs the very election the session will
+/// 1. **The local player is host by construction.** The pool goes to
+///    `roster[0]`, and a bot holding the `HostPool` would mint its own tiles. ``BotMatch`` runs the very election the session will
 ///    run — ``HostPool/host(of:)`` — and whichever id it names becomes the local
 ///    end.
 /// 2. **The far end is a real session.** It is dealt to, it draws, and it plays

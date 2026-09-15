@@ -638,11 +638,11 @@ public final class MatchSession {
         countdownSeconds: Int,
         options: MatchOptions = .standard
     ) {
-        // The same election that hands out the pool decides who opens. Both
-        // devices calling this would each honour their own seed and countdown
-        // and ignore the other's, and reach play at different moments.
-        guard HostPool.host(of: roster) == localPlayerID else {
-            lastNote = "only the host opens the match"
+        // Any player in the match may send the `.start` — online, that is the
+        // lobby creator, which need not be `roster[0]`. The pool still goes to
+        // `roster[0]` in `applyStart`, and a second start is ignored there.
+        guard roster.contains(localPlayerID) else {
+            lastNote = "only a player in this match opens it"
             return
         }
         guard !isLocked else { return }

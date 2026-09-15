@@ -251,27 +251,36 @@ struct OnlineMatchOfflineTests {
         await Self.expectAgreement(f, creatorSession, guestSession)
         #expect(Self.starts(f.creatorWire.sent).count == 1)
         #expect(Self.starts(f.guestWire.sent).isEmpty)
-        // The receiving side never even attempted an open: `startMatch` leaves
-        // "only the host opens the match" behind when it refuses one, so a nil
-        // note is what says the façade never asked.
+        // The receiving side never attempted an open.
         #expect(guestSession.lastNote == nil)
     }
 
-    @Test("The guest opens the match when the creator does not sort first")
-    func theGuestOpensWhenTheCreatorIsNotRosterZero() async throws {
-        // "C" sorts above "B": the *creator* is `roster[1]`, so the guest opens
-        // and the creator plays the receiving side. Insertion order (creator
-        // then guest, in the lobby and in the membership rows) is the reverse of
-        // sorted order, so a roster that skipped the sort would elect the wrong
-        // device here.
-        let (f, creatorSession, guestSession) = try await Self.playThrough(
-            creatorToken: "C", guestToken: "B")
+    @Test("The creator opens even when the guest sorts first, and the guest never opens itself")
+    func onlyTheCreatorOpensWhenTheGuestIsRosterZero() async throws {
+        // "C" sorts above "B": the *guest* is `roster[0]` and holds the pool,
+        // but only the creator's Start opens the match.
+        let f = try await Self.fixture(creatorToken: "C", guestToken: "B")
         #expect(f.guestPlayer.rawValue < f.creatorPlayer.rawValue)
-        #expect(f.creator.record.hostID.uuidString == f.creatorPlayer.rawValue)
+        f.creatorWire.announce(.connected(f.guestPlayer))
+        f.guestWire.announce(.connected(f.creatorPlayer))
+        await Self.until("two in the creator's lobby") { f.creator.lobby.count == 2 }
+
+        let guestSession = try await f.guest.awaitStart()
+        // Still waiting: an auto-open would have applied a 21-tile start here.
+        #expect(guestSession.startingHandSize == 0, "awaitStart() opened the match itself")
+        for _ in 0 ..< 50 { await Task.yield() }
+        #expect(Self.starts(f.guestWire.sent).isEmpty, "the guest sent a start")
+        #expect(guestSession.state.status != .playing)
+
+        let creatorSession = try await f.creator.start()
+        await Self.until("the creator is playing") { creatorSession.state.status == .playing }
+        await Self.until("the guest is playing") { guestSession.state.status == .playing }
         await Self.expectAgreement(f, creatorSession, guestSession)
-        #expect(Self.starts(f.guestWire.sent).count == 1)
-        #expect(Self.starts(f.creatorWire.sent).isEmpty, "the creator opened a match it does not host")
-        #expect(creatorSession.lastNote == nil, "the creator attempted an open it does not own")
+        #expect(Self.starts(f.creatorWire.sent).count == 1)
+        #expect(Self.starts(f.guestWire.sent).isEmpty)
+        // The pool authority is still `roster[0]` — the guest here.
+        #expect(guestSession.poolRemaining != nil, "roster[0] does not hold the pool")
+        #expect(creatorSession.poolRemaining == nil)
     }
 
     @Test("The start message carries the row's seed and this file's two constants")
