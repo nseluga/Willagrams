@@ -122,6 +122,27 @@ public enum BoardRender {
         }
     }
 
+    /// Which insertion transition a drawn tile gets. Plain enum, no SwiftUI: a
+    /// pan changes which coords `cells(board:camera:in:)` returns, so a tile
+    /// that was already on the table can be re-inserted into the ForEach that
+    /// draws it just by scrolling back into view — that is not an arrival, and
+    /// must not replay the bag flight. Only an id the caller actually names as
+    /// `arriving` gets one; everything else keeps whatever it already looked
+    /// like.
+    public enum ArrivalTransition: Equatable, Sendable {
+        /// Flies in from the bag corner.
+        case fromBag
+        /// No transition at all — the tile simply reappears where it left off.
+        case none
+    }
+
+    /// `arriving` is the caller's current, already-expired-if-played set (see
+    /// `BoardView`'s `arrivedToken`) — this function makes no clearing decision
+    /// of its own, only the membership test.
+    public static func arrivalTransition(for tileID: UUID, arriving: Set<UUID>) -> ArrivalTransition {
+        arriving.contains(tileID) ? .fromBag : .none
+    }
+
     /// `.placed` when the tile at `coord` has any orthogonal neighbor — one
     /// neighbor is already a run of two in that direction. Four dict lookups,
     /// so this stays O(1) per drawn tile no matter how large the board is.
