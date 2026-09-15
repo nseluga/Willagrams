@@ -494,6 +494,23 @@ it edits belongs to a merged lane, and those are open to any lane, so it needs
 no grant. `protected:` still fences it: its only wire change landed first as
 the v4 amendment.
 
+**The 2026-09-15 final-adjustments pass runs as lane `final`**, cut from
+`lane/polish` after Nate's hand test, implementing his eleven-item list and the
+Claude Design comp `docs/design/willagrams-final.dc.html`. Like `polish` it owns
+nothing and edits merged lanes' paths. **Amendment, 2026-09-15 — two grants,
+each scoped to the named edit only:**
+  - `Willagrams.xcodeproj/project.pbxproj` (unowned): the iPhone
+    `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone` value gains portrait,
+    and the launch-screen background colour. Nothing else in the project file.
+  - `supabase/migrations/0006_fastest_win_skips_null.sql` (protected): a new
+    migration only, re-creating `record_outcome` with the same signature so a
+    null `elapsed_seconds` leaves `fastest_win_seconds` untouched, and resetting
+    every `fastest_win_seconds` to null (a resign win cannot be told apart after
+    the fact; Nate's call). No applied migration is edited. The lane writes it;
+    **Nate applies it** (`supabase db push` from his terminal — passkey account)
+    before any build that sends a null ships.
+No wire, `BackendContracts.swift`, `MatchOptions` or `Terminology.swift` change.
+
 ---
 
 - lane: style
@@ -567,3 +584,9 @@ the v4 amendment.
   owns: [ ] — a pass, not a feature lane. Every path it edits is a merged lane's, open to any lane
   assignee: nate
   depends on: — every lane it edits is merged; the wire v4 amendment it needs landed 2026-09-14
+
+- lane: final
+  area: The final-adjustments pass after the polish hand test — iPhone portrait outside gameplay, a looping loading screen, Home without the Join button or the shared-pool line, one Play/Join a Friend screen with match settings, restyled Profile/Friends/How to Play, the fast-drag fly-home fix, and resign wins skipping fastest win.
+  owns: [ ] — a pass, like `polish`. Plus the two scoped grants under "Tuning" (project.pbxproj orientation + launch colour; migration 0006)
+  assignee: nate
+  depends on: polish (branched from `lane/polish` at `c1f038b`; merges after it)

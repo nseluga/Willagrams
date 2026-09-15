@@ -1,15 +1,30 @@
-# Willagrams — polish lane progress
+# Willagrams — polish / final lane progress
 
 LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.md wins for scope.
 
 ## Current position
 
-- **Status:** all 14 items done, 0 blocked — run 2026-09-14→15 on `auto/polish`, merged into `lane/polish`. Full serial suite green (rules 53, Style 31, Settings 36, Audio 19, Account 15, Friends 49, Match 128, Board 265, Bot 68, Online 142 + 1 known, Shell 227), BUILD SUCCEEDED
-- **Next:** Nate's two-device hand test (host presses Start, both bags match), the listed hand tests, and a rotated iPad Menu screenshot; then push + PR into integration
-- **Blockers:** none
+- **Status:** round 2 (`final`, 10 items) set up on `lane/final`, cut from `lane/polish` @ `c1f038b`; no item started. Run paused at Nate's request before coding
+- **Next:** `/dev-team-auto` from item 1 when Nate says go
+- **Blockers:** none. Migration `0006` must be pushed by Nate before any build with item 2 plays online
 - **Last updated:** 2026-09-15
 
-## Round 1 — phone polish
+## Round 2 — final adjustments
+
+| Item | Status |
+|------|--------|
+| Fast drag never flies home | not started |
+| Resign wins skip fastest win | not started |
+| iPhone portrait except gameplay | not started |
+| Tighter phone margins | not started |
+| Home rebuilt | not started |
+| One Play / Join a Friend screen | not started |
+| Play a Friend match settings | not started |
+| Looping loading screen | not started |
+| Profile and Friends restyle | not started |
+| How to Play pager + Solo setup portrait | not started |
+
+## Round 1 — phone polish (shipped 2026-09-15)
 
 | Item | Status |
 |------|--------|

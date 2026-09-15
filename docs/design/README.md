@@ -1,5 +1,13 @@
 # The design comp, and what this repo built from it
 
+**Newer comp, 2026-09-15:** Claude Design project
+`f7c6511c-4e8a-4ba3-bad9-b3bded8a0fc4`, file `Willagrams Final.dc.html`, copied
+here as `willagrams-final.dc.html` — six portrait iPhone screens (Home, Loading,
+Play/Join a Friend, Profile, Friends, How to Play). It drives the `final` lane
+(`LANE.md` on `lane/final`). Same standing rule as below; where it disagrees with
+Nate's list in that LANE.md, the list wins. Everything below describes the older
+comp.
+
 **Source:** Claude Design project `fa88a423-7183-4d9c-85a3-eee18530827b`, file
 `Willagrams Screens.dc.html`. The comp is copied in here as
 `willagrams-screens.dc.html` so it outlives the session that fetched it.
