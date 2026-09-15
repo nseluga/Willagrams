@@ -111,6 +111,22 @@ public struct BoardView: View {
     /// and no decision turns on it.
     @State private var arrivalProgress: CGFloat = 1
 
+    /// The last `arrivalToken` whose flight has finished playing. Cleared
+    /// per-token, not per-id: once this catches up to `arrivalToken`, none of
+    /// `arriving`'s ids fly in again, even an id that was off-screen for the
+    /// whole flight and only scrolls into view afterward. Sticky-by-id would
+    /// keep flying that one in forever; this expires the whole batch at once,
+    /// which is exactly how it arrived.
+    @State private var arrivedToken = 0
+
+    /// What `BoardSurface` is actually told is "arriving" this frame: `arriving`
+    /// itself for as long as its token hasn't finished playing, empty once it
+    /// has. A pan after that point re-inserts a culled tile's view with this
+    /// empty, so `BoardRender.arrivalTransition` answers `.none` for it.
+    private var activeArriving: Set<UUID> {
+        arrivalToken > arrivedToken ? arriving : []
+    }
+
     public init(
         board: Binding<Board>,
         model: Binding<BoardModel>,
@@ -151,7 +167,7 @@ public struct BoardView: View {
                 dragTranslation: model.dragTranslation,
                 invalid: model.flashedInvalid,
                 offsets: model.tileOffsets,
-                arriving: arriving,
+                arriving: activeArriving,
                 arrivalProgress: arrivalProgress
             )
                 // The surface is a color and a Canvas, both of which are
@@ -286,6 +302,11 @@ public struct BoardView: View {
                     withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
                         arrivalProgress = 1
                     }
+                    // The flight has been told to run; once it has had time to
+                    // finish, this token is spent. A pan after this point must
+                    // not fly these ids in again — see `arrivedToken`.
+                    try? await Task.sleep(for: .seconds(DesignTokens.Motion.dealDuration))
+                    arrivedToken = arrivalToken
                 }
         }
     }
@@ -605,11 +626,22 @@ private struct BoardSurface: View, Animatable {
                     // and a swap reads as putting one back and taking another
                     // — the same motion in both directions, because it is the
                     // same act.
+                    // Only an id actually in `arriving` gets the bag flight.
+                    // `BoardSurface` culls to `visibleCoords`, so panning a
+                    // tile that was always on the board back into view is
+                    // ALSO an insertion into this ForEach — without this
+                    // check every one of those replayed the bag animation
+                    // too. The decision itself lives in
+                    // `BoardRender.arrivalTransition`, a plain function
+                    // `BoardTests` can call directly; this only maps its
+                    // answer onto the transition SwiftUI actually runs.
                     .transition(
-                        .modifier(
-                            active: FromBag(travel: 0, home: tilePoint, bag: Self.bagPoint),
-                            identity: FromBag(travel: 1, home: tilePoint, bag: Self.bagPoint)
-                        )
+                        BoardRender.arrivalTransition(for: tile.id, arriving: arriving) == .fromBag
+                            ? .modifier(
+                                active: FromBag(travel: 0, home: tilePoint, bag: Self.bagPoint),
+                                identity: FromBag(travel: 1, home: tilePoint, bag: Self.bagPoint)
+                            )
+                            : .identity
                     )
                 }
             }
