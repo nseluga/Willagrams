@@ -106,7 +106,7 @@ Frozen contracts — build and test against these; they will not move:
     - JoinView's Join button sits in the same row as the code field
     - `xcodebuild` BUILD SUCCEEDED; the run summary names "type into Profile name, Friends add-by-code and Join code on the iPhone in landscape — the field and its button stay visible" as Nate's hand test
   ui: true
-  status: not started
+  status: done — QA PASS; side effect for Nate: on iPad, Join's Cancel now stretches alone across its row
 
 - task: Make the validation messages reachable. Today each button is disabled by the same rule that would produce the message, so the message never shows: `ProfileModel.canSave` (~line 111, "A name is 1 to 24 characters."), `FriendsModel.canLookup` (~line 346, "A friend code is 8 characters."), `JoinModel.canJoin` (~line 132, "Enter the six-character code."). Disable each button only when the field is empty (after trimming) or a request is in flight. The action itself refuses bad input by setting the existing message and making no backend call. Add `.onSubmit` on the Profile and Friends fields so Return triggers the same action.
   guardrails:

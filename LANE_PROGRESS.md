@@ -5,7 +5,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 ## Current position
 
 - **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** item 4 — typing screens keep the field visible
+- **Next:** item 5 — reachable validation messages
 - **Blockers:** none
 - **Last updated:** 2026-09-14
 
@@ -16,7 +16,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | One sizing mechanism, proven on Menu | done — The home screen now fits a landscape phone without scrolling, with the logo centered and sized to the screen and smaller buttons on phones. |
 | Apply sizing to remaining fixed-size screens | done — The lobby's invite code and buttons, the results and countdown cards, and solo setup all tighten up on a phone. |
 | HUD bag legible on a phone | done — The bag in the match HUD is smaller on a phone and its count never truncates. |
-| Typing screens keep the field visible | not started |
+| Typing screens keep the field visible | done — Profile, Friends and Join scroll the field you're typing in above the keyboard, and Join's button now sits beside its code field. |
 | Reachable validation messages | not started |
 | Unfriend | not started |
 | Zoom further out | not started |

@@ -17,3 +17,9 @@
 - **Outcome:** DONE (top-level verified; builder stalled "waiting on background work" and was stopped) — caution: no — team: dt-ui (sonnet, high) — auto/polish-b3, commit c1ef2ad
 - **What happened:** `MatchHUDLayout` holds bag size (96 regular / 72 compact) and the pool-count formatter (nil → `—`); the count Text is monospaced-digit with minimumScaleFactor 0.5. Mutation check: nil guard → "0" turns the new test red.
 - **Remember next run:** A shared-DerivedData "database is locked" BUILD FAILED is contention, not a code error. Don't wait on a subagent reporting "waiting on its own background work" with no process running — take over.
+
+## 2026-09-14 23:04 — dev-team-auto — Keep typed field visible above keyboard (Profile/Friends/Join)
+- **Outcome:** DONE — 1 attempt — caution: no — team: dt-ui (sonnet, high), dt-qa (opus, high) — auto/polish, commit a3ce6f0
+- **What happened:** @FocusState + ScrollViewReader/scrollTo(.center) + .scrollDismissesKeyboard(.interactively) on ProfileView, FriendsView, JoinView; Join moved into the code field's row; `.screenPadding()` on all three.
+- **What worked:** dt-ui caught that analyze-report's "Join sits below Cancel" note was stale and fixed to the real requirement, reporting the discrepancy.
+- **Remember next run:** Moving a button beside a field can leave a lone button stretching full-width on iPad (maxWidth: .infinity) — check sibling buttons in the row it left.
