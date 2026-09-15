@@ -102,6 +102,10 @@ public struct BoardView: View {
     private let arriving: Set<UUID>
     private let arrivalToken: Int
 
+    /// Points of the surface the owner's chrome covers (a HUD). Recenter
+    /// frames tiles clear of them; zero for surfaces with nothing on top.
+    private let chromeInsets: EdgeInsets
+
     /// How far along the flight is: 0 at the bag, 1 in the cell. Held here
     /// because it is drawing, not state — nothing outside this view can see it
     /// and no decision turns on it.
@@ -115,8 +119,10 @@ public struct BoardView: View {
         inputLocked: Bool = false,
         completionAttempts: Int = 0,
         arriving: Set<UUID> = [],
-        arrivalToken: Int = 0
+        arrivalToken: Int = 0,
+        chromeInsets: EdgeInsets = EdgeInsets()
     ) {
+        self.chromeInsets = chromeInsets
         _board = board
         // The owner builds the model with the CHEAP init, not the seeding one:
         // nothing here re-checks the board on a re-init, and `.onAppear` below
@@ -251,7 +257,7 @@ public struct BoardView: View {
                     guard !hasFramed, rect.width > 0, board != Board() else { return }
                     hasFramed = true
                     withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
-                        camera = BoardGesture.recentered(camera, over: board, in: rect)
+                        camera = recentered(in: rect)
                     }
                 }
                 // The flash, and the only place tint is turned on. `.task(id:)`
@@ -438,13 +444,22 @@ public struct BoardView: View {
 
     // MARK: - Recenter
 
-    /// Frames every placed tile. `BoardGesture.recentered` reads the
-    /// placements; this view never does, so the draw path stays a function of
+    /// Every placed tile framed inside `rect` minus the chrome. The one
+    /// recenter both call sites share; `BoardLayout.framing` reads the
+    /// placements, this view never does, so the draw path stays a function of
     /// the viewport.
+    private func recentered(in rect: CGRect) -> BoardCamera {
+        BoardLayout.framing(board, in: rect, camera: camera, insets: BoardInsets(
+            top: chromeInsets.top, leading: chromeInsets.leading,
+            bottom: chromeInsets.bottom, trailing: chromeInsets.trailing
+        ))
+    }
+
+    /// Frames every placed tile, clear of the chrome.
     private func recenterControl(in rect: CGRect) -> some View {
         Button {
             withAnimation(DesignTokens.Motion.snap) {
-                camera = BoardGesture.recentered(camera, over: board, in: rect)
+                camera = recentered(in: rect)
             }
         } label: {
             Image(systemName: Self.recenterSymbol)

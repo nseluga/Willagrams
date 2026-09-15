@@ -209,7 +209,10 @@ public struct BoardCamera: Sendable {
     /// this line the two disagreed: `visibleCoords` enumerated a mirrored rect
     /// (its `minX`/`maxX` reads already standardize) while `recenter`'s
     /// `width > 0` rejected it.
-    public func recenter(over coords: [Coord], in rect: CGRect) -> BoardCamera {
+    ///
+    /// `ceiling` caps the framed cell size below `maxCellSize` — `BoardLayout.framing`
+    /// passes `baseCellSize` so a small board is never zoomed in past the default.
+    public func recenter(over coords: [Coord], in rect: CGRect, ceiling: CGFloat = maxCellSize) -> BoardCamera {
         let rect = rect.standardized
         // `baseCellSize` is public and unclamped, so a zero-size first layout
         // pass can make it 0. Dividing by it would give `zoom == .infinity`,
@@ -233,7 +236,8 @@ public struct BoardCamera: Sendable {
         let contentRows = CGFloat(maxRow - minRow + 1)
 
         let fitSize = min(rect.width / contentCols, rect.height / contentRows)
-        let size = min(max(fitSize, Self.minCellSize), Self.maxCellSize)
+        let top = max(min(ceiling, Self.maxCellSize), Self.minCellSize)
+        let size = min(max(fitSize, Self.minCellSize), top)
 
         var camera = self
         camera.zoom = size / baseCellSize

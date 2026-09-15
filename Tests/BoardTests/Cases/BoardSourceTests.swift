@@ -110,7 +110,7 @@ final class BoardSourceTests: XCTestCase {
         let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
         XCTAssertTrue(text.contains("hasFramed"), "BoardView no longer frames the opening block")
         XCTAssertTrue(
-            text.contains("camera = BoardGesture.recentered(camera, over: board, in: rect)"),
+            text.contains("camera = recentered(in: rect)") && text.contains("BoardLayout.framing(board, in: rect"),
             "the framing does not go through the one recenter implementation"
         )
     }
@@ -321,7 +321,7 @@ final class BoardSourceTests: XCTestCase {
             "BoardView does not animate recenter over Motion.snapDuration"
         )
         XCTAssertTrue(
-            text.contains("BoardGesture.recentered("),
+            text.contains("BoardLayout.framing("),
             "BoardView does not route recenter through the pure layer"
         )
     }
@@ -510,7 +510,7 @@ final class BoardSourceTests: XCTestCase {
         // Both still do their own job, so the checks above are not passing on an
         // empty path.
         XCTAssertTrue(magnify.contains("magnified(by:"), "the pinch path no longer zooms")
-        XCTAssertTrue(recenter.contains("BoardGesture.recentered("), "the recenter path no longer recenters")
+        XCTAssertTrue(recenter.contains("camera = recentered(in: rect)"), "the recenter path no longer recenters")
 
         // The session that owns the lock owns no camera at all, so there is
         // nothing there for a zoom or a recenter to be refused by.
@@ -1126,7 +1126,7 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertTrue("if model.inputLocked { return }\ncamera = start.magnified(by: m, about: a)".contains("inputLocked"))
         XCTAssertFalse("camera = start.magnified(by: m, about: a)".contains("inputLocked"))
         XCTAssertTrue("if isLocked { return }".contains("Locked"))
-        XCTAssertFalse("camera = BoardGesture.recentered(camera, over: board, in: rect)".contains("Locked"))
+        XCTAssertFalse("camera = recentered(in: rect)".contains("Locked"))
         // ...and the "still does its job" halves must separate a live path from
         // an emptied one.
         XCTAssertTrue("camera = start.magnified(by: value.magnification, about: a)".contains("magnified(by:"))
