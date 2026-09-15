@@ -4,16 +4,16 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 ## Current position
 
-- **Status:** round 2 (`final`, 10 items) set up on `lane/final`, cut from `lane/polish` @ `c1f038b`; no item started. Run paused at Nate's request before coding
-- **Next:** `/dev-team-auto` from item 1 when Nate says go
-- **Blockers:** none. Migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here
+- **Status:** round 2 run 1 (2026-09-15, one-hour budget) — items 1 and 2 done and merged; item 3 blocked, built but unmerged on `auto/final-a3` @ `2e9262f`; items 4–10 not started
+- **Next:** Nate revises item 3's screenshot criterion (see its `status:`), then `/dev-team-auto` from item 3 — merge `auto/final-a3` only with or after item 5 (Home rebuilt), or the portrait iPhone Home is cut off
+- **Blockers:** item 3's iPad check needs a human-rotated Simulator or a revised criterion. Migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here
 - **Last updated:** 2026-09-15
 
 ## Round 2 — final adjustments
 
 | Item | Status |
 |------|--------|
-| Fast drag never flies home | not started |
+| Fast drag never flies home | done — A tile now lands in the cell it looks like it's over, and one dropped on a taken cell slides into a free cell next to it instead of flying home. (2026-09-15) |
 | Resign wins skip fastest win | done — A win because your opponent resigned or left now counts as a win but never sets your fastest-win time; winning by playing out still records it. (2026-09-15) |
 | iPhone portrait except gameplay | blocked — The phone now opens upright, but the iPad landscape check can't be proven from a simulator screenshot, and the upright Home is cut off until Home is rebuilt. (2026-09-15) |
 | Tighter phone margins | not started |
