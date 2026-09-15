@@ -15,7 +15,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 |------|--------|
 | Fast drag never flies home | not started |
 | Resign wins skip fastest win | done — A win because your opponent resigned or left now counts as a win but never sets your fastest-win time; winning by playing out still records it. (2026-09-15) |
-| iPhone portrait except gameplay | not started |
+| iPhone portrait except gameplay | blocked — The phone now opens upright, but the iPad landscape check can't be proven from a simulator screenshot, and the upright Home is cut off until Home is rebuilt. (2026-09-15) |
 | Tighter phone margins | not started |
 | Home rebuilt | not started |
 | One Play / Join a Friend screen | not started |
