@@ -178,7 +178,7 @@ Frozen contracts — build and test against these; they will not move:
     - A BoardTests case: the transition function returns the bag transition for an id in `arriving` and the identity/none transition for an id that only entered `visibleCoords`. It fails if the `arriving` check is removed (mutation-checked)
     - `xcodebuild` BUILD SUCCEEDED; "pan a tile off screen and back — it does not fly in" is named as Nate's hand test
   ui: true
-  status: not started
+  status: done — QA PASS, mutation check red; open: swap put-back fly-to-bag likely lost
 
 - task: Land drawn tiles next to the player's connected board. Two causes, both fixed here. First, `MatchBoard.camera` (`Willagrams/Shell/MatchBoard.swift` ~line 96) is never updated from BoardView's live camera, so delivery places tiles for a stale viewport; wire BoardView's `onCameraSettled` to set it. Second, `BoardLayout.delivered` (~lines 51–87) anchors at the viewport's left edge under the Draw buttons. Make it anchor on the empty cells nearest the largest connected cluster (directly below it first, then beside it), clamped inside the inset view rect from item 9 when the cluster is on screen.
   guardrails:

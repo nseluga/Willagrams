@@ -52,3 +52,9 @@
 - **What happened:** `BoardInsets` plain struct threaded through `BoardLayout.framing` / `BoardCamera.recenter`; both recenter sites go through one `recentered(in:)`; `MatchHUDLayout.boardInsets` derives from the real bag/control tokens and is symlinked into BoardTests. Mutations (insets ignored, 16pt clamp removed, zoom-in cap removed) all red. Top-level re-run: Board 256, Shell 227.
 - **Open:** the recenter button's own footprint (top-right) is not in chromeInsets — a tile can sit under it.
 - **Remember next run:** ShellTests timing cases (countdown/deal waits) flake under concurrent agent load; compare against a clean-HEAD run before calling it a regression. BoardSourceTests' networking-word guard scans doc comments too.
+
+## 2026-09-15 00:26 — dev-team-auto — Item 10: no re-animation of panned-back tiles
+- **Outcome:** DONE — 1 attempt — caution: no — team: dt-ui (sonnet/high) + dt-qa (opus/high) — auto/polish, 645eaa9 — QA PASS
+- **What happened:** Pure `BoardRender.arrivalTransition(for:arriving:)` (`.fromBag`/`.none`); BoardSurface's transition gated on token-scoped `activeArriving`, so an arriving tile culled through its flight doesn't fly in later. Culling untouched. BoardTests 258; hand test done live in an iPad mini Simulator.
+- **Open (unfixed):** the swap put-back fly-to-bag animation is likely lost — `.transition` covers removal too and now resolves `.identity` for non-arriving ids. An `.asymmetric` always-on removal would NOT be safe: recenter animates the camera inside `withAnimation`, so culled tiles would fly to the bag on every recenter. A real fix needs a "departing" signal from the swap path.
+- **Remember next run:** Conditioning a tile `.transition` changes both insertion AND removal; check both directions.
