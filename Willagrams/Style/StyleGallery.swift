@@ -118,6 +118,7 @@ public struct StyleGallery: View {
                 ramp("title", DesignTokens.Typography.title)
                 ramp("body", DesignTokens.Typography.body)
                 ramp("button", DesignTokens.Typography.button)
+                ramp("buttonCompact", DesignTokens.Typography.buttonCompact)
                 ramp("tileLetter", DesignTokens.Typography.tileLetter)
                 ramp("caption", DesignTokens.Typography.caption)
             }
@@ -239,6 +240,8 @@ public struct StyleGallery: View {
                     ("xs", DesignTokens.Space.xs), ("s", DesignTokens.Space.s),
                     ("m", DesignTokens.Space.m), ("l", DesignTokens.Space.l),
                     ("xl", DesignTokens.Space.xl),
+                    ("screenMarginCompact", DesignTokens.Space.screenMarginCompact),
+                    ("screenMargin", DesignTokens.Space.screenMargin),
                 ]) { width in
                     DesignTokens.Palette.accent.frame(width: width, height: DesignTokens.Space.s)
                 }
