@@ -1,7 +1,7 @@
 [
   {
     "start": {
-      "version": 3,
+      "version": 4,
       "seed": 3735928559,
       "startingHandSize": 21,
       "countdownSeconds": 3,
@@ -153,6 +153,11 @@
       "reason": {
         "swapDisabled": {}
       }
+    }
+  },
+  {
+    "poolCount": {
+      "remaining": 98
     }
   }
 ]

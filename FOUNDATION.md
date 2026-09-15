@@ -555,3 +555,39 @@ would report the second as `P0002` → `notFound`. Definer removes both.
       fail on this. It needs a live case, or a stub that deliberately transposes
   difficulty: medium — the buffering-and-timeout policy is the whole of it
   status: open. Not scheduled to a lane yet
+
+
+## Amendment — wire v4, the pool count reaches every player (2026-09-14)
+
+Found in the two-device hand test: the guest's bag shows no number for the whole
+match. `MatchSession.poolRemaining` is `nil` off-host by design, and no message
+carries the count. MAP.md's pool-count grant deferred exactly this as a v4 break.
+There are no users yet, so the break is free now and gets costly later.
+
+- task: Bump the wire to v4 and carry the host's pool count
+  done when:
+    - `WireFormat.current == 4`; `MatchMessage` gains one trailing case
+      `poolCount(remaining: Int)`; no other case changes shape or position
+    - `Tests/WillagramsRulesTests/Fixtures/wire-v4.json` replaces the v3 fixture
+      and decodes into all 14 messages, the last `{"poolCount":{"remaining":98}}`.
+      Both `MatchMessageTests` and `MatchCodecTrustBoundaryTests` assert it
+      against hand-built literals
+    - `MatchCodec.decode` still refuses any start whose version is not current,
+      so a v3 build meeting a v4 start refuses it at the lobby, never mid-match
+    - `MatchSession.receive` accepts the case and does nothing with it yet.
+      Engine 53, MatchTests 125 and OnlineTests offline stay green
+  guardrails:
+    - informational only: the host's pool stays the one authority. A guest never
+      draws, swaps or latches exhaustion from this value; `poolExhausted` still
+      does that
+    - untrusted on receipt: a receiver drops `remaining < 0` or
+      `> MatchLimits.poolSize`, and a device that runs the pool ignores it
+    - the count never rises inside a match (a draw takes one per player; a swap
+      takes three and returns one), so a receiver keeps the lowest count it has
+      seen. Realtime broadcast is not ordered (the open risk above), and this
+      makes a late message harmless rather than a jump upward
+  risk: a case added or reordered after a build ships breaks decode between two
+        app versions — silent, surfacing as a match that just stops
+  difficulty: low — one case and a fixture regeneration
+  status: done — the shape. Sending it (`HostPool`, after the deal, every grant
+        round and every swap) and showing it on the guest is the `polish` lane's

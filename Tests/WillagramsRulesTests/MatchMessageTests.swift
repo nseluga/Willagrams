@@ -24,6 +24,7 @@ struct MatchMessageTests {
             .rejected(reason: .notEnoughTilesToSwap),
             .rejected(reason: .notYourTurn),
             .rejected(reason: .unknownPlayer),
+            .poolCount(remaining: 98),
         ]
     }
 
@@ -45,12 +46,12 @@ struct MatchMessageTests {
     /// The round trip above only proves this build agrees with itself. This one
     /// decodes bytes written by hand and checked in, so renaming a case or an
     /// associated value fails here instead of in a shipped match.
-    @Test("Every v3 case still decodes from the checked-in golden payload")
+    @Test("Every v4 case still decodes from the checked-in golden payload")
     func goldenPayloadStillDecodes() throws {
-        let url = try #require(Bundle.module.url(forResource: "wire-v3", withExtension: "json"))
+        let url = try #require(Bundle.module.url(forResource: "wire-v4", withExtension: "json"))
         let decoded = try JSONDecoder().decode([MatchMessage].self, from: Data(contentsOf: url))
 
-        #expect(decoded.count == 13, "the golden file must cover every case")
+        #expect(decoded.count == 14, "the golden file must cover every case")
 
         guard case let .start(version, _, handSize, countdown, options, roster) = decoded[0] else {
             Issue.record("first golden message should be .start, got \(decoded[0])")
@@ -72,6 +73,8 @@ struct MatchMessageTests {
         }
         #expect(placements.map(\.tile.letter) == ["H", "I"], "a win must carry letters, not just ids")
         #expect(placements[1].coord == Coord(row: 0, col: 1))
+
+        #expect(decoded[13] == .poolCount(remaining: 98), "the v4 case rides last")
     }
 
     /// 16KB was GameKit's reliable-send ceiling. Game Center is gone, but the

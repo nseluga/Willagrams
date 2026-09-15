@@ -943,6 +943,11 @@ public final class MatchSession {
                 reason,
                 answeredADraw: reason != .notEnoughTilesToSwap && reason != .swapDisabled
             )
+
+        case .poolCount:
+            // Wire v4 carries it; nothing sends or shows it until the polish
+            // lane wires the guest's bag.
+            break
         }
     }
 

@@ -160,6 +160,16 @@ property `@ObservationIgnored` to keep the net count unchanged makes it pass.
 Any lane adding state to `MatchSession` must run `swift test --package-path
 Tests/MatchTests`; the engine suite does not cover it.
 
+## Landed amendment — wire v4, the guest's pool count
+
+**Landed 2026-09-14 on `main` (`/foundation` amendment). Not a lane item.**
+
+`WireFormat.current` is `4`, and `MatchMessage` gains a trailing
+`poolCount(remaining: Int)`. It is informational: the host's pool stays the one
+authority, and a receiver keeps the lowest count it has seen, so reordering
+cannot raise it. The spec is in FOUNDATION.md. Sending the count and showing it
+on the guest is the `polish` lane's.
+
 ## Granted amendment — the opening deal and the board-commit bridge, in `shell`
 
 `MatchSession` receives `startingHandSize` off the wire, clamps it, and stores
@@ -211,6 +221,7 @@ Scope, stated because the two halves are not the same problem:
     number. Broadcasting it needs a new field on `MatchMessage`, which is
     `protected:` — a wire break to v4 and a `/foundation` amendment. No guest
     exists until the `online` lane lands, so it is not a round-2 question.
+    **Landed as wire v4, 2026-09-14** — see the amendment above.
 
 Rationale: the same one the grants above carry — every lane has one assignee,
 `match` is merged, and a whole lane round for one published integer is ceremony.

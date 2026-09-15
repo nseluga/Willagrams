@@ -3,7 +3,7 @@ import Foundation
 /// The wire format this build speaks. Bump only when `MatchMessage` changes
 /// shape, and add a golden fixture for the new version in the same commit.
 public enum WireFormat {
-    public static let current = 3
+    public static let current = 4
 }
 
 /// How many players one match may hold.
@@ -90,6 +90,14 @@ public enum MatchMessage: Codable, Sendable, Equatable {
 
     /// Host refusing a request.
     case rejected(reason: RejectionReason)
+
+    /// Host's pool size after it moved, so a guest's bag can show a number.
+    ///
+    /// Informational only: the host's pool stays the one authority, and a
+    /// guest never draws, swaps or ends a match on this value. Off the wire it
+    /// is untrusted — a receiver drops a negative count or one above
+    /// ``MatchLimits/poolSize`` rather than showing it.
+    case poolCount(remaining: Int)
 }
 
 public extension MatchMessage {

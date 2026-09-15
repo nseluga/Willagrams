@@ -9,7 +9,7 @@ import WillagramsRules
 @Suite("MatchCodec golden fixture and version gate")
 struct MatchCodecTrustBoundaryTests {
 
-    /// Every element of `wire-v3.json`, hand-built from the literals in the
+    /// Every element of `wire-v4.json`, hand-built from the literals in the
     /// spec — never re-encoded through this build's own encoder, since that
     /// would launder the golden bytes through the code under test.
     static var expectedFixtureMessages: [MatchMessage] {
@@ -41,6 +41,7 @@ struct MatchCodecTrustBoundaryTests {
             .rejected(reason: .notYourTurn),
             .rejected(reason: .unknownPlayer),
             .rejected(reason: .swapDisabled),
+            .poolCount(remaining: 98),
         ]
     }
 

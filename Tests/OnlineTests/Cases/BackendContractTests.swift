@@ -134,7 +134,7 @@ struct BackendRowCodingTests {
           "id": "3b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
           "host_id": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
           "invite_code": "AB12CD",
-          "wire_version": 3,
+          "wire_version": \(WireFormat.current),
           "seed": 9223372036854775807,
           "options": {"minimumWordLength": 3, "swapEnabled": true, "dictionaryID": "standard", "dictionaryHash": "abc123"},
           "status": "lobby",

@@ -23,6 +23,7 @@ struct MatchCodecTests {
             .rejected(reason: .notEnoughTilesToSwap),
             .rejected(reason: .notYourTurn),
             .rejected(reason: .unknownPlayer),
+            .poolCount(remaining: 98),
         ]
     }
 
@@ -36,7 +37,7 @@ struct MatchCodecTests {
     }
 
     static var goldenFixtureURL: URL {
-        repoRoot.appendingPathComponent("Tests/WillagramsRulesTests/Fixtures/wire-v3.json")
+        repoRoot.appendingPathComponent("Tests/WillagramsRulesTests/Fixtures/wire-v4.json")
     }
 
     @Test("Every case round-trips through the codec unchanged")
@@ -52,7 +53,7 @@ struct MatchCodecTests {
     func goldenFixtureDecodes() throws {
         let json = try Data(contentsOf: Self.goldenFixtureURL)
         let elements = try #require(try JSONSerialization.jsonObject(with: json) as? [Any])
-        #expect(elements.count == 13)
+        #expect(elements.count == 14)
 
         for element in elements {
             let elementData = try JSONSerialization.data(withJSONObject: element)
