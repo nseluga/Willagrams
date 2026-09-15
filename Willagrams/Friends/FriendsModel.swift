@@ -318,6 +318,24 @@ public final class FriendsModel {
     }
 
 
+    // MARK: - Your own code
+
+    /// The signed-in player's own code, for the "Your code" card. Read-only —
+    /// the model already trusts `me`, so the view has no reason to ask for it
+    /// any other way.
+    public var myFriendCode: String { me.friendCode }
+
+    /// What the share sheet sends for this player's own code.
+    public var shareMessage: String { "\(Self.shareLead) \(myFriendCode)" }
+
+    /// One line under the lookup field, tracking progress toward the eight
+    /// characters a code needs — not a refusal, just where the player stands.
+    public var lookupHint: String {
+        lookupCode.count == Self.codeLength
+            ? Self.lookupReadyHint
+            : "\(lookupCode.count) of \(Self.codeLength) characters."
+    }
+
     // MARK: - Adding by code
 
     /// What the code field holds, always normalized. Private setter because the
@@ -457,6 +475,10 @@ public final class FriendsModel {
     public static let declineFailedMessage = "Couldn't decline that request. Try again."
     public static let blockFailedMessage = "Couldn't block that player. Try again."
     public static let unfriendFailedMessage = "Couldn't unfriend that player. Try again."
+    public static let yourCodeLabel = "Your code"
+    public static let shareCodeLabel = "Share code"
+    public static let shareLead = "Add me on Willagrams — my friend code is"
+    public static let lookupReadyHint = "Ready to look up."
     public static let addSectionTitle = "Add a friend"
     public static let codeFieldLabel = "Friend code"
     public static let codeFieldPrompt = "8 characters"

@@ -20,16 +20,12 @@ struct ProfileView: View {
     let onBack: () -> Void
 
     /// Tracks the name field so its container can be scrolled into view the
-    /// moment the keyboard covers it — see `name`.
+    /// moment the keyboard covers it — see `nameCard`.
     @FocusState private var nameFieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-            ScreenHeader(
-                title: ProfileModel.title,
-                backTitle: ProfileModel.backLabel,
-                onBack: onBack
-            )
+            header
 
             // The header stays put and the rest scrolls, as on `FriendsView`:
             // a phone in landscape is shorter than this screen, and Done must
@@ -37,12 +33,14 @@ struct ProfileView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-                        name
+                        nameCard
                             .id(Self.nameFieldID)
 
-                        friendCode
-
                         stats
+
+                        winRate
+
+                        friendCode
                     }
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -67,33 +65,71 @@ struct ProfileView: View {
         }
     }
 
-    /// The one editable thing on the row, or just the name when it is somebody
-    /// else's. `canSave` is the model's answer, not a length check repeated
-    /// here.
-    @ViewBuilder private var name: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
-            Text(ProfileModel.nameLabel).monoLabel()
+    /// The comp's top bar: a small mono kicker where the other screens carry a
+    /// title, and Done at the far edge — the same `onBack` every screen reports
+    /// through, just drawn to this screen's own layout rather than the shared
+    /// `ScreenHeader` (which other screens still use unchanged).
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.m) {
+            Text(ProfileModel.title.uppercased())
+                .monoLabel()
+                .accessibilityAddTraits(.isHeader)
+
+            Spacer(minLength: DesignTokens.Space.m)
+
+            doneButton(onBack: onBack)
+        }
+    }
+
+    /// Named so the call site reads `onBack: onBack` — the same closure every
+    /// screen takes and hands straight to its way out, not a route this view
+    /// picked for itself.
+    private func doneButton(onBack: @escaping () -> Void) -> some View {
+        Button(ProfileModel.backLabel, action: onBack)
+            .buttonStyle(.brandText)
+    }
+
+    /// The avatar, the name, the code beneath it, and — for the signed-in
+    /// player — the field and Save button. `canSave` is the model's answer,
+    /// not a length check repeated here.
+    @ViewBuilder private var nameCard: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
+            HStack(spacing: DesignTokens.Space.m) {
+                avatar
+
+                VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
+                    if model.isEditable {
+                        @Bindable var model = model
+                        TextField(ProfileModel.nameLabel, text: $model.draftName)
+                            .textFieldStyle(.plain)
+                            .font(DesignTokens.Typography.title)
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                            .autocorrectionDisabled()
+                            .focused($nameFieldFocused)
+                            .onSubmit {
+                                guard model.canSave else { return }
+                                Task { await model.save() }
+                            }
+                    } else {
+                        Text(model.profile.displayName)
+                            .font(DesignTokens.Typography.title)
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    }
+
+                    Text(model.profile.friendCode)
+                        .font(DesignTokens.Typography.monoLabel)
+                        .tracking(DesignTokens.Typography.monoLabelTracking)
+                        .foregroundStyle(DesignTokens.Palette.textSecondary)
+                }
+            }
 
             if model.isEditable {
-                @Bindable var model = model
-                HStack(spacing: DesignTokens.Space.m) {
-                    TextField(ProfileModel.nameLabel, text: $model.draftName)
-                        .textFieldStyle(.plain)
-                        .font(DesignTokens.Typography.title)
-                        .foregroundStyle(DesignTokens.Palette.textPrimary)
-                        .autocorrectionDisabled()
-                        .focused($nameFieldFocused)
-                        .onSubmit {
-                            guard model.canSave else { return }
-                            Task { await model.save() }
-                        }
-
-                    Button(ProfileModel.saveLabel) {
-                        Task { await model.save() }
-                    }
-                    .buttonStyle(.brandQuiet)
-                    .disabled(!model.canSave)
+                Button(ProfileModel.saveLabel) {
+                    Task { await model.save() }
                 }
+                .buttonStyle(.brandPrimary)
+                .frame(maxWidth: .infinity)
+                .disabled(!model.canSave)
 
                 if let message = model.message {
                     Text(message)
@@ -101,11 +137,95 @@ struct ProfileView: View {
                         .foregroundStyle(DesignTokens.Palette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            } else {
-                Text(model.profile.displayName)
-                    .font(DesignTokens.Typography.title)
-                    .foregroundStyle(DesignTokens.Palette.textPrimary)
             }
+        }
+        .padding(DesignTokens.Space.l)
+        .brandCard()
+    }
+
+    /// The accent tile carrying the display name's first letter — the comp's
+    /// one splash of color on an otherwise ink-on-ink screen.
+    private var avatar: some View {
+        Text(avatarInitial)
+            .font(DesignTokens.Typography.title)
+            .foregroundStyle(DesignTokens.Palette.onAccent)
+            .frame(width: Self.avatarSize, height: Self.avatarSize)
+            .background(DesignTokens.Palette.accent)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.tile, style: .continuous))
+            .accessibilityHidden(true)
+    }
+
+    private var avatarInitial: String {
+        let trimmed = model.profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "" : String(trimmed.prefix(1)).uppercased()
+    }
+
+    /// Three cards over the model's own numbers, plus the fastest win as its
+    /// own row underneath — the comp's grid only has room for three, and the
+    /// fourth value the model already tracks does not get dropped for it.
+    private var stats: some View {
+        VStack(spacing: DesignTokens.Space.m) {
+            LazyVGrid(columns: Self.statColumns, spacing: DesignTokens.Space.s) {
+                ForEach(Array(model.stats.prefix(3).enumerated()), id: \.element) { _, stat in
+                    statCard(stat)
+                }
+            }
+
+            if let fastestWin = model.stats.last {
+                StatRow(label: fastestWin.label, value: fastestWin.value, showsDivider: false)
+                    .padding(DesignTokens.Space.l)
+                    .brandCard()
+            }
+        }
+    }
+
+    private func statCard(_ stat: ProfileStat) -> some View {
+        VStack(spacing: DesignTokens.Space.s) {
+            Text(stat.value)
+                .font(DesignTokens.Typography.title)
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
+
+            Text(stat.label)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(DesignTokens.Space.m)
+        .brandCard()
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Won ÷ played, as a bar and a whole percent — both read off
+    /// `model.winRatePercent`, never worked out again here. Absent entirely
+    /// before anything has been played, per the model's own `nil`.
+    @ViewBuilder private var winRate: some View {
+        if let percent = model.winRatePercent {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+                HStack {
+                    Text(ProfileModel.winRateLabel).monoLabel()
+
+                    Spacer(minLength: DesignTokens.Space.m)
+
+                    Text("\(percent)%")
+                        .font(DesignTokens.Typography.button)
+                        .foregroundStyle(DesignTokens.Palette.accent)
+                }
+
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(DesignTokens.Palette.hairline)
+                        Capsule()
+                            .fill(DesignTokens.Palette.accent)
+                            .frame(width: geometry.size.width * CGFloat(percent) / 100)
+                    }
+                }
+                .frame(height: DesignTokens.Space.s)
+            }
+            .padding(DesignTokens.Space.l)
+            .brandCard()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(ProfileModel.winRateLabel)
+            .accessibilityValue("\(percent)%")
         }
     }
 
@@ -136,22 +256,14 @@ struct ProfileView: View {
                 .buttonStyle(.brandQuiet)
             }
         }
-    }
-
-    /// The stats lane's row, over the model's four values. No number is worked
-    /// out here — `stats` is the row as read.
-    private var stats: some View {
-        VStack(spacing: DesignTokens.Space.s) {
-            ForEach(Array(model.stats.enumerated()), id: \.element) { index, stat in
-                StatRow(
-                    label: stat.label,
-                    value: stat.value,
-                    showsDivider: index < model.stats.count - 1
-                )
-            }
-        }
+        .padding(DesignTokens.Space.l)
+        .brandCard()
     }
 
     private static let contentMaxWidth: CGFloat = 620
     private static let nameFieldID = "profile.nameField"
+    private static let avatarSize: CGFloat = 64
+    private static let statColumns = [
+        GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()),
+    ]
 }

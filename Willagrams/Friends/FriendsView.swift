@@ -43,11 +43,7 @@ struct FriendsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-            ScreenHeader(
-                title: FriendsModel.title,
-                backTitle: FriendsModel.backLabel,
-                onBack: onBack
-            )
+            header
 
             if let message = model.message {
                 Text(message)
@@ -59,6 +55,8 @@ struct FriendsView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                        yourCode
+
                         addByCode
                             .id(Self.codeFieldID)
 
@@ -115,10 +113,7 @@ struct FriendsView: View {
                     section(FriendsModel.outgoingSectionTitle, model.outgoing) { _ in }
 
                     if model.isEmpty && !model.isLoading {
-                        Text(FriendsModel.emptyMessage)
-                            .font(DesignTokens.Typography.body)
-                            .foregroundStyle(DesignTokens.Palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        emptyState
                     }
                     }
                 }
@@ -157,9 +152,62 @@ struct FriendsView: View {
         }
     }
 
+    /// The comp's large title on the left, Done at the far edge — drawn to
+    /// this screen's own layout rather than the shared `ScreenHeader` (which
+    /// other screens still use unchanged), but reporting through the same
+    /// `onBack` closure every screen does.
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.m) {
+            Text(FriendsModel.title)
+                .font(DesignTokens.Typography.title)
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+
+            Spacer(minLength: DesignTokens.Space.m)
+
+            doneButton(onBack: onBack)
+        }
+    }
+
+    /// Named so the call site reads `onBack: onBack` — the same closure every
+    /// screen takes and hands straight to its way out, not a route this view
+    /// picked for itself.
+    private func doneButton(onBack: @escaping () -> Void) -> some View {
+        Button(FriendsModel.backLabel, action: onBack)
+            .buttonStyle(.brandText)
+    }
+
+    /// This player's own code, front and center, with the one-tap way to send
+    /// it to somebody who isn't looking at this screen.
+    private var yourCode: some View {
+        HStack(spacing: DesignTokens.Space.m) {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+                Text(FriendsModel.yourCodeLabel).monoLabel()
+
+                Text(model.myFriendCode)
+                    .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .textSelection(.enabled)
+                    .accessibilityLabel(
+                        Text(model.myFriendCode.map(String.init).joined(separator: " "))
+                    )
+            }
+
+            Spacer(minLength: DesignTokens.Space.m)
+
+            ShareLink(item: model.shareMessage) {
+                Text(FriendsModel.shareCodeLabel)
+            }
+            .buttonStyle(.brandPrimary)
+        }
+        .padding(DesignTokens.Space.l)
+        .brandCard()
+    }
+
     /// Adding a friend by the code they gave you. One field and one button, plus
-    /// the row the lookup found — every decision on it (is the code long enough,
-    /// is it mine, did it match anyone) is the model's.
+    /// a hint tracking progress toward the eight characters, plus the row the
+    /// lookup found — every decision on it (is the code long enough, is it
+    /// mine, did it match anyone) is the model's.
     @ViewBuilder private var addByCode: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
             Text(FriendsModel.addSectionTitle).monoLabel()
@@ -185,6 +233,10 @@ struct FriendsView: View {
                 .disabled(!model.canLookup || model.isLoading)
             }
 
+            Text(model.lookupHint)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+
             if let found = model.lookupResult {
                 HStack(spacing: DesignTokens.Space.m) {
                     Text(found.displayName)
@@ -203,6 +255,34 @@ struct FriendsView: View {
         }
     }
 
+    /// Three tiles spelling ADD over the model's own empty-state line — drawn
+    /// only when every section above came back with nothing at all.
+    private var emptyState: some View {
+        VStack(spacing: DesignTokens.Space.m) {
+            HStack(spacing: DesignTokens.Space.xs) {
+                ForEach(Array("ADD".enumerated()), id: \.offset) { _, letter in
+                    avatarTile(String(letter), size: Self.emptyTileSize)
+                }
+            }
+            .accessibilityHidden(true)
+
+            Text(FriendsModel.emptyMessage)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(DesignTokens.Space.l)
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
+                .strokeBorder(
+                    DesignTokens.Palette.hairline,
+                    style: StrokeStyle(lineWidth: DesignTokens.Stroke.hairline, dash: [4])
+                )
+        }
+    }
+
     /// One titled section, or nothing at all when it is empty — an empty heading
     /// is a promise of rows that are not there.
     @ViewBuilder private func section<Actions: View>(
@@ -216,30 +296,69 @@ struct FriendsView: View {
                 Text(title).monoLabel()
 
                 ForEach(entries) { entry in
-                    HStack(spacing: DesignTokens.Space.m) {
-                        if let onOpen {
-                            Button { onOpen(entry) } label: {
-                                Text(entry.profile.displayName)
-                                    .font(DesignTokens.Typography.body)
-                                    .foregroundStyle(DesignTokens.Palette.textPrimary)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            Text(entry.profile.displayName)
-                                .font(DesignTokens.Typography.body)
-                                .foregroundStyle(DesignTokens.Palette.textPrimary)
-                        }
-
-                        Spacer(minLength: DesignTokens.Space.m)
-
-                        actions(entry)
-                    }
-                    .disabled(model.isLoading)
+                    row(entry, onOpen: onOpen, actions: actions)
                 }
             }
         }
     }
 
+    /// One friend, drawn as a tile: an avatar, their name and code, and
+    /// whatever actions this section offers.
+    private func row<Actions: View>(
+        _ entry: FriendEntry,
+        onOpen: ((FriendEntry) -> Void)?,
+        @ViewBuilder actions: (FriendEntry) -> Actions
+    ) -> some View {
+        HStack(spacing: DesignTokens.Space.m) {
+            avatarTile(initial(entry), size: Self.rowTileSize)
+
+            VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
+                if let onOpen {
+                    Button { onOpen(entry) } label: {
+                        Text(entry.profile.displayName)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(entry.profile.displayName)
+                        .font(DesignTokens.Typography.body)
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
+                }
+
+                Text(entry.profile.friendCode)
+                    .font(DesignTokens.Typography.monoLabel)
+                    .tracking(DesignTokens.Typography.monoLabelTracking)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+            }
+
+            Spacer(minLength: DesignTokens.Space.m)
+
+            actions(entry)
+        }
+        .padding(DesignTokens.Space.m)
+        .brandCard()
+        .disabled(model.isLoading)
+    }
+
+    /// A small square tile carrying one initial — the same face and ink the
+    /// board's own tiles use, standing in for a friend's avatar.
+    private func avatarTile(_ letter: String, size: CGFloat) -> some View {
+        Text(letter)
+            .font(DesignTokens.Typography.body)
+            .foregroundStyle(DesignTokens.Palette.tileLetter)
+            .frame(width: size, height: size)
+            .background(DesignTokens.Palette.tileFace)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.tile, style: .continuous))
+    }
+
+    private func initial(_ entry: FriendEntry) -> String {
+        let trimmed = entry.profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "" : String(trimmed.prefix(1)).uppercased()
+    }
+
     private static let contentMaxWidth: CGFloat = 620
     private static let codeFieldID = "friends.codeField"
+    private static let rowTileSize: CGFloat = 42
+    private static let emptyTileSize: CGFloat = 40
 }
