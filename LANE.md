@@ -139,7 +139,7 @@ Frozen contracts — build and test against these; they will not move:
     - A BoardTests case pinches out from the default zoom and settles at a cell size of 16, not 24
     - Existing BoardTests remain passing, with any assertion that hard-coded 24 as the floor updated to the new floor
   parallel-group: c
-  status: not started
+  status: done
 
 - task: Remove drag snap-back. A tile released anywhere stays where it was dropped unless the target cell is occupied. Today a fast drag snaps the tile back to its origin. **Reproduce before fixing.** The distance guard in `TileDrag.landing` (`Willagrams/Board/BoardDrag.swift` ~line 201) looks nearly dead at threshold 96, so the real cause is unproven. Suspects to rule in or out, in order:
     - a stray second touch reaching `cancel()` through `BoardPinchReporter`

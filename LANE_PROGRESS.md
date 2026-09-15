@@ -5,7 +5,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 ## Current position
 
 - **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** item 7 — zoom further out (item 8 running in parallel)
+- **Next:** item 6 — unfriend (item 8 running in parallel)
 - **Blockers:** none
 - **Last updated:** 2026-09-14
 
@@ -19,7 +19,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Typing screens keep the field visible | done — Profile, Friends and Join scroll the field you're typing in above the keyboard, and Join's button now sits beside its code field. |
 | Reachable validation messages | done — A too-long name, a short friend code or a short join code now shows its message instead of silently greying out the button, and Return submits. |
 | Unfriend | not started |
-| Zoom further out | not started |
+| Zoom further out | done — You can pinch the board out further, to smaller tiles, so big boards fit on screen. |
 | No drag snap-back | not started |
 | Recenter frames every tile | not started |
 | No fly-in on pan | not started |

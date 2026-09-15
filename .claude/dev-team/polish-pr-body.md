@@ -29,3 +29,8 @@
 - **What happened:** canSave/canLookup/canJoin gate only on empty-after-trim + in-flight; the actions keep their length guards and messages, so bad input shows the message with zero backend calls. .onSubmit on Profile and Friends fields. 6 mutation checks (3 length guards, 3 empty-disables) all went red.
 - **What failed:** A new isolated Join fixture tipped a pre-existing SoloMatchTests timing case into timeout in full-suite runs; folding the step into the existing short-code case fixed it.
 - **Remember next run:** In ShellTests (227+), extend an existing case over adding a new fixture-heavy @Test — extra parallel fixtures tip timing-sensitive tests.
+
+## 2026-09-14 23:39 — dev-team-auto — Let the board zoom further out
+- **Outcome:** DONE — 1 attempt — caution: no — team: dt-engineer (opus, high) — auto/polish, commit 0a84844
+- **What happened:** BoardCamera.minCellSize 24→16; floor-hardcoded assertions updated (BoardGestureTests pinch-out, BoardDragGateTests zoom 0.5→0.25 and derived offsets). Mutation: reverting to 24 turns the pinch-out case red.
+- **Remember next run:** For a constant change, grep the symptom (`== minCellSize`, `cellSize ==` near zoom literals) too — a derived collision like `zoom: 0.5` reaching the old floor won't show in a literal grep.
