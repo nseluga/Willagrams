@@ -241,6 +241,7 @@ public struct StyleGallery: View {
                     ("m", DesignTokens.Space.m), ("l", DesignTokens.Space.l),
                     ("xl", DesignTokens.Space.xl),
                     ("screenMarginCompact", DesignTokens.Space.screenMarginCompact),
+                    ("screenMarginPhone", DesignTokens.Space.screenMarginPhone),
                     ("screenMargin", DesignTokens.Space.screenMargin),
                 ]) { width in
                     DesignTokens.Palette.accent.frame(width: width, height: DesignTokens.Space.s)

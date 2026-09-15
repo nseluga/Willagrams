@@ -86,6 +86,9 @@ public enum DesignTokens {
         /// the phone's edges — the safe area still applies on top of this,
         /// SwiftUI adds its insets separately.
         public static let screenMarginCompact: CGFloat = 12
+        /// The screen edge margin on a portrait phone (compact width, regular
+        /// height): between the landscape-phone and iPad margins.
+        public static let screenMarginPhone: CGFloat = 16
     }
 
     /// Line weights. Small and deliberate — the direction leans on edges, not fills.
@@ -196,23 +199,29 @@ public extension View {
         shadow(color: recipe.color, radius: recipe.radius, x: recipe.x, y: recipe.y)
     }
 
-    /// The screen's edge margin — `Space.screenMarginCompact` under a compact
-    /// vertical size class (a landscape phone), `Space.screenMargin`
-    /// otherwise. The one place a screen spells its own margin; every screen
-    /// reads this instead of padding to a raw token.
+    /// The screen's edge margin, chosen by `ScreenMargin.value`. The one place
+    /// a screen spells its own margin; every screen reads this instead of
+    /// padding to a raw token.
     func screenPadding() -> some View {
         modifier(ScreenPadding())
     }
 }
 
+/// Picks the screen edge margin from the two size classes. A plain function so
+/// StyleTests can run it. A nil size class counts as not compact.
+public enum ScreenMargin {
+    public static func value(horizontal: UserInterfaceSizeClass?, vertical: UserInterfaceSizeClass?) -> CGFloat {
+        if vertical == .compact { return DesignTokens.Space.screenMarginCompact }  // landscape phone
+        if horizontal == .compact { return DesignTokens.Space.screenMarginPhone }  // portrait phone
+        return DesignTokens.Space.screenMargin                                     // iPad, or unknown
+    }
+}
+
 private struct ScreenPadding: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     func body(content: Content) -> some View {
-        content.padding(
-            verticalSizeClass == .compact
-                ? DesignTokens.Space.screenMarginCompact
-                : DesignTokens.Space.screenMargin
-        )
+        content.padding(ScreenMargin.value(horizontal: horizontalSizeClass, vertical: verticalSizeClass))
     }
 }

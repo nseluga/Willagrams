@@ -21,7 +21,7 @@ struct DesignTokensTests {
     static let added: [String: [String]] = [
         "Palette": ["canvasTop", "canvasBottom", "surface", "ink", "onInk",
                     "onAccent", "accentPressed", "hairline", "cellEmpty"],
-        "Space": ["screenMargin", "screenMarginCompact"],
+        "Space": ["screenMargin", "screenMarginCompact", "screenMarginPhone"],
         "Radius": ["cell", "pill"],
         "Typography": ["display", "button", "buttonCompact", "monoLabel"],
         "Motion": ["tileLift"],

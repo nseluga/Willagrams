@@ -13,6 +13,10 @@ let package = Package(
     name: "StyleTests",
     platforms: [.macOS(.v14)],
     targets: [
-        .testTarget(name: "StyleTests", path: "Cases"),
+        // The real `DesignTokens.swift` (and `BrandFonts.swift`, which it
+        // names), symlinked per file, so `ScreenMargin.value` runs here
+        // rather than being read as source. Both build for macOS.
+        .target(name: "StyleKit", path: "StyleSrc"),
+        .testTarget(name: "StyleTests", dependencies: ["StyleKit"], path: "Cases"),
     ]
 )
