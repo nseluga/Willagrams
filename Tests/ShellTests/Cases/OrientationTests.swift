@@ -73,9 +73,58 @@ struct OrientationTests {
         let iPad = pbx.filter { $0.contains("INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad") }
         #expect(iPhone.count == 2)
         #expect(iPad.count == 2)
-        for line in iPhone { #expect(line.contains("UIInterfaceOrientationPortrait")) }
-        for line in iPad {
-            #expect(line.contains("\"UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight\""))
+        // Exact literal, not `contains("...Portrait")` — that also matches
+        // `UIInterfaceOrientationPortraitUpsideDown`.
+        for line in iPhone {
+            #expect(line.contains(
+                "= \"UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight\";"
+            ))
         }
+        for line in iPad {
+            #expect(line.contains(
+                "= \"UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight\";"
+            ))
+        }
+    }
+
+    /// Pins the review's Important fix: the static mask starts already
+    /// resolved from the policy (launch route is `.menu`, non-gameplay), not
+    /// from `.all`, which would let UIKit answer "anything goes" from window
+    /// creation until the first `onChange(initial:)` fires.
+    @Test("The static mask starts from the policy, not .all")
+    func initialMaskFromPolicy() throws {
+        let source = try String(
+            contentsOf: Self.root.appendingPathComponent("Willagrams/App/OrientationLock.swift"),
+            encoding: .utf8
+        )
+        let start = try #require(source.range(of: "static var mask: UIInterfaceOrientationMask ="))
+        let end = try #require(source.range(of: "\n", range: start.upperBound..<source.endIndex))
+        let declaration = source[start.upperBound..<end.lowerBound]
+        #expect(declaration.contains("mask(isGameplay: false)"))
+        #expect(!declaration.contains(".all"))
+    }
+
+    /// Pins the review Minor: `uiMask` and the delegate's return value are
+    /// otherwise not observable from `swift test` (a UIKit type on a macOS
+    /// host), so swapping either passes every other test.
+    @Test("uiMask maps .portrait/.landscape literally, and the delegate returns the static mask")
+    func uiMaskAndDelegateWiring() throws {
+        let source = try String(
+            contentsOf: Self.root.appendingPathComponent("Willagrams/App/OrientationLock.swift"),
+            encoding: .utf8
+        )
+
+        let mapStart = try #require(source.range(of: "var uiMask: UIInterfaceOrientationMask {"))
+        let mapEnd = try #require(source.range(of: "\n}", range: mapStart.upperBound..<source.endIndex))
+        let mapping = source[mapStart.upperBound..<mapEnd.lowerBound]
+        #expect(mapping.contains("case .portrait: .portrait"))
+        #expect(mapping.contains("case .landscape: .landscape"))
+
+        let sigStart = try #require(source.range(
+            of: "supportedInterfaceOrientationsFor window: UIWindow?\n    ) -> UIInterfaceOrientationMask {"
+        ))
+        let bodyEnd = try #require(source.range(of: "\n    }", range: sigStart.upperBound..<source.endIndex))
+        let delegateBody = source[sigStart.upperBound..<bodyEnd.lowerBound]
+        #expect(delegateBody.contains("Self.mask"))
     }
 }

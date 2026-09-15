@@ -56,7 +56,12 @@ struct ShellRootView: View {
                 .first { $0.activationState == .foregroundActive } ??
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
             scene?.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-            scene?.requestGeometryUpdate(.iOS(interfaceOrientations: OrientationLock.mask))
+            scene?.requestGeometryUpdate(.iOS(interfaceOrientations: OrientationLock.mask)) { error in
+                // Rejected rotations (e.g. mid-transition) are not fatal — the
+                // mask still applies on the next opportunity. Logged so a
+                // persistent rejection is visible instead of silent.
+                debugPrint("orientation: requestGeometryUpdate failed: \(error)")
+            }
         }
     }
 
