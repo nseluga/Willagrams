@@ -4,10 +4,10 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 ## Current position
 
-- **Status:** in progress — run started 2026-09-14 on `auto/polish` (worktree `~/willagrams-wt/polish-auto/Willagrams`)
-- **Next:** none — all 14 items done; shutdown checks, then Nate's two-device hand tests
+- **Status:** all 14 items done, 0 blocked — run 2026-09-14→15 on `auto/polish`, merged into `lane/polish`. Full serial suite green (rules 53, Style 31, Settings 36, Audio 19, Account 15, Friends 49, Match 128, Board 265, Bot 68, Online 142 + 1 known, Shell 227), BUILD SUCCEEDED
+- **Next:** Nate's two-device hand test (host presses Start, both bags match), the listed hand tests, and a rotated iPad Menu screenshot; then push + PR into integration
 - **Blockers:** none
-- **Last updated:** 2026-09-14
+- **Last updated:** 2026-09-15
 
 ## Round 1 — phone polish
 
