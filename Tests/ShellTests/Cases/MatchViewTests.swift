@@ -37,6 +37,8 @@ struct MatchViewTests {
         let code = try Self.code
         #expect(code.contains { $0.contains("board: $matchBoard.board") })
         #expect(code.contains { $0.contains("model: $matchBoard.model") })
+        // The live camera comes back up, so a delivery follows the player.
+        #expect(code.contains { $0.contains("onCameraSettled: matchBoard.cameraSettled") })
     }
 
     @Test("It composes both halves of the screen")

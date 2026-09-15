@@ -106,6 +106,11 @@ public struct BoardView: View {
     /// frames tiles clear of them; zero for surfaces with nothing on top.
     private let chromeInsets: EdgeInsets
 
+    /// Told where the camera came to rest: once when a pan or pinch ends and
+    /// after a recenter or the first framing — never per gesture frame. The
+    /// owner reads it to land arrivals where the player is looking.
+    private let onCameraSettled: ((BoardCamera) -> Void)?
+
     /// How far along the flight is: 0 at the bag, 1 in the cell. Held here
     /// because it is drawing, not state — nothing outside this view can see it
     /// and no decision turns on it.
@@ -136,9 +141,11 @@ public struct BoardView: View {
         completionAttempts: Int = 0,
         arriving: Set<UUID> = [],
         arrivalToken: Int = 0,
-        chromeInsets: EdgeInsets = EdgeInsets()
+        chromeInsets: EdgeInsets = EdgeInsets(),
+        onCameraSettled: ((BoardCamera) -> Void)? = nil
     ) {
         self.chromeInsets = chromeInsets
+        self.onCameraSettled = onCameraSettled
         _board = board
         // The owner builds the model with the CHEAP init, not the seeding one:
         // nothing here re-checks the board on a re-init, and `.onAppear` below
@@ -193,7 +200,7 @@ public struct BoardView: View {
                 // `drag` is cleared too, or a later touch with the identical
                 // start point would carry the stale grab and never `began`.
                 .onChange(of: touching) { _, now in
-                    if !now { landInterrupted(); drag = nil }
+                    if !now { landInterrupted(); settledIfPanned(); drag = nil }
                 }
                 // Edge swipes (home indicator, Control Center) need a second
                 // swipe over the board, so they stop stealing tile drags —
@@ -208,7 +215,7 @@ public struct BoardView: View {
                 .overlay(
                     BoardPinchReporter(
                         onChange: { scale, midpoint in pinched(scale: scale, midpoint: midpoint) },
-                        onEnd: { pinch = nil }
+                        onEnd: { pinch = nil; onCameraSettled?(camera) }
                     )
                 )
                 // Attached AFTER the camera gestures on purpose: the later
@@ -275,6 +282,7 @@ public struct BoardView: View {
                     withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
                         camera = recentered(in: rect)
                     }
+                    onCameraSettled?(camera)
                 }
                 // The flash, and the only place tint is turned on. `.task(id:)`
                 // rather than a stored timer: a second press cancels the first
@@ -343,6 +351,12 @@ public struct BoardView: View {
         withAnimation(DesignTokens.Motion.snap) {
             board = model.interrupted(on: board, camera: camera, against: dictionary)
         }
+    }
+
+    /// Reports the camera once a one-finger pan ends, released or cancelled.
+    /// `drag` is cleared right after, so the second caller finds nil.
+    private func settledIfPanned() {
+        if case .some(.pan) = drag?.grab { onCameraSettled?(camera) }
     }
 
     private var dragGesture: some Gesture {
@@ -425,6 +439,7 @@ public struct BoardView: View {
                     // accident.
                     model.endedPainting()
                 }
+                settledIfPanned()
                 drag = nil
             }
     }
@@ -482,6 +497,7 @@ public struct BoardView: View {
             withAnimation(DesignTokens.Motion.snap) {
                 camera = recentered(in: rect)
             }
+            onCameraSettled?(camera)
         } label: {
             Image(systemName: Self.recenterSymbol)
                 .font(.system(size: Self.recenterSymbolSize, weight: .regular))

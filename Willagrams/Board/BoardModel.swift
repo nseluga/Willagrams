@@ -273,9 +273,10 @@ public struct BoardModel: Sendable {
         onto board: Board,
         camera: BoardCamera,
         in rect: CGRect,
+        insets: BoardInsets = .zero,
         against dictionary: some WordList
     ) -> Board {
-        let next = BoardLayout.delivered(tiles, onto: board, camera: camera, in: rect)
+        let next = BoardLayout.delivered(tiles, onto: board, camera: camera, in: rect, insets: insets)
         seed(next, against: dictionary)
         return next
     }

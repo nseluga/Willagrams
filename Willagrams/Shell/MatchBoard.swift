@@ -95,6 +95,16 @@ public final class MatchBoard {
     /// here — both are handed straight to `BoardLayout`.
     public var camera = BoardCamera()
     public var viewport: CGRect = .zero
+    /// The chrome drawn over `viewport` (the HUD), so a delivery prefers cells
+    /// the player can actually see. Handed to `BoardLayout` untouched.
+    public var insets: BoardInsets = .zero
+
+    /// Where `BoardView` reports its camera came to rest after a pan, pinch or
+    /// recenter. The only writer of `camera` once the surface is live, so the
+    /// next delivery lands against the viewport the player is looking at.
+    public func cameraSettled(_ settled: BoardCamera) {
+        camera = settled
+    }
 
     /// Whether the player may Draw. Straight off the surface's published
     /// answer — the shell never checks a board or a word itself.
@@ -193,7 +203,7 @@ public final class MatchBoard {
         // mirror below refuses is thrown away whole rather than half published.
         var next = model
         let laid = hasOpened
-            ? next.delivered(arrivals, onto: board, camera: camera, in: viewport, against: dictionary)
+            ? next.delivered(arrivals, onto: board, camera: camera, in: viewport, insets: insets, against: dictionary)
             : next.opening(arrivals, against: dictionary)
 
         var mirrored: [Coord] = []

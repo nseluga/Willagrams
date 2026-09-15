@@ -64,9 +64,8 @@ struct MatchView: View {
                 board: $matchBoard.board,
                 model: $matchBoard.model,
                 // Where the surface starts looking. `BoardView` owns the live
-                // camera from here on and publishes no way to read it back, so
-                // this is the starting value and not a two-way wire — see the
-                // engineer report.
+                // camera and reports where it comes to rest through
+                // `onCameraSettled`, so a delivery lands in the player's view.
                 camera: matchBoard.camera,
                 dictionary: dictionary,
                 // Locked while something covers the board. `BoardView` writes
@@ -82,7 +81,8 @@ struct MatchView: View {
                 // The HUD's footprint, from the same layout `MatchHUD` sizes
                 // itself with, so recenter frames tiles clear of the bag and
                 // the control row. Solo and online both render through here.
-                chromeInsets: hudInsets
+                chromeInsets: hudInsets,
+                onCameraSettled: matchBoard.cameraSettled
             )
             .overlay { MatchHUD(hud: hud) }
             .overlay {
@@ -97,6 +97,9 @@ struct MatchView: View {
             // delivery would land against a zero viewport.
             .onChange(of: proxy.size, initial: true) {
                 matchBoard.viewport = CGRect(origin: .zero, size: proxy.size)
+            }
+            .onChange(of: verticalSizeClass, initial: true) {
+                matchBoard.insets = MatchHUDLayout(isCompact: verticalSizeClass == .compact).boardInsets
             }
         }
     }
