@@ -87,6 +87,10 @@ struct ProfileRouteTests {
     func savingReachesTheShellsRow() async throws {
         let f = try await Self.make()
         #expect(f.shell.showProfile())
+        // Drained first, deliberately: a re-read still running would hand the
+        // shell the same row a save is supposed to hand it, and every assertion
+        // below would pass whether or not the save ever reached the shell.
+        await f.shell.profileRefreshTask?.value
 
         let screen = try #require(f.shell.profile)
         screen.draftName = "Ada"
@@ -115,9 +119,82 @@ struct ProfileRouteTests {
     func showProfileWiresTheSaveBack() throws {
         let model = try Self.shellSource("ShellModel.swift")
         #expect(
-            model.contains("onSaved: { [weak self] saved in self?.currentProfile = saved }"),
+            // The assignment only, not the whole call line: a reformat that
+            // splits the closure across lines changes no behaviour.
+            model.contains("currentProfile = saved"),
             "showProfile no longer writes the saved row back to currentProfile"
         )
+    }
+
+    /// The stats half of the same stale-row defect. `MatchOutcomeRecorder`
+    /// discards the row `recordOutcome` hands back, so nothing in the app moves
+    /// `currentProfile` after a finished match — the four stats would read their
+    /// sign-in values all session. Opening Profile re-reads the row.
+    @Test("Opening Profile re-reads the row, so a match's stats are not frozen at sign-in")
+    func openingProfileRefreshesTheStoredRow() async throws {
+        let f = try await Self.make()
+        #expect(f.me.matchesPlayed == 0)
+
+        // What a finished match leaves in the database, applied by the server
+        // and never handed back through the client.
+        var afterAMatch = f.me
+        afterAMatch.matchesPlayed = 3
+        afterAMatch.matchesWon = 2
+        afterAMatch.tilesPlaced = 91
+        afterAMatch.fastestWinSeconds = 84
+        await f.backend.seedProfile(afterAMatch)
+
+        #expect(f.shell.showProfile())
+        await f.shell.profileRefreshTask?.value
+
+        #expect(f.shell.currentProfile?.matchesPlayed == 3, "the shell's row is still the sign-in one")
+        #expect(f.shell.profile?.profile.matchesPlayed == 3, "the screen is still drawing the frozen row")
+        #expect(f.shell.profile?.stats.map(\.value) == ["3", "2", "91", "84s"])
+        f.shell.returnToMenu()
+    }
+
+    /// The other order, which is the stale-name defect coming back sideways: the
+    /// re-read is issued at open, the player saves while it is still in flight,
+    /// and the row it has been holding since before the save must never be
+    /// written over the saved one. The read is stamped with the row the visit
+    /// opened on, so a `currentProfile` that has moved since drops it.
+    @Test("A read still in flight when a save lands never undoes the save")
+    func slowReadDoesNotClobberASave() async throws {
+        let f = try await Self.make()
+        // Runs inside the read, after the pre-save row has been taken and
+        // before it is handed back — a response held open across a whole save.
+        await f.backend.holdNextProfileRead {
+            await Task { @MainActor in
+                guard let screen = f.shell.profile else { return }
+                screen.draftName = "Ada"
+                await screen.save()
+            }.value
+        }
+
+        #expect(f.shell.showProfile())
+        await f.shell.profileRefreshTask?.value
+
+        #expect(f.shell.currentProfile?.displayName == "Ada", "a read from before the save overwrote the shell's row")
+        #expect(f.shell.profile?.profile.displayName == "Ada", "a read from before the save overwrote the screen")
+        f.shell.returnToMenu()
+    }
+
+    /// The re-read must never eat what the player is typing, so a draft already
+    /// changed survives a row landing under it.
+    @Test("A re-read row does not overwrite a draft the player has already typed")
+    func refreshLeavesATypedDraftAlone() async throws {
+        let f = try await Self.make()
+        #expect(f.shell.showProfile())
+        let screen = try #require(f.shell.profile)
+        screen.draftName = "half typed"
+
+        var bumped = f.me
+        bumped.matchesPlayed = 5
+        screen.adopt(bumped)
+
+        #expect(screen.profile.matchesPlayed == 5, "the stats did not refresh")
+        #expect(screen.draftName == "half typed", "the re-read ate what the player typed")
+        f.shell.returnToMenu()
     }
 
     // MARK: - guardrail: teardown before the route moves

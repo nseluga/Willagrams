@@ -81,8 +81,22 @@ public actor FakeBackend: BackendClient, MatchAbandoning, FriendRequestForgettin
 
     // MARK: Profiles
 
+    /// Runs once inside the next ``profile(id:)``, after the row has been read
+    /// and before it is returned. The seam a test needs to model a slow read:
+    /// no other method lets a caller run while a response is still open, and
+    /// "a read that crossed a write" is otherwise untestable.
+    private var nextProfileReadHold: (@Sendable () async -> Void)?
+
+    public func holdNextProfileRead(_ hold: @escaping @Sendable () async -> Void) {
+        nextProfileReadHold = hold
+    }
+
     public func profile(id: UUID) async throws -> Profile {
         guard let profile = profiles[id] else { throw BackendError.notFound }
+        if let hold = nextProfileReadHold {
+            nextProfileReadHold = nil
+            await hold()
+        }
         return profile
     }
 

@@ -314,6 +314,11 @@ public final class ShellModel {
     /// answer has to be remembered here.
     @ObservationIgnored private var profileReturn: AppRoute = .menu
 
+    /// The re-read ``showProfile()`` starts. Held only so a test can await it
+    /// instead of polling; nothing in the app reads it, and nothing cancels it —
+    /// a late read is dropped by the row it was stamped with, not by a cancel.
+    @ObservationIgnored private(set) var profileRefreshTask: Task<Void, Never>?
+
     /// Menu → the local player's profile, with editing on.
     ///
     /// Refused without a signed-in profile, on the same terms the menu button
@@ -337,6 +342,26 @@ public final class ShellModel {
         )
         profileReturn = .menu
         route = .profile
+        // `currentProfile` is written at sign-in and by a save, and by nothing
+        // else — a finished match's stats bump is applied by the database and
+        // `MatchOutcomeRecorder` discards the row it gets back, so the four
+        // stats would sit frozen at their sign-in values all session. Re-read
+        // the row on the one screen that shows them. Still one source of truth:
+        // this refreshes `currentProfile` and hands the screen the same row.
+        // Stamped with the row this visit opened on: a read still in flight when
+        // a save lands is holding the pre-save row, and writing it would undo
+        // the save — the very defect this item fixes, re-entering sideways.
+        let opened = currentProfile
+        profileRefreshTask = Task { @MainActor [weak self] in
+            guard let self, let backend = services.backend,
+                  let fresh = try? await backend.profile(id: opened.id),
+                  // Qualified: the `guard let currentProfile` above shadows the
+                  // stored property with the row this visit opened on.
+                  self.currentProfile == opened
+            else { return }
+            self.currentProfile = fresh
+            profile?.adopt(fresh)
+        }
         return true
     }
 

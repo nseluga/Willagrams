@@ -162,6 +162,22 @@ public final class ProfileModel {
         }
     }
 
+    /// Takes a freshly-read copy of the same row — stats a finished match moved
+    /// while this screen was not up, most of all.
+    ///
+    /// Not a second source of truth: the owner reads the row and hands it here,
+    /// exactly as ``save()`` hands one back. A draft the player has already
+    /// changed survives, because a late read must never eat what they typed,
+    /// and a different row is refused outright. There is deliberately no
+    /// mid-save guard: the owner drops a read that a save has overtaken before
+    /// it ever gets here, so one here would pin nothing.
+    public func adopt(_ fresh: Profile) {
+        guard fresh.id == profile.id else { return }
+        let untouched = draftName == profile.displayName
+        profile = fresh
+        if untouched { draftName = fresh.displayName }
+    }
+
     // MARK: - The friend code
 
     public func copyFriendCode() {

@@ -181,6 +181,31 @@ struct ProfileModelTests {
         #expect(handedBack.count == 1)
     }
 
+    /// `adopt` is how the owner hands a freshly-read row down. A different row
+    /// is refused outright: the screen renders one player, and taking somebody
+    /// else's would silently swap who is on screen.
+    @Test("Adopting refreshes the stats, and refuses a row that is not this one")
+    func adoptTakesTheSameRowOnly() async throws {
+        let f = try await Self.make()
+
+        var bumped = f.profile
+        bumped.matchesPlayed = 4
+        bumped.tilesPlaced = 77
+        f.model.adopt(bumped)
+        #expect(f.model.stats.map(\.value) == ["4", "0", "77", ProfileModel.noValue])
+
+        let stranger = Profile(
+            id: UUID(),
+            displayName: "Stranger",
+            friendCode: "QQQQ9999",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            matchesPlayed: 99
+        )
+        f.model.adopt(stranger)
+        #expect(f.model.profile.id == f.profile.id, "the screen adopted somebody else's row")
+        #expect(f.model.stats.first?.value == "4")
+    }
+
     // MARK: - guardrail: no stat is computed client-side
 
     @Test("The four stats are the row as read, and there is no fifth")
