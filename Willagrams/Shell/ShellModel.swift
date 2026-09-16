@@ -1008,9 +1008,16 @@ public final class ShellModel {
         withObservationTracking {
             _ = run.session.state.status
             _ = run.session.isMatchOver
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.isLiveGeneration(generation) else { return }
+        // `run` is captured weakly for the same reason `self` is: `onChange` is
+        // escaping and the session's own observation registrar holds it, so a
+        // strong `run` here closes session → registrar → closure → run →
+        // opponent → session. That cycle outlives the shell — which IS released,
+        // its back-references being `unowned`/`weak` — and left the run, its
+        // session and its HUD alive for the life of the process, with an
+        // `unowned` shell reference inside a deallocated object.
+        } onChange: { [weak self, weak run] in
+            Task { @MainActor [weak self, weak run] in
+                guard let self, let run, self.isLiveGeneration(generation) else { return }
                 guard case .countdown = self.route else { return }
                 // A card still up means the count is still running.
                 guard let card = CountdownOverlay(session: run.session) else {
@@ -1042,9 +1049,10 @@ public final class ShellModel {
     private func endWhenTheMatchDoes(_ run: MatchRun, generation: Int) {
         withObservationTracking {
             _ = run.session.isMatchOver
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.isLiveGeneration(generation) else { return }
+        // Weak for the same reason as above.
+        } onChange: { [weak self, weak run] in
+            Task { @MainActor [weak self, weak run] in
+                guard let self, let run, self.isLiveGeneration(generation) else { return }
                 guard run.session.isMatchOver else {
                     return self.endWhenTheMatchDoes(run, generation: generation)
                 }
