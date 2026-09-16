@@ -620,6 +620,13 @@ public final class MatchSession: AppActivityListener {
         }
     }
 
+    /// Seconds still owed to a reconnecting peer, or nil where no window is
+    /// running. Read by value so a test can assert the budget only ever
+    /// *shrinks* across a lock/unlock loop — a window topped back up by any
+    /// amount hangs a dead match for as long as somebody keeps locking, and that
+    /// is a comparison, not a timing bound.
+    public var reconnectSecondsOwedForTesting: Int? { reconnectSecondsOwed }
+
     /// Banks whatever is left of the reconnect window.
     ///
     /// Only the part of it that ran on screen is spent. The stamped deadline is

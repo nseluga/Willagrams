@@ -93,9 +93,15 @@ public final class OnlineMatch {
     @ObservationIgnored private let outcomeStore: (any MatchOutcomeStore)?
 
     /// The app's scene phase, or nil where nothing is listening (a test, a
-    /// preview). Held so every session this façade builds can be registered
-    /// as it is built — a session created after the app went away still gets
-    /// the next resume.
+    /// preview). Held so every session this façade builds can be registered as
+    /// it is built.
+    ///
+    /// `AppActivity.current` is a latch, not a replay: a session registered
+    /// while the app is *already* away is never told `.away`, so its next
+    /// `.active` finds `isAway == false` and no-ops. Harmless in practice —
+    /// a session is only ever built from a screen that is on screen — but it
+    /// means the registration does not retroactively cover a lock that had
+    /// already started.
     @ObservationIgnored private let activity: AppActivity?
 
     /// One countdown tick, handed straight to `MatchSession`. Injected so a

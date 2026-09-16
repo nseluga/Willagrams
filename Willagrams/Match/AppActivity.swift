@@ -12,9 +12,16 @@
 //  (`MatchSession` and `RealtimeMatchTransport`) are proven. `Willagrams/Match`
 //  is compiled by every package that compiles either of them.
 //
-//  Never imports SwiftUI. `UIApplication` is behind `canImport(UIKit)`, which
-//  is false for the macOS test host, so the notification half simply is not
-//  built there and `send(_:)` is the whole surface a test needs.
+//  Never imports SwiftUI. The two lifecycle notifications are named by their
+//  ObjC constants rather than by `UIApplication.<name>Notification` behind a
+//  `#if canImport(UIKit)`, and that is deliberate: a conditionally-compiled
+//  subscription is compiled by no `swift test` gate at all, so swapping the two
+//  names is a mutation nothing can catch. Named as strings, `observe(_:)` is one
+//  unconditional body that a macOS test drives by posting to an injected
+//  `NotificationCenter` — see `ScreenLockTests.theObserverSubscribesToTheTwo…`.
+//  `assertNamesStillMatchUIKit()` is the belt: it compiles only under UIKit, it
+//  is compiled by the `xcodebuild` gate, and it trips on a debug launch if
+//  Apple ever renames a constant that has been stable since iOS 2.
 //
 
 import Foundation
@@ -51,6 +58,16 @@ public final class AppActivity: @unchecked Sendable {
         case away
     }
 
+    /// The notification that means the app left the screen —
+    /// `UIApplication.didEnterBackgroundNotification` by its ObjC name.
+    public static let awayNotification = Notification.Name(
+        "UIApplicationDidEnterBackgroundNotification")
+
+    /// The notification that means it is coming back —
+    /// `UIApplication.willEnterForegroundNotification` by its ObjC name.
+    public static let activeNotification = Notification.Name(
+        "UIApplicationWillEnterForegroundNotification")
+
     private let lock = NSLock()
     private var current: Phase = .active
     private var listeners: [WeakListener] = []
@@ -69,6 +86,14 @@ public final class AppActivity: @unchecked Sendable {
 
     /// The phase last announced.
     public var phase: Phase { lock.withLock { current } }
+
+    /// Whether this instance is actually subscribed to anything.
+    ///
+    /// Exists because a `center: nil` argument at the one shipping call site is
+    /// a one-word edit that makes the whole screen-lock fix a no-op in the
+    /// binary while every behavioural test — which wires its own observer —
+    /// carries on passing. `ShellTests` asserts it on the real `ShellServices`.
+    public var isObservingForTesting: Bool { center != nil }
 
     /// Registers a listener. Held weakly: a match that ends while the app is
     /// backgrounded must not be kept alive by this list.
@@ -97,24 +122,33 @@ public final class AppActivity: @unchecked Sendable {
     /// The enclosing context is nonisolated, so neither closure inherits
     /// `@MainActor` — see the note on ``AppActivityListener``.
     private func observe(_ center: NotificationCenter) {
-        #if canImport(UIKit)
+        Self.assertNamesStillMatchUIKit()
         let away = center.addObserver(
-            forName: UIApplication.didEnterBackgroundNotification,
+            forName: Self.awayNotification,
             object: nil,
             queue: nil
         ) { [weak self] _ in self?.send(.away) }
         let back = center.addObserver(
-            forName: UIApplication.willEnterForegroundNotification,
+            forName: Self.activeNotification,
             object: nil,
             queue: nil
         ) { [weak self] _ in self?.send(.active) }
         lock.withLock { tokens.append(contentsOf: [away, back]) }
+    }
+
+    /// Debug-only, UIKit-only: proves the two string names above are still the
+    /// ones UIKit posts. Free in release, and compiled by the `xcodebuild` gate
+    /// even though no `swift test` host can see it.
+    private static func assertNamesStillMatchUIKit() {
+        #if canImport(UIKit)
+        assert(awayNotification == UIApplication.didEnterBackgroundNotification)
+        assert(activeNotification == UIApplication.willEnterForegroundNotification)
         #endif
     }
 
     deinit {
         guard let center else { return }
-        for token in tokens { center.removeObserver(token) }
+        for token in lock.withLock({ tokens }) { center.removeObserver(token) }
     }
 
     private struct WeakListener {

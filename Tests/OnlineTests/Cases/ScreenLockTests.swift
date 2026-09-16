@@ -60,6 +60,7 @@ struct ScreenLockTests {
     ///   requested duration. Defaulted to parking forever, so a case that is
     ///   not about the session window cannot be reached by it.
     private static func table(
+        countdownSeconds: Int = 0,
         sessionSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in
             try await Task.sleep(for: .seconds(3_600))
         }
@@ -85,9 +86,20 @@ struct ScreenLockTests {
         guestActivity.add(guestTransport)
         guestActivity.add(guest)
 
-        host.startMatch(seed: 11, startingHandSize: 4, countdownSeconds: 0, options: .standard)
-        try await waitUntil("both sessions playing") {
-            host.state.status == .playing && guest.state.status == .playing
+        host.startMatch(
+            seed: 11, startingHandSize: 4, countdownSeconds: countdownSeconds, options: .standard)
+        if countdownSeconds == 0 {
+            try await waitUntil("both sessions playing") {
+                host.state.status == .playing && guest.state.status == .playing
+            }
+        } else {
+            // `.countdown(secondsRemaining: 0)` is also the status a session
+            // sits in before the start lands, so the wait is for a tick that has
+            // actually been handed a number.
+            try await waitUntil("the guest to be counting down") {
+                if case let .countdown(remaining) = guest.state.status { return remaining > 0 }
+                return false
+            }
         }
         return Table(
             bus: bus, hostChannel: hostChannel, guestChannel: guestChannel,
@@ -345,21 +357,173 @@ struct ScreenLockTests {
 
     // MARK: - Wiring
 
-    /// A dropped `activity:` argument compiles, runs, passes every behavioural
-    /// case above — and ships a build where locking the phone still kills the
-    /// match, because nothing is listening. The default is `nil` so the dozens
-    /// of existing call sites still build, which is exactly why the real call
-    /// sites are pinned rather than trusted.
-    @Test("The façade registers the transport before the session, and the lobbies pass one in")
-    func theSceneObserverIsActuallyWiredUp() throws {
-        let facade = try Self.source(of: "Willagrams/Online/OnlineMatch.swift")
-        let registerTransport = facade.range(of: "activity?.add(listening)")
-        let registerSession = facade.range(of: "activity?.add(session)")
-        #expect(registerTransport != nil)
-        #expect(registerSession != nil)
+    /// A dropped `activity:` argument compiles, runs, and ships a build where
+    /// locking the phone still kills the match, because nothing is listening.
+    ///
+    /// Pinned by **value**, not by reading the source. The previous version of
+    /// this case asserted that the strings `activity?.add(listening)` and
+    /// `activity?.add(session)` appeared in `OnlineMatch.swift` — which says
+    /// nothing about whether either line is *reached*, and a mutation that put
+    /// both behind a predicate that is never true left both literals byte-intact
+    /// and scored zero. Here the façade builds the transport and the session
+    /// itself, through `host`/`join`/`awaitStart`, and the only thing asserted is
+    /// what the two registrations are *for*.
+    @Test("The façade's own wiring — not a hand-wired one — survives a lock")
+    func theShippedWiringSurvivesALock() async throws {
+        let backend = FakeBackend()
+        let creator = try await backend.signInWithApple(idToken: "A", nonce: "n").playerID
+        let joiner = try await backend.signInWithApple(idToken: "B", nonce: "n").playerID
 
+        let bus = StubBus()
+        let creatorChannel = bus.channel()
+        let joinerChannel = bus.channel()
+        let creatorTransport = try await RealtimeMatchTransport.connect(
+            localPlayerID: creator, channel: creatorChannel, peerGrace: Self.grace,
+            gapGrace: .seconds(60))
+        let joinerTransport = try await RealtimeMatchTransport.connect(
+            localPlayerID: joiner, channel: joinerChannel, peerGrace: Self.grace, gapGrace: .seconds(60))
+        await backend.setTransportFactory { _, player in
+            player == creator ? creatorTransport : joinerTransport
+        }
+
+        // Only the joining device gets an observer: one phone locks, the other
+        // stays on screen. Exactly what `JoinModel` does with
+        // `shell.services.activity`.
+        let activity = AppActivity(center: nil)
+        _ = try await backend.signInWithApple(idToken: "A", nonce: "n")
+        let hosted = try await OnlineMatch.host(
+            options: .standard, backend: backend, dictionary: EveryWordIsReal(), sleepFor: { _ in })
+        _ = try await backend.signInWithApple(idToken: "B", nonce: "n")
+        let joined = try await OnlineMatch.join(
+            code: hosted.inviteCode, backend: backend, dictionary: EveryWordIsReal(),
+            activity: activity,
+            sleepFor: { _ in try await Task.sleep(for: .milliseconds(40)) })
+
+        // The façade builds this session and registers it; nothing in this case
+        // touches `AppActivity.add` itself.
+        let session = try await joined.awaitStart()
+
+        activity.send(.away)
+        joinerChannel.deliverPresence(joined: [], left: [creator])
+        try await Task.sleep(for: Self.lockDuration)
+        activity.send(.active)
+
+        // The transport registration: without it the 200ms peer grace ran out
+        // mid-lock and finished `inbound`/`states` for good.
+        #expect(!joinerTransport.isFinishedForTesting)
+        // The session registration: without it the 40ms stand-in for the 30s
+        // reconnect window ran out mid-lock and `awayPeersAreGone()` is one-way.
+        #expect(session.presence(of: creator) != .gone)
+        #expect(!session.isMatchOver)
+
+        withExtendedLifetime(hosted) {}
+        withExtendedLifetime(creatorTransport) {}
+    }
+
+    /// The lobbies are the only two call sites, and neither is reachable from
+    /// this target — a `@MainActor` shell model over SwiftUI screens. A literal
+    /// is the only cover a private, unreachable call site takes.
+    @Test("Both lobbies hand the shell's own observer to the façade")
+    func theLobbiesPassTheShellsObserver() throws {
         for lobby in ["Willagrams/Shell/HostLobbyModel.swift", "Willagrams/Shell/JoinModel.swift"] {
             #expect(try Self.source(of: lobby).contains("activity: shell.services.activity"))
+        }
+    }
+
+    // MARK: - The budget may only shrink
+
+    /// The bound that actually holds, and it is a comparison rather than a
+    /// number: across any number of locks the banked window may only get
+    /// smaller. A top-up of *any* size — an hour, a second, a millisecond —
+    /// breaks it, where a timing bound only catches a top-up big enough to
+    /// overrun whatever number the bound happened to pick.
+    @Test("Locking repeatedly never grows the transport's banked grace")
+    func theTransportsBankedGraceOnlyShrinks() async throws {
+        let table = try await Self.table()
+
+        // The peer goes for good while the app is on screen, so a window is
+        // really running when the first lock lands.
+        table.bus.leave(table.hostChannel)
+        table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
+        let firstDrop = ContinuousClock.now
+
+        var previous = Self.grace
+        for _ in 0 ..< 5 {
+            table.guestActivity.send(.away)
+            let banked = try #require(table.guestTransport.bankedGraceForTesting)
+            #expect(banked <= previous)
+            previous = banked
+            table.guestActivity.send(.active)
+            // A non-zero stretch on screen: time the peer really is reachable
+            // for, and really does owe.
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        try await Self.waitUntil("the transport to give up on the peer", within: .seconds(3)) {
+            table.guestTransport.isFinishedForTesting
+        }
+        // ...and a hard ceiling on the wall time from the first drop, so a
+        // window that grew slowly still fails rather than merely taking longer.
+        #expect(firstDrop.duration(to: .now) < Self.grace * 4)
+    }
+
+    @Test("Locking repeatedly never grows the session's reconnect budget")
+    func theSessionsReconnectBudgetOnlyShrinks() async throws {
+        // One session-second is 10ms here, so the real 30-second window is
+        // 300ms and is decidable inside the case.
+        let table = try await Self.table(sessionSleep: { duration in
+            try await Task.sleep(for: .milliseconds(max(1, duration.components.seconds * 10)))
+        })
+
+        table.bus.leave(table.hostChannel)
+        table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
+        try await Self.waitUntil("the reconnect window to arm") {
+            table.guest.reconnectSecondsOwedForTesting != nil
+        }
+        let firstDrop = ContinuousClock.now
+
+        var previous = MatchSession.reconnectGraceSeconds
+        for _ in 0 ..< 5 {
+            table.guestActivity.send(.away)
+            try await Self.waitUntil("the budget to be banked") {
+                table.guest.reconnectSecondsOwedForTesting != nil
+            }
+            let owed = try #require(table.guest.reconnectSecondsOwedForTesting)
+            #expect(owed <= previous)
+            previous = owed
+            table.guestActivity.send(.active)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        try await Self.waitUntil("the peer to be reported gone", within: .seconds(3)) {
+            table.guest.presence(of: Self.hostID) == .gone
+        }
+        #expect(firstDrop.duration(to: .now) < .seconds(2))
+    }
+
+    // MARK: - A lock that lands before the deal
+
+    /// Every other case here locks during `.playing`. A lock during the pre-deal
+    /// countdown takes a different path — `peerDropped` cancels `countdownTask`
+    /// and banks `heldCountdownSeconds`, and only `peerReturned` resumes it — so
+    /// a fix that left the reconnect window running would strand the match on
+    /// the countdown screen with two empty racks.
+    @Test("A lock during the pre-deal countdown still reaches the board")
+    func aLockDuringTheCountdownStillDeals() async throws {
+        let table = try await Self.table(
+            countdownSeconds: 10,
+            sessionSleep: { _ in try await Task.sleep(for: .milliseconds(100)) })
+
+        try await Self.lock(table)
+        try await Self.peerReappears(to: table)
+
+        try await Self.waitUntil("the held countdown to finish and the hands to deal") {
+            table.guest.state.status == .playing && !table.guest.state.hand.isEmpty
+        }
+        let before = table.guest.state.hand.count
+        #expect(table.guest.draw())
+        try await Self.waitUntil("the draw to be granted after a countdown lock") {
+            table.guest.state.hand.count + table.guest.pendingDrawTiles.count > before
         }
     }
 

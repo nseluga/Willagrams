@@ -264,6 +264,16 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// observable event, but a test that is not consuming them needs to ask.
     nonisolated var isFinishedForTesting: Bool { peers.isFinished }
 
+    /// What is banked of the peer-grace window while the app is off screen.
+    ///
+    /// Read by value rather than inferred from timing because the invariant that
+    /// matters is a *comparison*: across repeated lock/unlock the banked
+    /// remainder may only shrink. A window that is topped up by any amount at
+    /// all — a second, a millisecond — holds a dead match open for as long as
+    /// somebody keeps locking the phone, and no single timing bound catches
+    /// every size of top-up.
+    nonisolated var bankedGraceForTesting: Duration? { peers.bankedGrace }
+
     /// Hands `message` to the channel.
     ///
     /// `delivery` is recorded by transports that can honour it; Realtime
@@ -383,6 +393,8 @@ private final class PeerRoster: @unchecked Sendable {
 
     private var isAwayNow: Bool { lock.withLock { away } }
 
+    var bankedGrace: Duration? { lock.withLock { gracePaused } }
+
     /// Banks what is left of a running window and stops it. Idempotent: a
     /// second background notification cannot bank a second, longer remainder.
     func pauseGrace() {
@@ -414,6 +426,11 @@ private final class PeerRoster: @unchecked Sendable {
         armGrace(remaining, close: close)
     }
 
+    /// Drops the window entirely. `away` is deliberately *not* cleared: it
+    /// tracks where the app is, not what this window is doing, and the only
+    /// caller is `leave()`, after which nothing arms a window again. A roster is
+    /// owned by exactly one transport and is never reused, so there is no second
+    /// match that could inherit a stale `away`.
     func cancelGrace() {
         let task: Task<Void, Never>? = lock.withLock {
             defer {
