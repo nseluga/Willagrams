@@ -818,13 +818,40 @@ struct ScreenLockTests {
         _ = OnlineMatch.join(
             code:backend:dictionary:dictionaryHash:outcomeStore:activity:sleepFor:now:)
 
+        let source = try Self.normalised(of: "Willagrams/Online/OnlineMatch.swift")
+
+        // Link 1 — `host` and `join` each forward it into `make`. Both, hence
+        // the count: one entry point left on the wall clock is half the bug.
+        let intoMake = """
+            outcomeStore: outcomeStore,
+            activity: activity,
+            sleepFor: sleepFor,
+            now: now
+            """
+        #expect(source.components(separatedBy: intoMake).count - 1 == 2, "host and join")
+
+        // Link 2 — `make` forwards it into the initialiser.
+        let intoInit = """
+            outcomeStore: store,
+            activity: activity,
+            sleepFor: sleepFor,
+            now: now
+            """
+        #expect(source.contains(intoInit), "make -> init")
+
+        // Link 3 — the initialiser stores the one it was given. `self.now =
+        // Date.init` compiles, ships the wall clock, and is invisible to every
+        // other pin here.
+        #expect(source.contains("self.now = now"), "init stores it")
+
+        // Link 4 — `makeSession`'s own call into `MatchSession`.
         let call = """
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
             sleepFor: sleepFor,
             now: now
             """
-        #expect(try Self.normalised(of: "Willagrams/Online/OnlineMatch.swift").contains(call))
+        #expect(source.contains(call), "makeSession -> MatchSession")
     }
 
     /// A transport that has already finished has no match left to re-join.
