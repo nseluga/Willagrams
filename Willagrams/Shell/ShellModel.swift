@@ -802,34 +802,52 @@ public final class ShellModel {
         // that write is the lobby's own task — so this waits on it rather than
         // polling, and re-checks that the lobby is still the live one.
         inviteSend?.cancel()
-        inviteSend = Task { @MainActor [weak self] in
-            await lobby.work?.value
-            guard !Task.isCancelled, let self, self.hostLobby === lobby else { return }
-            guard let code = lobby.inviteCode, let matchID = lobby.match?.record.id else {
-                self.inviteMessage = Self.inviteSendFailedMessage
+        // `lobby` and `self` are both weak, and neither is ever bound to a
+        // strong local that outlives a suspension: a `let` taken before an
+        // `await` is a strong capture for the whole parked send, and a send
+        // cannot be interrupted once parked, so a cancelled lobby would be kept
+        // alive by this task rather than deallocated by `teardown()`. The frame
+        // is built through `flatMap`, whose borrow ends when it returns.
+        inviteSend = Task { @MainActor [weak self, weak lobby] in
+            await lobby?.work?.value
+            guard !Task.isCancelled, lobby != nil, self?.hostLobby === lobby else { return }
+            guard let frame = lobby.flatMap({ Self.inviteFrame(for: $0, from: me, at: now()) }) else {
+                self?.inviteMessage = Self.inviteSendFailedMessage
                 return
             }
             do {
-                try await channel.send(
-                    MatchInvite(
-                        matchID: matchID,
-                        inviteCode: code,
-                        hostID: me.id,
-                        hostName: me.displayName,
-                        sentAt: now()),
-                    to: recipient)
+                try await channel.send(frame, to: recipient)
             } catch {
                 // The same staleness guard the success path took before the
                 // await, retaken after it: a send cannot be interrupted once
                 // parked, so by the time it throws the player may be on a
                 // countdown or in a match, and this line must not land there.
-                guard !Task.isCancelled, self.hostLobby === lobby else { return }
+                guard !Task.isCancelled, lobby != nil, let self, self.hostLobby === lobby else {
+                    return
+                }
                 // The lobby is still good — the code is on screen and can be
                 // read out — so this says the invite did not go, and nothing
                 // more.
                 self.inviteMessage = Self.inviteSendFailedMessage
             }
         }
+    }
+
+    /// The frame for a lobby that has already minted its code, or nil while it
+    /// has not. A function rather than an inline `guard let` so the lobby is
+    /// borrowed for exactly this call and released before the send parks.
+    private static func inviteFrame(
+        for lobby: HostLobbyModel,
+        from me: Profile,
+        at sentAt: Date
+    ) -> MatchInvite? {
+        guard let code = lobby.inviteCode, let matchID = lobby.match?.record.id else { return nil }
+        return MatchInvite(
+            matchID: matchID,
+            inviteCode: code,
+            hostID: me.id,
+            hostName: me.displayName,
+            sentAt: sentAt)
     }
 
     /// What the next solo match will be played with. Lives here rather than on

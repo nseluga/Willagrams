@@ -816,6 +816,12 @@ struct InviteTests {
 
         #expect(f.shellA.playAFriend())
         let lobby = try #require(f.shellA.hostLobby)
+        // The reachability condition the source pin can only read as text,
+        // asserted as a value: `hostActions` draws `openSeatRow` exactly when
+        // `!lobby.canStart`, and a host waiting alone is that case. If this ever
+        // came up true, the picker would be pinned in source and unreachable in
+        // fact.
+        #expect(lobby.canStart == false, "the seat the picker sits in was not open")
         #expect(f.shellA.invitePlayFromLobby(entry))
 
         await JoinTests.until("the invite left A") { f.bus.delivered == 1 }
@@ -881,6 +887,30 @@ struct InviteTests {
         f.shellA.returnToMenu()
     }
 
+    @Test("A send still in flight does not keep a cancelled lobby alive")
+    func aParkedSendReleasesTheLobby() async throws {
+        let parked = ParkedFailingChannel()
+        let f = try await Self.make(hostChannel: { _ in parked })
+        let entry = try await Self.rowForB(f)
+        #expect(f.shellA.invitePlay(entry))
+        await JoinTests.until("the send to park") { parked.isSending }
+
+        weak var released = f.shellA.hostLobby
+        #expect(released != nil, "there was no lobby to leak")
+        // The player gives up while the send is parked, and a parked send
+        // cannot be interrupted — so a strong `let lobby` inside that task is
+        // what would keep the torn-down lobby alive past `teardown()`.
+        f.shellA.returnToMenu()
+        // Asserted WHILE the send is still parked, which is the only moment
+        // that can tell the two captures apart: letting the task finish first
+        // would drop even a strong capture and pass either way.
+        for _ in 0..<400 { await Task.yield() }
+        #expect(parked.isSending, "the send finished, so this proves nothing")
+        #expect(released == nil, "the parked send outlived the lobby it belonged to")
+        parked.release()
+        for _ in 0..<200 { await Task.yield() }
+    }
+
     /// `swift test` never compiles `TwoPlayerView.swift`, so the criterion "the
     /// host can send an invite from the open seat" is pinned the way
     /// `JoinTests.joinStatusRendersEachPhase()` pins un-compilable wiring: read
@@ -904,39 +934,160 @@ struct InviteTests {
             .filter { !$0.hasPrefix("//") }
             .joined(separator: "\n")
 
-        // Through the closing brace of the open seat's `HStack`: removing the
-        // call, gating it, or appending anything to it all break this.
-        #expect(normalized.contains("Spacer(minLength: 0)\ninvitePicker\n}"))
+        // ONE contiguous literal per link of the chain that reaches the
+        // picker, each spanning a WHOLE declaration — `body` through
+        // `hostActions` through `openSeatRow` through `invitePicker`. The
+        // category this closes is "an edit to an ENCLOSING view defeats the
+        // pin": a condition added anywhere above the call, a modifier appended
+        // to any link (`.hidden()`, `.disabled(true)`, `.opacity(0)`), a
+        // swapped branch, or a wrapper around the roster all fall inside one of
+        // these four literals and turn this red. Several independent `contains`
+        // would prove only that the strings exist somewhere in the file.
+        //
+        // The price is brittleness: any legitimate edit to any of these four
+        // declarations false-reds this test, and whoever makes it re-extends
+        // the literal. That is the correct price for pinning reachability.
 
-        // The picker itself, whole — declaration through the last modifier and
-        // the var's closing brace. Every arm is inside one literal, so a
-        // `ForEach` wrapped in a condition, an `.hidden()`, a `.disabled(true)`
-        // or a send swapped for something else is a red test rather than a
-        // silent no-op picker.
-        #expect(
-            normalized.contains(
-                """
-                private var invitePicker: some View {
-                let friends = shell.invitableFriends
-                return Menu {
-                if friends.isEmpty {
-                Text(Self.noInvitableFriendsLabel)
-                } else {
-                ForEach(friends) { entry in
-                Button(entry.profile.displayName) {
-                shell.invitePlayFromLobby(entry)
-                }
-                }
-                }
-                } label: {
-                Text(Self.inviteLabel)
-                }
-                .buttonStyle(.brandQuiet)
-                .task { await shell.lobbyFriends?.load() }
-                }
-                """
-            )
-        )
+        // body, whole.
+        #expect(normalized.contains(#"""
+var body: some View {
+VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+topBar
+
+VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+Text(isHost ? HostLobbyModel.title : JoinModel.title)
+.font(DesignTokens.Typography.title)
+.foregroundStyle(DesignTokens.Palette.textPrimary)
+Text(isHost ? Self.hostSubtitle : Self.joinSubtitle)
+.font(DesignTokens.Typography.body)
+.foregroundStyle(DesignTokens.Palette.textSecondary)
+.fixedSize(horizontal: false, vertical: true)
+}
+
+chips
+
+ScrollViewReader { proxy in
+ScrollView {
+VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+codeSection
+
+if case .join(let join) = mode {
+joinField(join).id(Self.codeFieldID)
+joinStatus(join)
+}
+
+if isHost {
+hostActions
+}
+
+if let message {
+Text(message)
+.font(DesignTokens.Typography.caption)
+.foregroundStyle(DesignTokens.Palette.danger)
+.fixedSize(horizontal: false, vertical: true)
+}
+}
+.frame(maxWidth: .infinity, alignment: .leading)
+}
+.scrollDismissesKeyboard(.interactively)
+.onChange(of: codeFieldFocused) { _, isFocused in
+guard isFocused else { return }
+withAnimation {
+proxy.scrollTo(Self.codeFieldID, anchor: .center)
+}
+}
+}
+
+primaryButton
+}
+.frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
+.frame(maxWidth: .infinity, maxHeight: .infinity)
+.screenPadding()
+.background { canvas }
+}
+"""#))
+
+        // hostActions, whole.
+        #expect(normalized.contains(#"""
+@ViewBuilder private var hostActions: some View {
+if case .host(let lobby) = mode {
+VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
+if let code = lobby.inviteCode {
+HStack(spacing: DesignTokens.Space.m) {
+Button(didCopyCode ? Self.copiedLabel : Self.copyLabel) {
+ShellModel.pasteboard(code)
+didCopyCode = true
+}
+.buttonStyle(.brandQuiet)
+.frame(maxWidth: .infinity)
+
+ShareLink(item: code) {
+Label(Self.shareLabel, systemImage: "square.and.arrow.up")
+}
+.buttonStyle(.brandQuiet)
+.frame(maxWidth: .infinity)
+}
+}
+
+ForEach(Array(lobby.roster.enumerated()), id: \.offset) { _, name in
+seatedRow(name)
+}
+if !lobby.canStart {
+openSeatRow
+}
+}
+}
+}
+"""#))
+
+        // openSeatRow, whole.
+        #expect(normalized.contains(#"""
+private var openSeatRow: some View {
+HStack(spacing: DesignTokens.Space.m) {
+RoundedRectangle(cornerRadius: DesignTokens.Radius.tile, style: .continuous)
+.strokeBorder(DesignTokens.Palette.hairline, style: StrokeStyle(lineWidth: DesignTokens.Stroke.hairline, dash: [4]))
+.frame(width: Self.avatarSide, height: Self.avatarSide)
+
+VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
+Text(Self.openSeatLabel)
+.font(DesignTokens.Typography.body)
+.foregroundStyle(DesignTokens.Palette.textSecondary)
+Text(Self.waitingLabel)
+.font(DesignTokens.Typography.caption)
+.foregroundStyle(DesignTokens.Palette.textSecondary)
+}
+Spacer(minLength: 0)
+invitePicker
+}
+.padding(DesignTokens.Space.m)
+.overlay {
+RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
+.strokeBorder(DesignTokens.Palette.hairline, style: StrokeStyle(lineWidth: DesignTokens.Stroke.hairline, dash: [4]))
+}
+}
+"""#))
+
+        // invitePicker, whole.
+        #expect(normalized.contains(#"""
+private var invitePicker: some View {
+let friends = shell.invitableFriends
+return Menu {
+if friends.isEmpty {
+Text(Self.noInvitableFriendsLabel)
+} else {
+ForEach(friends) { entry in
+Button(entry.profile.displayName) {
+shell.invitePlayFromLobby(entry)
+}
+}
+}
+} label: {
+Text(Self.inviteLabel)
+}
+.buttonStyle(.brandQuiet)
+.task { await shell.lobbyFriends?.load() }
+}
+"""#))
     }
 
 }
