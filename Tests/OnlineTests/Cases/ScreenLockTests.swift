@@ -585,11 +585,18 @@ struct ScreenLockTests {
         table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
         let firstDrop = ContinuousClock.now
 
-        var previous = Self.grace
+        // STRICTLY smaller, and seeded ABOVE the window rather than at it.
+        // `banked <= Self.grace` is satisfied forever by a `pauseGrace` that
+        // banks the whole original window instead of the remainder — the peer
+        // window then restarts in full on every resume, so a lock/unlock loop
+        // defers the peer-gone latch indefinitely, and every wall-clock ceiling
+        // in this file still holds because the window never exceeds its
+        // original length. Only a strict comparison sees it.
+        var previous = Self.grace + .seconds(1)
         for _ in 0 ..< 5 {
             table.guestActivity.send(.away)
             let banked = try #require(table.guestTransport.bankedGraceForTesting)
-            #expect(banked <= previous)
+            #expect(banked < previous, "banked \(banked), was \(previous)")
             previous = banked
             table.guestActivity.send(.active)
             // A non-zero stretch on screen: time the peer really is reachable
