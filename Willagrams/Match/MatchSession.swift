@@ -331,6 +331,18 @@ public final class MatchSession: AppActivityListener {
     /// compared or trusted, because two devices' clocks disagree.
     private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
 
+    /// The other half of that same clock: what time it is *on it*.
+    ///
+    /// Injected together with ``sleepFor`` and never separately, because the
+    /// reconnect window is armed from both at once — the `Date` the banner
+    /// counts down to is `now() + seconds` and the wait is `sleepFor(seconds)`.
+    /// Reading the wall clock here while the wait ran on an injected one is
+    /// what used to make a partial spend unobservable: a test could run a
+    /// thirty-second window to its end in 300ms and the deadline would still
+    /// say thirty seconds were owed, so a resume that topped the budget back up
+    /// looked exactly like one that banked it. One clock, both halves.
+    private let now: @Sendable () -> Date
+
     // MARK: - Plumbing
 
     @ObservationIgnored private var hostPool: HostPool?
@@ -435,7 +447,8 @@ public final class MatchSession: AppActivityListener {
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
-        }
+        },
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         // Trapping, not refusing: none of this came off the wire. A caller that
         // built a roster this way has a bug, and a session that quietly played
@@ -459,6 +472,7 @@ public final class MatchSession: AppActivityListener {
         self.dictionary = dictionary
         self.localDictionaryHash = dictionaryHash
         self.sleepFor = sleepFor
+        self.now = now
         beginReceiving()
     }
 
@@ -473,7 +487,8 @@ public final class MatchSession: AppActivityListener {
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
-        }
+        },
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.init(
             transport: transport,
@@ -481,7 +496,8 @@ public final class MatchSession: AppActivityListener {
                 .sorted { $0.rawValue < $1.rawValue },
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
-            sleepFor: sleepFor
+            sleepFor: sleepFor,
+            now: now
         )
     }
 
@@ -561,7 +577,7 @@ public final class MatchSession: AppActivityListener {
         // The deadline it stamps a line below is the real one — both the
         // banner's `Date` and the wait come from that one call, so they cannot
         // be derived from two different instants.
-        peerPresences[player] = .reconnecting(deadline: Date())
+        peerPresences[player] = .reconnecting(deadline: now())
         armReconnectWait(seconds: Self.reconnectGraceSeconds)
     }
 
@@ -580,7 +596,7 @@ public final class MatchSession: AppActivityListener {
         reconnectSecondsOwed = seconds
         reconnectTask?.cancel()
         reconnectTask = nil
-        let deadline = Date().addingTimeInterval(TimeInterval(seconds))
+        let deadline = now().addingTimeInterval(TimeInterval(seconds))
         for player in roster {
             guard case .reconnecting = presence(of: player) else { continue }
             peerPresences[player] = .reconnecting(deadline: deadline)
@@ -643,7 +659,7 @@ public final class MatchSession: AppActivityListener {
             return deadline
         }.max()
         guard let furthest else { return }
-        reconnectSecondsOwed = max(0, Int(furthest.timeIntervalSinceNow.rounded(.up)))
+        reconnectSecondsOwed = max(0, Int(furthest.timeIntervalSince(now()).rounded(.up)))
     }
 
     /// Resumes the window with what was left of it, re-stamped so the banner

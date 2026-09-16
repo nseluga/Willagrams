@@ -111,6 +111,34 @@ struct JoinTests {
         return model
     }
 
+    // MARK: - The scene-phase observer, by value
+
+    /// Item 10, the guest half of `done when:` 1 — and the only automated cover
+    /// for the JOIN LOBBY, as opposed to the `OnlineMatch.join` façade.
+    ///
+    /// `JoinModel.join()` passes `shell.services.activity` to the façade.
+    /// `activity: nil` there compiles, ships, and leaves a guest whose phone
+    /// locks with a dead pump — and passes every behavioural case in the repo,
+    /// because they all wire an observer of their own. What that mutation
+    /// cannot survive is reading the SHELL'S OWN observer back after a real
+    /// join and finding the session it built registered on it.
+    @Test("A join registers its session with the shell's own scene-phase observer")
+    func theJoinLobbyRegistersWithTheShellsObserver() async throws {
+        let f = try await Self.make()
+        let model = try await Self.joinTheLobby(f)
+        await Self.until("the guest's session to exist") { model.session != nil }
+        let session = try #require(model.session)
+
+        #expect(
+            f.shell.services.activity.listenerIdentitiesForTesting
+                .contains(ObjectIdentifier(session)))
+
+        // And it really is live wiring, not a list: the phase reaches it.
+        f.shell.services.activity.send(.away)
+        f.shell.services.activity.send(.active)
+        model.cancel()
+    }
+
     // MARK: - No cycle through the observation registrar
 
     /// `watchStart`'s registration is armed for as long as a guest waits, and a

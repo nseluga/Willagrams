@@ -39,6 +39,46 @@ struct ScreenLockTests {
 
     // MARK: - Setup
 
+    /// One clock, scaled — both halves of it.
+    ///
+    /// ``now()`` runs *continuously* at exactly the rate ``sleep`` waits at, so
+    /// a thirty-second reconnect window is thirty seconds on this clock and
+    /// 300ms on the wall, and a window that has run half-way through has half
+    /// of it left **by value**. That is the whole point: a session whose
+    /// deadline came off `Date()` while its wait came off an injected sleeper
+    /// would report a full thirty seconds still owed after the window had
+    /// nearly run out, which makes a resume that banks the remainder and one
+    /// that tops it back up to full indistinguishable from outside. They are
+    /// the two clocks `done when:` 2 forbids, and this type is the one clock.
+    final class ScaledClock: @unchecked Sendable {
+        /// Session-seconds per real second.
+        let factor: Double
+        private let started = ContinuousClock.now
+        private let epoch = Date()
+
+        init(factor: Double) { self.factor = factor }
+
+        static func seconds(_ duration: Duration) -> Double {
+            Double(duration.components.seconds)
+                + Double(duration.components.attoseconds) * 1e-18
+        }
+
+        /// Virtual seconds elapsed since this clock started.
+        private var elapsed: Double { Self.seconds(started.duration(to: .now)) * factor }
+
+        var sleep: @MainActor @Sendable (Duration) async throws -> Void {
+            let factor = self.factor
+            return { duration in
+                let real = Self.seconds(duration) / factor
+                try await Task.sleep(for: .milliseconds(max(1, Int(real * 1000))))
+            }
+        }
+
+        var now: @Sendable () -> Date {
+            { [self] in epoch.addingTimeInterval(elapsed) }
+        }
+    }
+
     /// Two sessions playing over two real transports on one stub bus, plus the
     /// guest's scene-phase observer wired the way `OnlineMatch` wires it.
     ///
@@ -59,12 +99,19 @@ struct ScreenLockTests {
     /// - Parameter sessionGrace: what the sessions' injected clock does with a
     ///   requested duration. Defaulted to parking forever, so a case that is
     ///   not about the session window cannot be reached by it.
+    /// - Parameter clock: the sessions' one clock, supplying both their sleep
+    ///   and their `now`. Given one, `sessionSleep` is ignored — a case that
+    ///   wants a scaled window wants both halves scaled together or it is back
+    ///   to two clocks.
     private static func table(
         countdownSeconds: Int = 0,
+        clock: ScaledClock? = nil,
         sessionSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in
             try await Task.sleep(for: .seconds(3_600))
         }
     ) async throws -> Table {
+        let sessionSleep = clock?.sleep ?? sessionSleep
+        let sessionNow: @Sendable () -> Date = clock?.now ?? Date.init
         let bus = StubBus()
         let hostChannel = bus.channel()
         let hostTransport = try await RealtimeMatchTransport.connect(
@@ -75,10 +122,10 @@ struct ScreenLockTests {
 
         let host = MatchSession(
             transport: hostTransport, peerPlayerID: guestID,
-            dictionary: EveryWordIsReal(), sleepFor: sessionSleep)
+            dictionary: EveryWordIsReal(), sleepFor: sessionSleep, now: sessionNow)
         let guest = MatchSession(
             transport: guestTransport, peerPlayerID: hostID,
-            dictionary: EveryWordIsReal(), sleepFor: sessionSleep)
+            dictionary: EveryWordIsReal(), sleepFor: sessionSleep, now: sessionNow)
 
         // Registration order is `OnlineMatch`'s: transport first, so on resume
         // the socket is back before any window resumes counting.
@@ -105,6 +152,13 @@ struct ScreenLockTests {
             bus: bus, hostChannel: hostChannel, guestChannel: guestChannel,
             hostTransport: hostTransport, guestTransport: guestTransport,
             host: host, guest: guest, guestActivity: guestActivity)
+    }
+
+    /// Lets a phase change land. ``AppActivity`` calls `appActivityChanged(to:)`
+    /// `nonisolated`, and both listeners hop onto the main actor from there, so
+    /// nothing a phase change does is readable in the same turn as the `send`.
+    private static func settle() async {
+        for _ in 0 ..< 50 { await Task.yield() }
     }
 
     private static func waitUntil(
@@ -236,17 +290,69 @@ struct ScreenLockTests {
         #expect(!table.guest.isMatchOver)
     }
 
-    /// The deadline the UI renders and the sleep the session actually waits on
-    /// are derived in one call from one instant, so they cannot disagree by a
-    /// suspend duration. Pinned on the source: two clocks agreeing is a
-    /// property of how the wait is armed, not of any one observable value.
-    @Test("The session's reconnect deadline and its sleep are armed from one call")
-    func oneClockArmsBothTheDeadlineAndTheSleep() throws {
-        let source = try Self.source(of: "Willagrams/Match/MatchSession.swift")
-        #expect(source.contains("private func armReconnectWait(seconds: Int)"))
-        // The only two places the wait is set up, and both go through it.
-        #expect(source.contains("armReconnectWait(seconds: Self.reconnectGraceSeconds)"))
-        #expect(source.contains("armReconnectWait(seconds: owed)"))
+    /// `done when:` 2, second half, **by value**: the deadline the banner counts
+    /// down to runs down at exactly the rate the wait does, because they are one
+    /// clock.
+    ///
+    /// The window is thirty session-seconds. Fifteen of them are let run on
+    /// screen, which is 150ms of wall time — so a deadline stamped off `Date()`
+    /// while the wait ran off the injected sleeper would still say thirty
+    /// seconds were owed here, and that reading is exactly what used to make a
+    /// partial spend unobservable. Fifteen is what one clock reads.
+    @Test("The session's reconnect deadline runs down at the rate its sleep does")
+    func oneClockArmsBothTheDeadlineAndTheSleep() async throws {
+        let table = try await Self.table(clock: ScaledClock(factor: 100))
+
+        // The peer drops while the guest is on screen, so the window really is
+        // counting and really is being charged for.
+        table.bus.leave(table.hostChannel)
+        table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
+        try await Self.waitUntil("the reconnect window to arm") {
+            table.guest.reconnectSecondsOwedForTesting != nil
+        }
+        #expect(table.guest.reconnectSecondsOwedForTesting == MatchSession.reconnectGraceSeconds)
+
+        // Half the window, on screen.
+        try await Task.sleep(for: .milliseconds(150))
+        table.guestActivity.send(.away)
+        await Self.settle()
+
+        // Banked off the stamped deadline. On the wall clock this reads 30.
+        let owed = try #require(table.guest.reconnectSecondsOwedForTesting)
+        #expect(owed >= 10 && owed <= 20, "half a thirty-second window, not \(owed)")
+    }
+
+    /// `done when:` 2's other direction, on the same clock: the time off screen
+    /// is charged to nobody, so a long lock leaves the remainder where the lock
+    /// found it rather than draining it.
+    @Test("A long lock does not spend the banked remainder on the one clock")
+    func theBankedRemainderSurvivesALongLock() async throws {
+        let table = try await Self.table(clock: ScaledClock(factor: 100))
+
+        table.bus.leave(table.hostChannel)
+        table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
+        try await Self.waitUntil("the reconnect window to arm") {
+            table.guest.reconnectSecondsOwedForTesting != nil
+        }
+        try await Task.sleep(for: .milliseconds(100))
+
+        table.guestActivity.send(.away)
+        await Self.settle()
+        let atLock = try #require(table.guest.reconnectSecondsOwedForTesting)
+        // 500ms off screen is fifty session-seconds — well past the whole
+        // window. None of it may be charged.
+        try await Task.sleep(for: .milliseconds(500))
+        table.guestActivity.send(.active)
+
+        // Straight back off screen: whatever is banked now is what the lock
+        // left, not what the lock spent.
+        table.guestActivity.send(.away)
+        await Self.settle()
+        let afterLock = try #require(table.guest.reconnectSecondsOwedForTesting)
+        #expect(
+            afterLock <= atLock && afterLock >= atLock - 1,
+            "\(atLock) owed at the lock, \(afterLock) after it")
+        #expect(table.guest.presence(of: Self.hostID) != .gone)
     }
 
     // MARK: - `done when:` 3 — a peer that never returns is still gone
@@ -403,6 +509,14 @@ struct ScreenLockTests {
         // touches `AppActivity.add` itself.
         let session = try await joined.awaitStart()
 
+        // Both registrations, and their ORDER, by value. `activity: nil` at
+        // either façade call site leaves this list empty; swapping the two
+        // `add` calls resumes the session's window over a socket that is not
+        // back yet, which is the ordering the item mandates.
+        #expect(
+            activity.listenerIdentitiesForTesting
+                == [ObjectIdentifier(joinerTransport), ObjectIdentifier(session)])
+
         activity.send(.away)
         joinerChannel.deliverPresence(joined: [], left: [creator])
         try await Task.sleep(for: Self.lockDuration)
@@ -420,14 +534,38 @@ struct ScreenLockTests {
         withExtendedLifetime(creatorTransport) {}
     }
 
-    /// The lobbies are the only two call sites, and neither is reachable from
-    /// this target — a `@MainActor` shell model over SwiftUI screens. A literal
-    /// is the only cover a private, unreachable call site takes.
+    /// The belt on both lobby call sites. The braces are `ShellTests`, which
+    /// drives `JoinModel.join()` and `HostLobbyModel.start()` over a real
+    /// `OnlineMatch` and asserts the shell's own observer came back with the
+    /// session registered on it — by value, which is the real cover.
+    ///
+    /// What is left here is a literal, so it is ONE contiguous match against
+    /// NORMALISED source: every line trimmed, every `//` line dropped, rejoined.
+    /// Independent `contains` calls are what let a mutation keep the string
+    /// alive in a comment while the call itself passed `nil`, and normalising
+    /// deletes that hiding place.
     @Test("Both lobbies hand the shell's own observer to the façade")
     func theLobbiesPassTheShellsObserver() throws {
+        let call = """
+            backend: backend,
+            dictionary: dictionary,
+            activity: shell.services.activity,
+            sleepFor: sleepFor
+            """
         for lobby in ["Willagrams/Shell/HostLobbyModel.swift", "Willagrams/Shell/JoinModel.swift"] {
-            #expect(try Self.source(of: lobby).contains("activity: shell.services.activity"))
+            #expect(try Self.normalised(of: lobby).contains(call), "\(lobby)")
         }
+    }
+
+    /// Source with every line trimmed and every whole-line comment removed. A
+    /// literal pinned against this cannot be satisfied by a `//` line that
+    /// merely mentions it.
+    private static func normalised(of path: String) throws -> String {
+        try source(of: path)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") }
+            .joined(separator: "\n")
     }
 
     // MARK: - The budget may only shrink
@@ -467,13 +605,15 @@ struct ScreenLockTests {
         #expect(firstDrop.duration(to: .now) < Self.grace * 4)
     }
 
+    /// STRICTLY smaller, not merely no larger. A budget that never shrinks is
+    /// monotone too, and that is precisely the shape a re-armed full window
+    /// takes: `owed <= previous` holds at thirty forever. Each cycle spends a
+    /// real stretch on screen — twenty milliseconds, two session-seconds on the
+    /// one clock — so honest bookkeeping has to show it, and any top-up at all
+    /// puts the next reading back where the last one was or above it.
     @Test("Locking repeatedly never grows the session's reconnect budget")
     func theSessionsReconnectBudgetOnlyShrinks() async throws {
-        // One session-second is 10ms here, so the real 30-second window is
-        // 300ms and is decidable inside the case.
-        let table = try await Self.table(sessionSleep: { duration in
-            try await Task.sleep(for: .milliseconds(max(1, duration.components.seconds * 10)))
-        })
+        let table = try await Self.table(clock: ScaledClock(factor: 100))
 
         table.bus.leave(table.hostChannel)
         table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
@@ -482,23 +622,71 @@ struct ScreenLockTests {
         }
         let firstDrop = ContinuousClock.now
 
-        var previous = MatchSession.reconnectGraceSeconds
-        for _ in 0 ..< 5 {
-            table.guestActivity.send(.away)
-            try await Self.waitUntil("the budget to be banked") {
-                table.guest.reconnectSecondsOwedForTesting != nil
-            }
-            let owed = try #require(table.guest.reconnectSecondsOwedForTesting)
-            #expect(owed <= previous)
-            previous = owed
-            table.guestActivity.send(.active)
+        var previous = MatchSession.reconnectGraceSeconds + 1
+        for cycle in 0 ..< 5 {
+            // On screen, with the peer unreachable: time that really is owed.
             try await Task.sleep(for: .milliseconds(20))
+            table.guestActivity.send(.away)
+            await Self.settle()
+            let owed = try #require(table.guest.reconnectSecondsOwedForTesting)
+            #expect(owed < previous, "cycle \(cycle): \(owed) owed, was \(previous)")
+            previous = owed
+            // Off screen for five times as long, and none of it charged.
+            try await Task.sleep(for: .milliseconds(100))
+            table.guestActivity.send(.active)
+            await Self.settle()
         }
 
         try await Self.waitUntil("the peer to be reported gone", within: .seconds(3)) {
             table.guest.presence(of: Self.hostID) == .gone
         }
         #expect(firstDrop.duration(to: .now) < .seconds(2))
+    }
+
+    // MARK: - The order the fan-out runs in
+
+    /// `done when:` 1's mechanism, and the item's own wording: on resume the
+    /// transport re-subscribes *before* any window resumes counting. That is
+    /// two facts, and both are pinned by value rather than by comment.
+    ///
+    /// This half is `AppActivity`'s: a phase reaches listeners in the order they
+    /// registered. Reverse the fan-out and the session's window resumes over a
+    /// socket that is not back yet — a window spent on nothing, which is the
+    /// bug this whole item is about.
+    @Test("A phase reaches listeners in registration order")
+    func theFanOutRunsInRegistrationOrder() {
+        let activity = AppActivity(center: nil)
+        let log = Recorder.Log()
+        let first = Recorder(name: "first", log: log)
+        let second = Recorder(name: "second", log: log)
+        activity.add(first)
+        activity.add(second)
+
+        activity.send(.away)
+        activity.send(.active)
+
+        #expect(log.entries == ["first:away", "second:away", "first:active", "second:active"])
+        withExtendedLifetime(first) {}
+        withExtendedLifetime(second) {}
+    }
+
+    private final class Recorder: AppActivityListener, @unchecked Sendable {
+        final class Log: @unchecked Sendable {
+            private let lock = NSLock()
+            private var seen: [String] = []
+            var entries: [String] { lock.withLock { seen } }
+            func append(_ entry: String) { lock.withLock { seen.append(entry) } }
+        }
+
+        private let name: String
+        private let log: Log
+        init(name: String, log: Log) {
+            self.name = name
+            self.log = log
+        }
+        func appActivityChanged(to phase: AppActivity.Phase) {
+            log.append("\(name):\(phase == .away ? "away" : "active")")
+        }
     }
 
     // MARK: - A lock that lands before the deal

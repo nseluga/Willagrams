@@ -28,6 +28,18 @@ struct AppActivityWiringTests {
         #expect(ShellServices().activity.isObservingForTesting)
     }
 
+    /// The `activity:` argument is the instance stored, not merely *an*
+    /// observer. An init body that ignores its parameter and substitutes a
+    /// fresh `AppActivity()` passes every other case here — it observes, it has
+    /// the right phase — while the lobbies hand the façade an observer nobody
+    /// else in the app holds, so a `send` on the one a caller injected reaches
+    /// nothing. Identity is the only assertion that sees it.
+    @Test("The activity a shell is built with is the one it hands out")
+    func theInjectedObserverIsTheOneStored() {
+        let injected = AppActivity(center: nil)
+        #expect(ShellServices(activity: injected).activity === injected)
+    }
+
     @Test("A shell built with no arguments still gets a subscribed observer")
     func everyDefaultedShellObserves() {
         // The lobbies read `shell.services.activity` and pass it to

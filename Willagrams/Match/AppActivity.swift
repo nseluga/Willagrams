@@ -95,6 +95,19 @@ public final class AppActivity: @unchecked Sendable {
     /// carries on passing. `ShellTests` asserts it on the real `ShellServices`.
     public var isObservingForTesting: Bool { center != nil }
 
+    /// Who is registered, in registration order.
+    ///
+    /// Identities rather than the listeners themselves, so reading this cannot
+    /// extend anybody's life. Two things are only assertable through it, and
+    /// both are load-bearing rather than incidental: that a lobby handed the
+    /// façade a *live* observer at all — `activity: nil` at either call site
+    /// compiles and ships a build where a lock kills the match — and that
+    /// `OnlineMatch` registers the transport before the session, which is the
+    /// order that puts the socket back up before any window resumes counting.
+    public var listenerIdentitiesForTesting: [ObjectIdentifier] {
+        lock.withLock { listeners.compactMap { $0.value.map(ObjectIdentifier.init) } }
+    }
+
     /// Registers a listener. Held weakly: a match that ends while the app is
     /// backgrounded must not be kept alive by this list.
     public func add(_ listener: any AppActivityListener) {

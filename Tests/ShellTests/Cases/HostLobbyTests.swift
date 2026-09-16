@@ -230,6 +230,31 @@ struct HostLobbyTests {
     /// values survived" are the same guarantee read from either end — the
     /// settings that travelled are the last ones editable, and there is no
     /// third state where the sheet is shut but the store holds something else.
+    /// Item 10, the host half. Same hole as the guest's, same shape, same cover:
+    /// `HostLobbyModel.create()` passes `shell.services.activity`, and a `nil`
+    /// there is a one-word edit that ships a host whose match dies on a lock.
+    /// Read back off the shell's own observer, after a real start.
+    @Test("A hosted match registers its session with the shell's own observer")
+    func theHostLobbyRegistersWithTheShellsObserver() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+        lobby.start()
+        await Self.until("the run is installed") { f.shell.run != nil }
+
+        let session = try #require(f.shell.run).session
+        #expect(
+            f.shell.services.activity.listenerIdentitiesForTesting
+                .contains(ObjectIdentifier(session)))
+
+        f.shell.services.activity.send(.away)
+        f.shell.services.activity.send(.active)
+    }
+
     @Test("Start closes the match settings, and what they held reaches the next lobby")
     func settingsCloseAtStartAndPersistToTheNextLobby() async throws {
         let suite = "host-lobby-settings-tests"
