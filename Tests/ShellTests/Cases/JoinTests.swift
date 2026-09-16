@@ -136,6 +136,11 @@ struct JoinTests {
             // on it. Capturing without this wait races, and a run that lost the
             // race asserts about a registration that was never made.
             await Self.until("the guest's session to exist") { model.session != nil }
+            // The registration this guard is about only arms while the model
+            // is `.waiting` — pinned here so a phase that skipped `.waiting`
+            // (and so never armed `watchStart`'s observer) cannot make this
+            // guard pass for a reason that has nothing to do with the cycle.
+            #expect(model.phase == .waiting)
             weakModel = model
             weakMatch = try #require(model.match)
             weakSession = try #require(model.session)
