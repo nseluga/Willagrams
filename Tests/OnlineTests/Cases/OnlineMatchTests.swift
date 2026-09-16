@@ -46,7 +46,15 @@ struct OnlineMatchOfflineTests {
         let guest: OnlineMatch
     }
 
-    static func fixture(creatorToken: String, guestToken: String) async throws -> Fixture {
+    /// - Parameter sleepFor: the clock both façades hand their sessions.
+    ///   Defaults to a no-op, which is what every case in this suite wants: no
+    ///   test here is waiting on time. A case that needs a reconnect window to
+    ///   still be *open* when it looks passes one that does not return.
+    static func fixture(
+        creatorToken: String,
+        guestToken: String,
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in }
+    ) async throws -> Fixture {
         let backend = FakeBackend()
         let creatorPlayer = try await backend.signInWithApple(idToken: creatorToken, nonce: "n").playerID
         let guestPlayer = try await backend.signInWithApple(idToken: guestToken, nonce: "n").playerID
@@ -66,7 +74,7 @@ struct OnlineMatchOfflineTests {
             backend: backend,
             dictionary: EnableWordList(words: []),
             outcomeStore: creatorStore,
-            sleepFor: { _ in }
+            sleepFor: sleepFor
         )
 
         _ = try await backend.signInWithApple(idToken: guestToken, nonce: "n")
@@ -75,7 +83,7 @@ struct OnlineMatchOfflineTests {
             backend: backend,
             dictionary: EnableWordList(words: []),
             outcomeStore: guestStore,
-            sleepFor: { _ in }
+            sleepFor: sleepFor
         )
 
         return Fixture(

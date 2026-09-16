@@ -440,6 +440,16 @@ public final class MatchSession: AppActivityListener {
     ///     ``MatchOptions/standardDictionaryHash``, which is the default.
     ///   - sleepFor: one countdown tick, and the reconnect window. Defaults to
     ///     real time.
+    ///   - observesPeerConnections: whether this session subscribes to
+    ///     `peerConnectionStates` itself. False where something upstream is
+    ///     already the stream's one consumer and forwards each state in through
+    ///     ``receive(peerConnection:)`` — `OnlineMatch`, whose lobby pump took
+    ///     that stream first. `peerConnectionStates` allows exactly one
+    ///     consumer per endpoint, so a session that subscribed anyway would be
+    ///     opening a second iterator on a stream the lobby pump had already
+    ///     finished, and no drop would ever reach it. Not stored: it is read
+    ///     once, here, and `MatchSession` is at the toolchain's stored-property
+    ///     limit.
     public init(
         transport: any MatchTransport,
         roster: [PlayerID],
@@ -448,7 +458,8 @@ public final class MatchSession: AppActivityListener {
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         },
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        observesPeerConnections: Bool = true
     ) {
         // Trapping, not refusing: none of this came off the wire. A caller that
         // built a roster this way has a bug, and a session that quietly played
@@ -473,7 +484,7 @@ public final class MatchSession: AppActivityListener {
         self.localDictionaryHash = dictionaryHash
         self.sleepFor = sleepFor
         self.now = now
-        beginReceiving()
+        beginReceiving(observingPeerConnections: observesPeerConnections)
     }
 
     /// The two-player case: the only lobby this release ships.
@@ -513,7 +524,7 @@ public final class MatchSession: AppActivityListener {
     /// reading either property twice and iterating both would divide its
     /// elements between the two iterators rather than fail, and the symptom is
     /// a message that never arrives.
-    private func beginReceiving() {
+    private func beginReceiving(observingPeerConnections: Bool) {
         let inbound = transport.inboundMessages
         pump = Task { @MainActor [weak self] in
             for await message in inbound {
@@ -521,6 +532,7 @@ public final class MatchSession: AppActivityListener {
                 self.receive(message)
             }
         }
+        guard observingPeerConnections else { return }
         let connections = transport.peerConnectionStates
         presencePump = Task { @MainActor [weak self] in
             for await connection in connections {
@@ -528,6 +540,17 @@ public final class MatchSession: AppActivityListener {
                 self.apply(connection)
             }
         }
+    }
+
+    /// Hands this session one connection-state change from whoever owns the
+    /// stream.
+    ///
+    /// The other half of `observesPeerConnections: false`: a session that does
+    /// not subscribe learns about drops and returns only through here. Applied
+    /// by exactly the same code a self-subscribed session runs, so the two
+    /// ownership arrangements cannot drift.
+    public func receive(peerConnection: PeerConnectionState) {
+        apply(peerConnection)
     }
 
     /// Applies one connection-state change for one peer.

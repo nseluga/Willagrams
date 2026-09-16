@@ -124,6 +124,15 @@ public final class OnlineMatch {
     @ObservationIgnored private var presencePump: Task<Void, Never>?
     @ObservationIgnored private var recorderTask: Task<Void, Never>?
 
+    /// The session this façade built, once it has built one.
+    ///
+    /// The other end of the single-subscription rule: ``watchLobby()`` is the
+    /// one consumer of `peerConnectionStates`, so every state the session needs
+    /// is forwarded through here rather than read a second time off the stream.
+    /// Weak — the screen owns the session, and a façade that kept it alive would
+    /// outlive the match it handed over.
+    @ObservationIgnored private weak var session: MatchSession?
+
     /// Whether a `MatchSession` was handed out. What separates "a lobby nobody
     /// played" from "a match that ran": ``leave()`` abandons the row only in the
     /// first case, because in the second the outcome recorder owns it.
@@ -366,22 +375,27 @@ public final class OnlineMatch {
 
     // MARK: - The lobby
 
-    /// Consumes the transport's presence stream until a session takes it over.
+    /// Consumes the transport's presence stream for the life of this façade,
+    /// and forwards every state to the session once there is one.
     ///
-    /// `MatchTransport` allows exactly one consumer per stream per endpoint, so
-    /// this pump is cancelled the moment a `MatchSession` is built — the session
-    /// is the consumer from then on.
+    /// `MatchTransport` allows exactly one consumer per stream per endpoint,
+    /// and this pump is it. It is deliberately **not** cancelled when a
+    /// `MatchSession` is built: cancelling the task iterating an `AsyncStream`
+    /// terminates that stream, so a session that then opened its own `for
+    /// await` on the same stream would be iterating an already-finished one and
+    /// no drop would ever reach it — `peerDropped`/`peerReturned` would never
+    /// fire on any session the app actually ships. The session is built with
+    /// `observesPeerConnections: false` and fed from here instead.
     ///
-    /// ponytail: a `.disconnected` that lands in the microseconds between that
-    /// cancel and the session's own pump starting is dropped. Harmless here —
-    /// `MatchSession.presence(of:)` reads absent as present and the peer's next
-    /// state change is delivered normally. Hand the buffered element across if a
-    /// transport is ever built that reports drops only once.
+    /// Forwarded first, lobby second, so the match's own state is never behind
+    /// the roster's. A state naming this device is still never removable from
+    /// the lobby; the session ignores anything off its roster itself.
     private func watchLobby() {
         let states = transport.peerConnectionStates
         presencePump = Task { @MainActor [weak self] in
             for await state in states {
                 guard let self else { return }
+                session?.receive(peerConnection: state)
                 switch state {
                 case let .connected(player):
                     guard player != localPlayer, !lobby.contains(player) else { continue }
@@ -467,9 +481,12 @@ public final class OnlineMatch {
         players.sorted { $0.rawValue < $1.rawValue }
     }
 
+    /// Builds the session and makes it the destination of the presence the
+    /// lobby pump is already reading.
+    ///
+    /// The pump stays running — see ``watchLobby()``. Cancelling it here is what
+    /// used to kill the stream out from under the session.
     private func makeSession(roster: [PlayerID]) -> MatchSession {
-        presencePump?.cancel()
-        presencePump = nil
         hasStarted = true
         let session = MatchSession(
             transport: transport,
@@ -477,8 +494,10 @@ public final class OnlineMatch {
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
             sleepFor: sleepFor,
-            now: now
+            now: now,
+            observesPeerConnections: false
         )
+        self.session = session
         // After the transport, never before — see the note in `init`.
         activity?.add(session)
         return session
