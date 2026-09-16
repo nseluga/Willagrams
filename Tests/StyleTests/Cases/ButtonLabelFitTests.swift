@@ -107,9 +107,17 @@ struct ButtonLabelFitTests {
     /// this suite is measuring the wrong face — so tie them to the source.
     @Test("The point-size constants match the Typography tokens they stand for")
     func pointSizesMatchTokens() throws {
+        // Whitespace-tolerant: DesignTokens is a protected file this suite only
+        // reads, so a reformat there must not fail here with a misleading
+        // message about the point size. Only the size itself is pinned.
         let tokens = StyleRepo.strippingComments(try StyleRepo.source("DesignTokens.swift"))
-        #expect(tokens.contains("let button = Font.brand(weight: .semibold, size: \(Int(ButtonLabelFit.pointSize)))"))
-        #expect(tokens.contains("let buttonCompact = Font.brand(weight: .semibold, size: \(Int(ButtonLabelFit.compactPointSize)))"))
+        func size(of key: String) -> [String] {
+            StyleRepo.matches(#"let\s+\#(key)\s*=\s*Font\.brand\([^)]*size:\s*([0-9.]+)\s*\)"#, in: tokens)
+        }
+        #expect(size(of: "button") == ["\(Int(ButtonLabelFit.pointSize))"],
+                "Typography.button is \(size(of: "button")), ButtonLabelFit.pointSize is \(ButtonLabelFit.pointSize)")
+        #expect(size(of: "buttonCompact") == ["\(Int(ButtonLabelFit.compactPointSize))"],
+                "Typography.buttonCompact is \(size(of: "buttonCompact")), ButtonLabelFit.compactPointSize is \(ButtonLabelFit.compactPointSize)")
     }
 
     // MARK: the single-line rule
@@ -187,24 +195,68 @@ struct ButtonLabelFitTests {
         #expect(asShipped > available, "the old sizing fits after all — this suite has no teeth")
     }
 
-    @Test("A friend code is never shrunk or clipped: it is fixed-size on every call site")
+    // MARK: the friend code, everywhere it is drawn
+
+    /// Every `.swift` under `Willagrams/`, comments stripped.
+    static func appSources() throws -> [(path: String, text: String)] {
+        let root = StyleRepo.root.appendingPathComponent("Willagrams")
+        guard let walk = FileManager.default.enumerator(atPath: root.path) else { return [] }
+        return try walk.compactMap { $0 as? String }
+            .filter { $0.hasSuffix(".swift") }
+            .sorted()
+            .map { relative in
+                let text = try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+                return (path: "Willagrams/" + relative, text: StyleRepo.strippingComments(text))
+            }
+    }
+
+    /// The modifier chain applied to whatever ends at `end`: every following
+    /// line that begins with a `.`, and no further. A fixed character window
+    /// would either stop mid-chain or run into the next view.
+    static func modifierChain(after end: String.Index, in source: String) -> String {
+        var chain = ""
+        for line in source[end...].split(separator: "\n", omittingEmptySubsequences: false).dropFirst() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix(".") else { break }
+            chain += trimmed + "\n"
+        }
+        return chain
+    }
+
+    /// A friend code has to survive in full: readable and copyable, never
+    /// shrunk toward illegibility and never clipped to an ellipsis.
+    ///
+    /// This scans the whole app rather than a list of files, because the
+    /// failure it guards against is precisely a site nobody listed — the code
+    /// under the display name on the profile header was exactly that. Any
+    /// `Text(…friendCode)` anywhere in `Willagrams/`, however the binding is
+    /// spelled, has to carry the guard. A multi-line accessibility spelling
+    /// (`Text(code.map(String.init).joined(…))`) is not a rendered code and is
+    /// not matched: the argument must be a plain binding path.
+    @Test("Every friend-code render in the app is single-line and fixed-size")
     func friendCodesAreFixedSize() throws {
-        let root = StyleRepo.root
-        // Every place a code is rendered, not a chosen few: a missed site is
-        // exactly how the header code came to wrap under the display name.
-        var sites = 0
-        for path in ["Willagrams/Account/ProfileView.swift", "Willagrams/Friends/FriendsView.swift"] {
-            let source = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
-            for marker in Set(StyleRepo.matches(#"(Text\((?:model\.myFriendCode|model\.profile\.friendCode|entry\.profile\.friendCode)\))"#, in: source)).sorted() {
-                for range in source.ranges(of: marker) {
-                    sites += 1
-                    let after = String(source[range.upperBound...].prefix(400))
-                    #expect(after.contains(".lineLimit(ButtonLabelFit.lineLimit)"), "\(path) \(marker) may still wrap")
-                    #expect(after.contains(".fixedSize(horizontal: true, vertical: false)"), "\(path) \(marker) may still be squeezed")
-                    #expect(!after.contains("minimumScaleFactor"), "\(path) \(marker) may shrink below legibility")
-                }
+        let pattern = #"Text\(\s*[A-Za-z0-9_.]*[fF]riendCode\s*\)"#
+        var sites: [String] = []
+
+        for file in try Self.appSources() {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let ns = file.text as NSString
+            for match in regex.matches(in: file.text, range: NSRange(location: 0, length: ns.length)) {
+                let call = ns.substring(with: match.range)
+                guard let end = Range(match.range, in: file.text)?.upperBound else { continue }
+                let chain = Self.modifierChain(after: end, in: file.text)
+                let site = "\(file.path) \(call)"
+                sites.append(site)
+
+                #expect(chain.contains(".lineLimit(ButtonLabelFit.lineLimit)"), "\(site) may still wrap")
+                #expect(chain.contains(".fixedSize(horizontal: true, vertical: false)"), "\(site) may still be squeezed")
+                #expect(!chain.contains("minimumScaleFactor"), "\(site) may shrink below legibility")
+                #expect(!chain.contains("truncationMode"), "\(site) may be clipped to an ellipsis")
             }
         }
-        #expect(sites == 4, "found \(sites) friend-code renders, expected 4")
+
+        // Not the assertion — the scan above is. This only catches a scan that
+        // has stopped finding anything at all.
+        #expect(sites.count >= 4, "the scan found \(sites.count) friend-code renders: \(sites)")
     }
 }

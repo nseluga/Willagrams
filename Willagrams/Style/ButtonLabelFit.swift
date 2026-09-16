@@ -20,6 +20,10 @@ public enum ButtonLabelFit {
 
     /// How far the label may shrink before it stops shrinking.
     ///
+    /// Every brand token is `Font.custom(_, fixedSize:)`, so the app opts out
+    /// of Dynamic Type — this floor is the only thing that ever resizes a
+    /// label, and it never has to compose with an accessibility text size.
+    ///
     /// 0.8 of the compact 15pt face is 12pt, which is still read at arm's
     /// length. Lower would stop more rows overflowing, but a friend code or a
     /// verb the player has to act on is not worth reading at 9pt — a row that
