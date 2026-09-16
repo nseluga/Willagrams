@@ -19,7 +19,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 | Item | Status |
 |------|--------|
-| iPad launch crash | not started |
+| iPad launch crash | done — The app no longer dies on an iPad a few seconds after opening. The message iOS sends back when it refuses a rotation used to be handled on the wrong thread, which killed the app; it is now handled safely wherever it arrives. Three cold iPad launches and an iPhone launch came up clean. Still needs your eyes: that the iPad actually turns landscape, which nothing here can tap or rotate to check. (2026-09-15) |
 | Buttons and codes stop wrapping | not started |
 | Friend row fits a phone | not started |
 | Solo stops saying HOST | not started |
