@@ -36,19 +36,35 @@ struct OrientationTests {
         #expect(OrientationPolicy.mask(isGameplay: true, isPad: true) == .landscape)
     }
 
-    private static let root = URL(fileURLWithPath: #filePath)
+    static let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()  // Cases
         .deletingLastPathComponent()  // ShellTests
         .deletingLastPathComponent()  // Tests
         .deletingLastPathComponent()  // repo root
 
+    /// One repo file, raw. The only place any test reads source off disk:
+    /// `ShellRootView.swift` and `TwoPlayerView.swift` are excluded from this
+    /// target, so a reachability pin has no other way to see them, and a second
+    /// copy of this reader is a second thing to fix when the layout moves.
+    static func source(_ file: String) throws -> String {
+        try String(contentsOf: root.appendingPathComponent(file), encoding: .utf8)
+    }
+
+    /// ``source(_:)`` with every line trimmed and every comment line dropped,
+    /// so a contiguous literal can be matched against a whole declaration
+    /// without indentation or a reworded comment breaking it.
+    static func normalized(_ file: String) throws -> String {
+        try source(file)
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") }
+            .joined(separator: "\n")
+    }
+
     /// `ShellRootView.body` only, comments stripped.
     @Test("ShellRootView re-locks orientation whenever gameplay flips, from launch")
     func rootViewWiring() throws {
-        let source = try String(
-            contentsOf: Self.root.appendingPathComponent("Willagrams/Shell/ShellRootView.swift"),
-            encoding: .utf8
-        )
+        let source = try Self.source("Willagrams/Shell/ShellRootView.swift")
         let start = try #require(source.range(of: "var body: some View {"))
         let end = try #require(source.range(of: "@ViewBuilder private var inviteBanner"))
         #expect(start.upperBound < end.lowerBound)

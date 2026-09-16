@@ -259,6 +259,10 @@ public final class MatchOutcomeRecorder {
         // Each player's board is their own private table, so this is this
         // device's own count and nobody else's.
         let tiles = session.state.board.placements.count
+        // The updated row comes back and is thrown away on purpose: nothing on
+        // screen is reading stats at the moment a match ends, and `showProfile()`
+        // re-reads them on the way in. Keep it that way — holding this row would
+        // make the profile screen's own read the stale one.
         await write {
             try await store.recordOutcome(
                 localID, won: won, tilesPlaced: tiles, elapsedSeconds: elapsed)

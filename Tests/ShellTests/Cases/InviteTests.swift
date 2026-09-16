@@ -997,20 +997,8 @@ struct InviteTests {
     /// instead of presence.
     @Test("Every link from the route arm to the picker is pinned")
     func openSeatRendersThePicker() throws {
-        let repo = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // Cases
-            .deletingLastPathComponent()  // ShellTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // repo root
-        func normalized(_ file: String) throws -> String {
-            try String(contentsOf: repo.appendingPathComponent(file), encoding: .utf8)
-                .components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.hasPrefix("//") }
-                .joined(separator: "\n")
-        }
-        let root = try normalized("Willagrams/Shell/ShellRootView.swift")
-        let two = try normalized("Willagrams/Shell/TwoPlayerView.swift")
+        let root = try OrientationTests.normalized("Willagrams/Shell/ShellRootView.swift")
+        let two = try OrientationTests.normalized("Willagrams/Shell/TwoPlayerView.swift")
 
         // Link: ShellRootView.body, whole.
         #expect(root.contains(#"""
@@ -1347,6 +1335,41 @@ Text(Self.inviteLabel)
         f.shellA.returnToMenu()
     }
 
+    @Test("After a decline the host can ask the same guest again, and the guest sees it")
+    func aReofferAfterADeclineStillReachesTheGuest() async throws {
+        let f = try await Self.make()
+        let entry = try await Self.rowForB(f)
+        #expect(f.shellA.invitePlay(entry))
+        await JoinTests.until("the invite left A") { f.bus.delivered == 1 }
+        await JoinTests.until("A is listening") { f.bus.isListening(f.a.id) }
+        await JoinTests.until("B was bannered") { f.shellB.inviteBanner != nil }
+        let lobby = try #require(f.shellA.hostLobby)
+        let matchID = try #require(lobby.match?.record.id)
+
+        #expect(f.shellB.declineInvite())
+        #expect(f.shellB.inviteBanner == nil)
+        await JoinTests.until("the decline reached A") { lobby.declinedBy != nil }
+
+        // The host asks again from the lobby. Same lobby, so the re-offer
+        // carries the *same* `matchID` the refusal did — which is exactly the
+        // frame `bannered` would swallow if declining had left its entry behind.
+        #expect(f.shellA.route == .hostLobby)
+        #expect(f.shellA.invitePlayFromLobby(entry))
+        await JoinTests.until("the second offer left A") { f.bus.delivered == 3 }
+
+        // The criterion: the guest is asked again rather than silently skipped.
+        await JoinTests.until("B was bannered a second time") { f.shellB.inviteBanner != nil }
+        let again = try #require(f.shellB.inviteBanner)
+        #expect(again.matchID == matchID, "the re-offer was for a different lobby")
+        #expect(again.hostID == f.a.id)
+
+        // And the host's seat is back to waiting, so the two halves agree: the
+        // line under the seat no longer names the player who has just been
+        // re-asked.
+        #expect(lobby.declinedBy == nil)
+        f.shellA.returnToMenu()
+    }
+
     @Test("A host who has left the lobby is told nothing, and a fresh offer clears the last refusal")
     func aDeclineOnlyLandsOnTheLobbyRoute() async throws {
         let f = try await Self.make()
@@ -1481,20 +1504,8 @@ Text(Self.inviteLabel)
     /// false-reds this, and whoever makes it re-extends the literal.
     @Test("Every link from the route arm to Decline, and to the line it produces, is pinned")
     func declineIsReachableFromTheBanner() throws {
-        let repo = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // Cases
-            .deletingLastPathComponent()  // ShellTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // repo root
-        func normalized(_ file: String) throws -> String {
-            try String(contentsOf: repo.appendingPathComponent(file), encoding: .utf8)
-                .components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.hasPrefix("//") }
-                .joined(separator: "\n")
-        }
-        let root = try normalized("Willagrams/Shell/ShellRootView.swift")
-        let two = try normalized("Willagrams/Shell/TwoPlayerView.swift")
+        let root = try OrientationTests.normalized("Willagrams/Shell/ShellRootView.swift")
+        let two = try OrientationTests.normalized("Willagrams/Shell/TwoPlayerView.swift")
 
         // Link: ShellRootView.body, whole.
         #expect(root.contains(#"""
@@ -1582,6 +1593,74 @@ Text(message)
 if let lobby = shell.hostLobby {
 TwoPlayerView(shell: shell, mode: .host(lobby))
 }
+}
+"""#))
+
+        // Link: TwoPlayerView.isHost and TwoPlayerView.body, whole — the
+        // `if isHost { hostActions }` that reaches the seat at all. Held here
+        // rather than only by the sibling pin: a chain that borrows a link from
+        // another test goes green the moment that test is renamed or narrowed.
+        #expect(two.contains(#"""
+private var isHost: Bool {
+if case .host = mode { return true }
+return false
+}
+"""#))
+        #expect(two.contains(#"""
+var body: some View {
+VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+topBar
+
+VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+Text(isHost ? HostLobbyModel.title : JoinModel.title)
+.font(DesignTokens.Typography.title)
+.foregroundStyle(DesignTokens.Palette.textPrimary)
+Text(isHost ? Self.hostSubtitle : Self.joinSubtitle)
+.font(DesignTokens.Typography.body)
+.foregroundStyle(DesignTokens.Palette.textSecondary)
+.fixedSize(horizontal: false, vertical: true)
+}
+
+chips
+
+ScrollViewReader { proxy in
+ScrollView {
+VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+codeSection
+
+if case .join(let join) = mode {
+joinField(join).id(Self.codeFieldID)
+joinStatus(join)
+}
+
+if isHost {
+hostActions
+}
+
+if let message {
+Text(message)
+.font(DesignTokens.Typography.caption)
+.foregroundStyle(DesignTokens.Palette.danger)
+.fixedSize(horizontal: false, vertical: true)
+}
+}
+.frame(maxWidth: .infinity, alignment: .leading)
+}
+.scrollDismissesKeyboard(.interactively)
+.onChange(of: codeFieldFocused) { _, isFocused in
+guard isFocused else { return }
+withAnimation {
+proxy.scrollTo(Self.codeFieldID, anchor: .center)
+}
+}
+}
+
+primaryButton
+}
+.frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
+.frame(maxWidth: .infinity, maxHeight: .infinity)
+.screenPadding()
+.background { canvas }
 }
 """#))
 
