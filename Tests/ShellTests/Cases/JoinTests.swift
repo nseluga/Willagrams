@@ -140,6 +140,10 @@ struct JoinTests {
             // is `.waiting` — pinned here so a phase that skipped `.waiting`
             // (and so never armed `watchStart`'s observer) cannot make this
             // guard pass for a reason that has nothing to do with the cycle.
+            // Narrower than it reads: `until` at :110 already proved `.waiting`
+            // was reached once, so this only catches the phase drifting away
+            // again before the wait for `session` above resolves — but that is
+            // the exact window this capture depends on being still true.
             #expect(model.phase == .waiting)
             weakModel = model
             weakMatch = try #require(model.match)
@@ -518,14 +522,24 @@ struct JoinTests {
             encoding: .utf8
         )
 
-        // The field's container calls into the switch this test pins — proof
-        // the view actually reads the phase rather than owning a copy no one
-        // calls.
-        #expect(source.contains("joinField(join).id(Self.codeFieldID)"))
-        #expect(source.contains("joinStatus(join)"))
+        // One contiguous match, not two independent `contains` — a guard for
+        // a guest gated behind `if isHost { joinStatus(join) }` would still
+        // satisfy two separate checks, since both substrings still exist in
+        // the file. Only a call site that sits right after the field, for
+        // every guest, matches this.
+        #expect(
+            source.contains(
+                "joinField(join).id(Self.codeFieldID)\n                            joinStatus(join)"
+            )
+        )
 
         let start = try #require(source.range(of: "@ViewBuilder private func joinStatus"))
-        let end = try #require(source.range(of: "/// Copy/Share, then the roster"))
+        // The next declaration, not a doc comment above an unrelated
+        // property — a reorder of `hostActions` (which the doc comment sits
+        // on) must not red this test for the wrong reason.
+        let end = try #require(
+            source.range(of: "private func", range: start.upperBound..<source.endIndex)
+        )
         #expect(start.upperBound < end.lowerBound)
         let body = source[start.upperBound..<end.lowerBound]
             .components(separatedBy: "\n")
