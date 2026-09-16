@@ -120,10 +120,12 @@ struct SourceGuardrailTests {
         let sources = try Self.swiftFiles(in: Self.shellSourceDirectory)
         #expect(sources.count >= 2, "expected the shell sources at \(Self.shellSourceDirectory.path)")
 
-        var embedsTheSettingsView = 0
+        var embedsTheSettingsView: Set<String> = []
         for file in sources {
             let text = try String(contentsOf: file, encoding: .utf8)
-            if text.contains("MatchOptionsView(form:") { embedsTheSettingsView += 1 }
+            if text.contains("MatchOptionsView(form:") {
+                embedsTheSettingsView.insert(file.lastPathComponent)
+            }
             guard text.contains("Toggle(") || text.contains("Stepper(") else { continue }
             for field in Self.matchOptionFields {
                 #expect(
@@ -133,8 +135,11 @@ struct SourceGuardrailTests {
             }
         }
 
-        // Presence, so a rename or a deletion turns this red rather than green.
-        #expect(embedsTheSettingsView == 1, "exactly one shell view embeds MatchOptionsView(form:)")
+        // Presence, spelled out rather than counted, so a rename or a deletion
+        // turns this red rather than green. Two screens offer the rules now:
+        // solo setup, and the host side of the two-player screen behind its
+        // gear. Both embed the settings lane's view; neither has a copy.
+        #expect(embedsTheSettingsView == ["SoloSetupView.swift", "TwoPlayerView.swift"])
 
         let setupView = try String(
             contentsOf: Self.shellSourceDirectory.appendingPathComponent("SoloSetupView.swift"),

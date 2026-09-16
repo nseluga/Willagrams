@@ -326,6 +326,49 @@ struct OnlineMatchOfflineTests {
         #expect(session.roster == session.roster.sorted { $0.rawValue < $1.rawValue })
     }
 
+    /// The host's gear writes a hand size and a swap setting the `matches` row
+    /// knows nothing about — the row was written before the sheet existed. The
+    /// only thing that can carry them is `.start`, so this asserts the guest's
+    /// session against what the host chose and not against the row.
+    ///
+    /// Every number here is spelled out. Reading `handSize` back off the model
+    /// that was just told it would pass with the wire carrying anything at all.
+    @Test("The host's chosen hand size and options are what the guest plays under")
+    func theHostsChosenSettingsTravel() async throws {
+        let f = try await Self.fixture(creatorToken: "A", guestToken: "B")
+        // The row was written with `Self.options` — minimum length 5. The host
+        // chooses 4 below, so a guest reading the row rather than the start
+        // would come out at 5 and this fails.
+        #expect(f.guest.record.options.minimumWordLength == 5)
+        f.creatorWire.announce(.connected(f.guestPlayer))
+        f.guestWire.announce(.connected(f.creatorPlayer))
+        await Self.until("two in the creator's lobby") { f.creator.lobby.count == 2 }
+
+        let guestSession = try await f.guest.awaitStart()
+
+        let chosen = MatchOptions(
+            minimumWordLength: 4,
+            swapEnabled: false,
+            dictionaryID: "standard",
+            dictionaryHash: MatchOptions.standardDictionaryHash
+        )
+        let creatorSession = try await f.creator.start(handSize: 10, options: chosen)
+
+        await Self.until("the guest is playing") { guestSession.state.status == .playing }
+        await Self.until("the creator is playing") { creatorSession.state.status == .playing }
+
+        #expect(guestSession.startingHandSize == 10)
+        #expect(creatorSession.startingHandSize == 10)
+        #expect(guestSession.options.swapEnabled == false)
+        #expect(guestSession.options.minimumWordLength == 4)
+
+        await Self.until("both racks hold ten") {
+            guestSession.state.hand.count == 10 && creatorSession.state.hand.count == 10
+        }
+        #expect(guestSession.state.hand.count == 10)
+        #expect(creatorSession.state.hand.count == 10)
+    }
+
     @Test("The roster sort is one function, ascending by rawValue")
     func rosterSortsAscending() {
         let unsorted = [

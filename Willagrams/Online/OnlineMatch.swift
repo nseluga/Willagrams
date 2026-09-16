@@ -359,11 +359,23 @@ public final class OnlineMatch {
     /// always sends the `.start`, whichever way the roster sorts. The pool
     /// still belongs to `roster[0]` — a creator that does not sort first sends
     /// the start and then plays the receiving side of the deal.
-    public func start() async throws -> MatchSession {
+    ///
+    /// - Parameters:
+    ///   - handSize: tiles each player opens with. Defaults to
+    ///     ``startingHandSize`` so a caller with no settings screen behind it
+    ///     still opens the match this file always opened.
+    ///   - options: the rules to play under, or nil for the ones the row was
+    ///     created with. The host's lobby edits its options after the row is
+    ///     written, so what travels on `.start` is the later of the two — and
+    ///     `.start` is the only thing either device reads them from.
+    public func start(
+        handSize: Int = OnlineMatch.startingHandSize,
+        options: MatchOptions? = nil
+    ) async throws -> MatchSession {
         guard lobby.count == 2 else { throw OnlineMatchError.lobbyNotReady(lobby.count) }
         let roster = Self.roster(from: lobby)
         let session = makeSession(roster: roster)
-        open(session)
+        open(session, handSize: handSize, options: options ?? record.options)
         attachRecorder(to: session)
         return session
     }
@@ -387,13 +399,14 @@ public final class OnlineMatch {
 
     /// Sends the `.start` and applies it locally, from the creator.
     ///
-    /// The seed and the two constants are read here, in one place.
-    private func open(_ session: MatchSession) {
+    /// The seed and the countdown are read here, in one place; the hand size
+    /// and the options are the host's, resolved by ``start(handSize:options:)``.
+    private func open(_ session: MatchSession, handSize: Int, options: MatchOptions) {
         session.startMatch(
             seed: record.poolSeed,
-            startingHandSize: Self.startingHandSize,
+            startingHandSize: handSize,
             countdownSeconds: Self.countdownSeconds,
-            options: record.options
+            options: options
         )
     }
 

@@ -222,6 +222,68 @@ struct HostLobbyTests {
         #expect(f.wire.hasLeft)
     }
 
+    // MARK: - The host's match settings
+
+    /// The gear closes at Start and what it held is written back.
+    ///
+    /// Both halves in one case on purpose: "unavailable after Start" and "the
+    /// values survived" are the same guarantee read from either end — the
+    /// settings that travelled are the last ones editable, and there is no
+    /// third state where the sheet is shut but the store holds something else.
+    @Test("Start closes the match settings, and what they held reaches the next lobby")
+    func settingsCloseAtStartAndPersistToTheNextLobby() async throws {
+        let suite = "host-lobby-settings-tests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+
+        let f = try await Self.make(settings: settings)
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        // The gear is live while the lobby is, and the sheet's two controls
+        // write straight through to the model.
+        #expect(lobby.canEditSettings)
+        lobby.loadOptions()  // what the gear does on the way into the sheet
+        lobby.handSize = 10
+        lobby.optionsForm?.swapEnabled = false
+        #expect(lobby.handSize == 10)
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+
+        lobby.start()
+        #expect(lobby.canEditSettings == false, "the gear is still live after Start")
+        await Self.until("the run is installed") { f.shell.run != nil }
+        #expect(lobby.canEditSettings == false)
+
+        // Spelled out, not read back off the model that was just told: the
+        // countdown carries ten because ten is what was chosen.
+        guard case .countdown(let setup) = f.shell.route else {
+            Issue.record("route is \(f.shell.route), not the countdown")
+            return
+        }
+        #expect(setup.startingHandSize == 10)
+        #expect(setup.options.swapEnabled == false)
+
+        // The store, read through a second lobby rather than directly — that is
+        // the thing the next visit actually opens on.
+        f.shell.returnToMenu()
+        #expect(f.shell.playAFriend())
+        let next = try #require(f.shell.hostLobby)
+        #expect(next.handSize == 10)
+        // Nil until the gear is touched — the hash is not paid for a visit that
+        // never opens the sheet.
+        #expect(next.optionsForm == nil)
+        next.loadOptions()
+        #expect(next.optionsForm?.swapEnabled == false)
+        #expect(next.canEditSettings)
+        await Self.until("the second lobby exists") { next.phase != .creating }
+        f.shell.returnToMenu()
+    }
+
     // MARK: - done when 3
 
     @Test("Cancel leaves the channel, abandons the row and returns to the menu")

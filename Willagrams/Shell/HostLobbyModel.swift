@@ -17,6 +17,9 @@
 #if canImport(Match)
 import Match
 #endif
+#if canImport(Settings)
+import Settings
+#endif
 
 import Foundation
 import Observation
@@ -77,11 +80,52 @@ public final class HostLobbyModel {
     /// ``message(for:)`` and nowhere else.
     public private(set) var message: String?
 
+    // MARK: - The host's match settings
+    //
+    // The same pair the solo setup screen edits, minus the opponent: solo has a
+    // bot to configure and a lobby has a friend. Both read and write one
+    // `SettingsStore`, so whichever screen was used last is what the other opens
+    // on. What travels is whatever is here when Start is pressed — the `matches`
+    // row's own options are written before this screen can be touched and are
+    // never what either device plays under.
+
+    /// The rules half, as the settings lane models it. Nil only when the
+    /// bundled word list failed to read, which is this model's state to hold
+    /// rather than a branch for the view — ``options`` then falls back to what
+    /// the store holds.
+    public var optionsForm: MatchOptionsForm?
+
+    /// How many tiles each player opens with. Clamped on write to
+    /// ``SoloSetup/handSizeRange``, so a control that forgot its own limits
+    /// still cannot deal a hand outside them.
+    public var handSize: Int {
+        get { storedHandSize }
+        set {
+            storedHandSize = min(
+                max(SoloSetup.handSizeRange.lowerBound, newValue),
+                SoloSetup.handSizeRange.upperBound
+            )
+        }
+    }
+
+    private var storedHandSize: Int
+
+    /// Whether the settings are still open. False from the moment Start is
+    /// accepted and never true again on this lobby: the `.start` carries what
+    /// was chosen, and a value edited after it left would be a rule only this
+    /// device believed.
+    public private(set) var canEditSettings = true
+
+    /// What Start would send: the edited form, or the stored options while the
+    /// form has not been built.
+    public var chosenOptions: MatchOptions { (optionsForm?.options ?? storedOptions).validated }
+
     // MARK: Injected
 
     @ObservationIgnored private unowned let shell: ShellModel
     @ObservationIgnored private let backend: any BackendClient
-    @ObservationIgnored private let options: MatchOptions
+    @ObservationIgnored private let store: SettingsStore?
+    @ObservationIgnored private let storedOptions: MatchOptions
     @ObservationIgnored private let dictionary: any WordList
     @ObservationIgnored
     private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
@@ -114,23 +158,45 @@ public final class HostLobbyModel {
     /// What the code under it is. Chrome, same rule.
     public static let inviteCodeLabel = "Invite code"
 
+    /// This screen's own name for the settings action. Chrome, same rule.
+    public static let settingsLabel = "Match settings"
+
     init(
         shell: ShellModel,
         backend: any BackendClient,
-        options: MatchOptions,
+        store: SettingsStore?,
         dictionary: any WordList,
         localProfile: Profile?,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void
     ) {
         self.shell = shell
         self.backend = backend
-        self.options = options
+        self.store = store
+        let stored = store?.load() ?? .standard
+        self.storedOptions = stored
+        self.storedHandSize = store?.loadHandSize() ?? SettingsStore.defaultHandSize
         self.dictionary = dictionary
         self.sleepFor = sleepFor
         // The local player's name is already in hand; only a guest costs a read.
         if let localProfile {
             names[localProfile.playerID.rawValue] = localProfile.displayName
         }
+        // Through the setter, so a stored value written by an older build — or
+        // by hand — is still inside the range the stepper offers.
+        handSize = storedHandSize
+    }
+
+    /// Builds the options form and seeds it from the store. Called when the
+    /// settings are opened, not on the way into the lobby: `MatchOptionsForm()`
+    /// hashes the whole bundled word list, and most visits to this screen never
+    /// touch the gear. Built once and seeded once per lobby: reopening the
+    /// sheet must show what was last chosen, not the store's values again.
+    public func loadOptions() {
+        guard optionsForm == nil, var form = try? MatchOptionsForm() else { return }
+        form.swapEnabled = storedOptions.swapEnabled
+        form.minimumWordLength = storedOptions.minimumWordLength
+        try? form.selectDictionary(storedOptions.dictionaryID)
+        optionsForm = form
     }
 
     // MARK: - Creating
@@ -144,7 +210,7 @@ public final class HostLobbyModel {
             guard let self else { return }
             do {
                 let made = try await OnlineMatch.host(
-                    options: options,
+                    options: storedOptions,
                     backend: backend,
                     dictionary: dictionary,
                     sleepFor: sleepFor
@@ -223,10 +289,22 @@ public final class HostLobbyModel {
         guard canStart, phase == .waiting, let match, work == nil else { return }
         message = nil
         phase = .starting
+        // Shut before anything awaits: the gear is unavailable from the press,
+        // not from whenever the open comes back, and it never reopens — a
+        // failed start still sent nothing, but the settings this screen would
+        // reopen on are the ones already written back below.
+        canEditSettings = false
+        let chosen = chosenOptions
+        let hand = handSize
+        // Start is where the choices are written back, so the next lobby — and
+        // the next solo match — opens on what this match is about to be played
+        // under. The same rule `startSoloPractice` follows.
+        store?.save(chosen)
+        store?.saveHandSize(hand)
         work = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let session = try await match.start()
+                let session = try await match.start(handSize: hand, options: chosen)
                 guard !Task.isCancelled else {
                     session.leave()
                     match.leave()
@@ -238,9 +316,9 @@ public final class HostLobbyModel {
                 shell.startMatch(
                     MatchSetup(
                         seed: record.poolSeed,
-                        startingHandSize: OnlineMatch.startingHandSize,
+                        startingHandSize: hand,
                         countdownSeconds: OnlineMatch.countdownSeconds,
-                        options: record.options
+                        options: chosen
                     ),
                     opponent: { OnlineOpponent(match: match, session: session) }
                 )

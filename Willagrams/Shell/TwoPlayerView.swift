@@ -32,6 +32,9 @@ struct TwoPlayerView: View {
 
     @State private var didCopyCode = false
 
+    /// Whether the host's match-settings sheet is up. Host mode only.
+    @State private var showsSettings = false
+
     private var isHost: Bool {
         if case .host = mode { return true }
         return false
@@ -99,8 +102,9 @@ struct TwoPlayerView: View {
         }
     }
 
-    /// Cancel · the screen's own mono label · a same-width trailing slot,
-    /// empty here — item 7 puts the match-settings gear in it.
+    /// Cancel · the screen's own mono label · the match-settings gear, host
+    /// mode only. In join mode the slot is a same-width spacer, so the label
+    /// sits in the same place on both modes of one screen.
     private var topBar: some View {
         HStack(alignment: .center) {
             Button(Self.cancelLabel) { shell.returnToMenu() }
@@ -108,7 +112,64 @@ struct TwoPlayerView: View {
             Spacer(minLength: DesignTokens.Space.m)
             Text(Self.screenLabel).monoLabel()
             Spacer(minLength: DesignTokens.Space.m)
-            Color.clear.frame(width: Self.trailingSlotSide, height: Self.trailingSlotSide)
+            if case .host(let lobby) = mode {
+                settingsButton(lobby)
+            } else {
+                Color.clear.frame(width: Self.trailingSlotSide, height: Self.trailingSlotSide)
+            }
+        }
+    }
+
+    /// The host's match settings: the same rules solo plays under, minus the
+    /// opponent. Unavailable from the moment Start is pressed — `.start` has
+    /// carried the values by then, and one edited after it left would be a rule
+    /// only this device believed.
+    private func settingsButton(_ lobby: HostLobbyModel) -> some View {
+        Button {
+            lobby.loadOptions()
+            showsSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(DesignTokens.Typography.button)
+                .frame(width: Self.trailingSlotSide, height: Self.trailingSlotSide)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(DesignTokens.Palette.textPrimary)
+        .accessibilityLabel(HostLobbyModel.settingsLabel)
+        .disabled(!lobby.canEditSettings)
+        .sheet(isPresented: $showsSettings) { settingsSheet(lobby) }
+    }
+
+    /// The starting hand, which is this screen's own, then the settings lane's
+    /// options screen embedded as it ships — the same two halves
+    /// `SoloSetupView.rules` draws, with no bot row and no second copy of
+    /// either control.
+    private func settingsSheet(_ lobby: HostLobbyModel) -> some View {
+        @Bindable var lobby = lobby
+        return ScrollView {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                Stepper(value: $lobby.handSize, in: SoloSetup.handSizeRange) {
+                    HStack {
+                        Text(SoloSetup.handSizeLabel)
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                        Spacer()
+                        Text(String(lobby.handSize))
+                            .foregroundStyle(DesignTokens.Palette.textSecondary)
+                    }
+                    .font(DesignTokens.Typography.body)
+                }
+                .tint(DesignTokens.Palette.accent)
+                .padding(.horizontal, DesignTokens.Space.l)
+
+                if let form = Binding($lobby.optionsForm) {
+                    MatchOptionsView(form: form)
+                }
+
+                Button(Self.doneLabel) { showsSettings = false }
+                    .buttonStyle(.brandPrimary)
+                    .padding(.horizontal, DesignTokens.Space.l)
+            }
+            .padding(.vertical, DesignTokens.Space.l)
         }
     }
 
@@ -322,6 +383,7 @@ struct TwoPlayerView: View {
     private static let readyLabel = "Ready"
     private static let openSeatLabel = "Open seat"
     private static let waitingLabel = "Waiting for your friend to join."
+    private static let doneLabel = "Done"
     private static let startLabel = "Start"
     private static let joinLabel = "Join"
 

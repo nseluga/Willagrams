@@ -782,7 +782,7 @@ public final class ShellModel {
         let lobby = HostLobbyModel(
             shell: self,
             backend: backend,
-            options: services.settings?.load() ?? .standard,
+            store: services.settings,
             dictionary: loadedDictionary(),
             localProfile: currentProfile,
             sleepFor: sleepFor

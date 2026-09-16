@@ -34,4 +34,28 @@ public struct SettingsStore {
         guard let data = try? JSONEncoder().encode(options) else { return }
         defaults.set(data, forKey: Self.key)
     }
+
+    // MARK: - The starting hand
+    //
+    // Not part of `MatchOptions`: the wire's options describe the rules both
+    // devices validate against, and the opening deal is not one of them. It is
+    // still a setting a host chooses and expects to find again, so it is stored
+    // beside them under its own key.
+
+    private static let handSizeKey = "startingHandSize"
+
+    /// What a suite that has never been written answers. Absent and zero read
+    /// the same way out of `UserDefaults`, and zero is not a hand anyone chose.
+    public static let defaultHandSize = 21
+
+    /// The stored starting hand, or ``defaultHandSize``. Bounds are the
+    /// caller's — the same rule ``load()`` follows by deferring to `validated`.
+    public func loadHandSize() -> Int {
+        let stored = defaults.integer(forKey: Self.handSizeKey)
+        return stored > 0 ? stored : Self.defaultHandSize
+    }
+
+    public func saveHandSize(_ handSize: Int) {
+        defaults.set(handSize, forKey: Self.handSizeKey)
+    }
 }
