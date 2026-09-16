@@ -229,6 +229,7 @@ public final class ShellModel {
         inviteTask?.cancel()
         inviteExpiry?.cancel()
         inviteSend?.cancel()
+        declineSend?.cancel()
         inviteChannel?.leave()
     }
 
@@ -260,7 +261,7 @@ public final class ShellModel {
     }
 
     /// Takes any banner down on the way to a screen that must not carry one.
-    /// The same rule ``showsInvites(_:)`` states for arrival, applied to a
+    /// The same rule ``showsInvites(_:on:)`` states for arrival, applied to a
     /// banner that was already up: a match is no place to be asked to join one.
     private func dropInviteBanner() {
         inviteExpiry?.cancel()
@@ -448,6 +449,12 @@ public final class ShellModel {
     @ObservationIgnored private var inviteExpiry: Task<Void, Never>?
     @ObservationIgnored private var inviteSend: Task<Void, Never>?
 
+    /// The decline leaving this device, or nil. Its own slot rather than
+    /// ``inviteSend``'s: one shell can be a host with a send in flight and a
+    /// guest declining somebody else's invite, and sharing the slot would have
+    /// either one cancel the other.
+    @ObservationIgnored private var declineSend: Task<Void, Never>?
+
     /// Every match already offered as a banner, against when it was offered.
     /// Broadcast promises no ordering and no exactly-once, so "at most one
     /// banner per match" is remembered here rather than assumed of the wire.
@@ -478,6 +485,11 @@ public final class ShellModel {
 
     public static let inviteOverMessage = "That game is over."
     public static let inviteJoinLabel = "Join"
+
+    /// The banner's other way out. Screen chrome and no game concept, so it
+    /// lives here beside ``inviteJoinLabel`` rather than in the frozen
+    /// `Terminology`.
+    public static let inviteDeclineLabel = "Decline"
 
     /// Said to the host, not the friend: the invite did not leave this device.
     /// One line for both ways that happens — no channel to send on, and a send
@@ -541,15 +553,30 @@ public final class ShellModel {
         return ids
     }
 
-    /// The four screens an invite may interrupt.
+    /// Which frames a given screen accepts.
     ///
-    /// An allow-list, not a deny-list: a route added later is silent until
-    /// somebody decides it should not be, which is the safe way round for a
-    /// banner that must never land over a live match or a lobby.
-    static func showsInvites(_ route: AppRoute) -> Bool {
-        switch route {
-        case .menu, .friends, .profile, .join: true
-        default: false
+    /// An allow-list per frame, not a deny-list: a route added later is silent
+    /// until somebody decides it should not be, which is the safe way round for
+    /// a banner that must never land over a live match or a lobby.
+    ///
+    /// An **invite** may interrupt four screens. A **decline** exactly one —
+    /// `.hostLobby`, because the only thing a decline changes is the open seat
+    /// of the lobby on screen, and a host who has walked away from that lobby
+    /// has nothing left for it to say. That is why the two cannot share one
+    /// list: widening the invite list to reach a host would put a banner over
+    /// the lobby, which is the failure this allow-list exists to prevent.
+    static func showsInvites(_ frame: InviteFrame, on route: AppRoute) -> Bool {
+        switch frame {
+        case .invite:
+            switch route {
+            case .menu, .friends, .profile, .join: true
+            default: false
+            }
+        case .decline:
+            switch route {
+            case .hostLobby: true
+            default: false
+            }
         }
     }
 
@@ -590,9 +617,12 @@ public final class ShellModel {
                 channel.leave()
                 return
             }
-            for await invite in channel.invites {
+            for await frame in channel.invites {
                 guard !Task.isCancelled, let self else { return }
-                await self.inviteArrived(invite)
+                switch frame {
+                case .invite(let invite): await self.inviteArrived(invite)
+                case .decline(let decline): await self.declineArrived(decline)
+                }
             }
         }
     }
@@ -621,6 +651,8 @@ public final class ShellModel {
         inviteExpiry = nil
         inviteSend?.cancel()
         inviteSend = nil
+        declineSend?.cancel()
+        declineSend = nil
         inviteChannel?.leave()
         inviteChannel = nil
         inviteBanner = nil
@@ -655,7 +687,7 @@ public final class ShellModel {
     /// because each of these can change while the friendship check is in
     /// flight.
     private func canBanner(_ invite: MatchInvite) -> Bool {
-        guard Self.showsInvites(route) else { return false }
+        guard Self.showsInvites(.invite(invite), on: route) else { return false }
         // One at a time, as the doc on ``inviteBanner`` says: a second invite
         // replaces nothing. Swapping the banner between the read and the tap
         // would make Join enter a match the player never agreed to, and
@@ -721,6 +753,73 @@ public final class ShellModel {
         join.code = invite.inviteCode
         join.join()
         return true
+    }
+
+    /// The banner's Decline: the banner goes down here and the host is told
+    /// there. One message and nothing more — no counter-invite, no block, no
+    /// unfriend, no row anywhere.
+    ///
+    /// The banner is taken down first and whatever happens, on the same terms
+    /// as ``joinInvite()``: an invite is answered exactly once, and a banner
+    /// left up behind a decline is a second answer waiting to happen.
+    ///
+    /// The one address this can ever send to is the bannered invite's own
+    /// ``MatchInvite/hostID``, and the accepted-friend rule is asked again
+    /// before it goes: a friendship revoked between the banner going up and the
+    /// tap landing must not be told anything. It is the *same* rule
+    /// ``inviteArrived(_:)`` admits an invite by — one predicate, two calls —
+    /// so a decline can no more reach a stranger than an invite can.
+    ///
+    /// - Returns: whether the banner was answered. A decline that is refused on
+    ///   the way out still clears the banner; the tap is not undone by it.
+    @discardableResult
+    public func declineInvite() -> Bool {
+        guard let invite = inviteBanner, let me = currentProfile else { return false }
+        inviteBanner = nil
+        inviteExpiry?.cancel()
+        inviteExpiry = nil
+        inviteMessage = nil
+
+        guard let channel = inviteChannel else { return false }
+        let decline = MatchDecline(
+            matchID: invite.matchID, guestID: me.id, guestName: me.displayName)
+        declineSend?.cancel()
+        // `[weak self]` with the bind inside, never a `let self` taken outside:
+        // a strong capture here would keep the whole shell alive for as long as
+        // the send is parked, and a send cannot be interrupted once parked.
+        declineSend = Task { @MainActor [weak self] in
+            guard let self, await self.isAcceptedFriend(invite.hostID) else { return }
+            guard !Task.isCancelled else { return }
+            // A failed decline says nothing: the player has already moved on
+            // from a banner that is gone, and there is nothing to retry.
+            try? await channel.send(.decline(decline), to: invite.hostID)
+        }
+        return true
+    }
+
+    /// One decline off the wire, at the host.
+    ///
+    /// Every reason to say nothing is decided here rather than at the seat that
+    /// draws it: the lobby on screen must be the lobby that was declined, and
+    /// the sender must be someone this host has actually accepted — the same
+    /// check, from the same cache, that admits an invite in the other
+    /// direction. A peer can put any frame on a topic named for a player id.
+    func declineArrived(_ decline: MatchDecline) async {
+        guard Self.showsInvites(.decline(decline), on: route) else { return }
+        guard let lobby = hostLobby else { return }
+        guard await isAcceptedFriend(decline.guestID) else { return }
+        // Re-read after the await, exactly as ``inviteArrived(_:)`` does: the
+        // host may have left the lobby, or started the match, while the friend
+        // list was in flight. The match check lives *only* here and not also
+        // before the await: two copies are mutually redundant, so neither one
+        // is individually necessary and deleting either leaves every test
+        // green — the rule would then be pinned by nothing. The route check is
+        // not repeated here for the same reason.
+        guard let live = hostLobby, live === lobby,
+              live.match?.record.id == decline.matchID else { return }
+        live.declinedBy = decline.guestName.isEmpty
+            ? HostLobbyModel.pendingName
+            : decline.guestName
     }
 
     /// A join that failed, reported by ``JoinModel``.
@@ -798,6 +897,10 @@ public final class ShellModel {
         as me: Profile
     ) {
         let now = now
+        // A fresh offer clears the last refusal: the seat is open again and the
+        // line under it must not still name whoever turned the previous one
+        // down.
+        lobby.declinedBy = nil
         // The code does not exist until the `matches` row has been written, and
         // that write is the lobby's own task — so this waits on it rather than
         // polling, and re-checks that the lobby is still the live one.
@@ -816,7 +919,7 @@ public final class ShellModel {
                 return
             }
             do {
-                try await channel.send(frame, to: recipient)
+                try await channel.send(.invite(frame), to: recipient)
             } catch {
                 // The same staleness guard the success path took before the
                 // await, retaken after it: a send cannot be interrupted once

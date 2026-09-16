@@ -30,11 +30,14 @@ struct MatchInviteChannelLiveTests {
     private static let sentAt = Date(timeIntervalSince1970: 1_756_000_000)
 
     private static func first(
-        _ stream: AsyncStream<MatchInvite>, seconds: Double
+        _ stream: AsyncStream<InviteFrame>, seconds: Double
     ) async throws -> MatchInvite? {
         try await withThrowingTaskGroup(of: MatchInvite?.self) { group in
             group.addTask {
-                for await invite in stream { return invite }
+                for await frame in stream {
+                    guard case .invite(let invite) = frame else { continue }
+                    return invite
+                }
                 return nil
             }
             group.addTask {
@@ -84,7 +87,7 @@ struct MatchInviteChannelLiveTests {
         let invite = MatchInvite(
             matchID: UUID(), inviteCode: "LIVE01", hostID: host.id,
             hostName: host.displayName, sentAt: Self.sentAt)
-        try await sending.send(invite, to: guest.id)
+        try await sending.send(.invite(invite), to: guest.id)
 
         let received = try #require(
             await Self.first(listening.invites, seconds: Self.budget),
@@ -123,7 +126,7 @@ struct MatchInviteChannelLiveTests {
             hostName: host.displayName, sentAt: Self.sentAt)
         await #expect(throws: (any Error).self,
                       "a stranger's invite topic accepted a write") {
-            try await sending.send(missed, to: elsewhere)
+            try await sending.send(.invite(missed), to: elsewhere)
         }
 
         // One consumer, not two: `AsyncStream` has a single iterator, and the
@@ -133,7 +136,7 @@ struct MatchInviteChannelLiveTests {
         let addressed = MatchInvite(
             matchID: UUID(), inviteCode: "LIVE03", hostID: host.id,
             hostName: host.displayName, sentAt: Self.sentAt)
-        try await sending.send(addressed, to: guest.id)
+        try await sending.send(.invite(addressed), to: guest.id)
 
         let received = try #require(
             await Self.first(listening.invites, seconds: Self.budget),

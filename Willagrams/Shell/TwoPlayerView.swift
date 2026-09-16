@@ -361,6 +361,15 @@ struct TwoPlayerView: View {
         .background(DesignTokens.Palette.surface, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous))
     }
 
+    /// What the open seat says under its label: still waiting, or who said no.
+    /// The decision is `HostLobbyModel`'s — this reads the answer.
+    private var seatLine: String {
+        if case .host(let lobby) = mode, let name = lobby.declinedBy {
+            return HostLobbyModel.declinedLine(name)
+        }
+        return Self.waitingLabel
+    }
+
     private var openSeatRow: some View {
         HStack(spacing: DesignTokens.Space.m) {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.tile, style: .continuous)
@@ -371,7 +380,7 @@ struct TwoPlayerView: View {
                 Text(Self.openSeatLabel)
                     .font(DesignTokens.Typography.body)
                     .foregroundStyle(DesignTokens.Palette.textSecondary)
-                Text(Self.waitingLabel)
+                Text(seatLine)
                     .font(DesignTokens.Typography.caption)
                     .foregroundStyle(DesignTokens.Palette.textSecondary)
             }

@@ -67,6 +67,45 @@ public struct MatchInvite: Sendable, Equatable, Identifiable {
     }
 }
 
+/// One "no thanks", travelling back on the *host's* own topic.
+///
+/// It answers an invite and does nothing else: no match, no code, no
+/// friendship change. A recipient who declines sends exactly one of these and
+/// the exchange is over — there is no counter-invite, no block and no unfriend
+/// anywhere on this path.
+public struct MatchDecline: Sendable, Equatable {
+
+    /// The lobby being declined. The host drops a decline naming any other, so
+    /// a stale frame cannot empty the seat of the lobby now on screen.
+    public let matchID: UUID
+
+    /// Who declined. The host checks this against its own accepted friends,
+    /// exactly as a recipient checks an invite's ``MatchInvite/hostID``.
+    public let guestID: UUID
+
+    /// Clamped by the initialiser, on the same terms and for the same reason as
+    /// ``MatchInvite/hostName``: it is attacker-chosen and it is drawn.
+    public let guestName: String
+
+    public init(matchID: UUID, guestID: UUID, guestName: String) {
+        self.matchID = matchID
+        self.guestID = guestID
+        self.guestName = String(
+            guestName.filter { !$0.isNewline }.prefix(MatchInvite.hostNameLimit))
+    }
+}
+
+/// Everything that travels on an `invites:<user>` topic.
+///
+/// One stream rather than two: both frames arrive on the same private topic
+/// under the same `0005` policies, and one enum is what lets `ShellModel` state
+/// which route accepts which frame in a single predicate instead of two
+/// allow-lists that can drift apart.
+public enum InviteFrame: Sendable, Equatable {
+    case invite(MatchInvite)
+    case decline(MatchDecline)
+}
+
 /// The per-user invite channel, as everything above it sees one.
 ///
 /// A new type beside the backend seam rather than a method on it:
@@ -79,8 +118,9 @@ public struct MatchInvite: Sendable, Equatable, Identifiable {
 /// nothing downstream may assume any.
 public protocol MatchInviteChannel: AnyObject, Sendable {
 
-    /// Invites addressed to the local user. Finishes when ``leave()`` is called.
-    var invites: AsyncStream<MatchInvite> { get }
+    /// Frames addressed to the local user — invites, and declines of invites
+    /// this user sent. Finishes when ``leave()`` is called.
+    var invites: AsyncStream<InviteFrame> { get }
 
     /// Joins the local user's topic. Returns once the server has confirmed it;
     /// nothing sent before it returns is delivered.
@@ -88,7 +128,7 @@ public protocol MatchInviteChannel: AnyObject, Sendable {
 
     /// Broadcasts to `recipientID`'s topic. Silent when nobody is listening —
     /// that is what a broadcast is.
-    func send(_ invite: MatchInvite, to recipientID: UUID) async throws
+    func send(_ frame: InviteFrame, to recipientID: UUID) async throws
 
     /// Leaves and finishes ``invites``. Synchronous so a teardown can call it.
     func leave()
@@ -113,7 +153,7 @@ public final class FakeInviteBus: @unchecked Sendable {
     /// The token is the channel's identity: `AsyncStream.Continuation` is a
     /// struct, so a stale channel's teardown has nothing else to compare and
     /// would otherwise unsubscribe the live channel that replaced it.
-    private var live: [UUID: (token: UUID, continuation: AsyncStream<MatchInvite>.Continuation)] = [:]
+    private var live: [UUID: (token: UUID, continuation: AsyncStream<InviteFrame>.Continuation)] = [:]
 
     /// Invites handed to a live subscriber, and invites thrown away. Both, so a
     /// "nothing was sent" assertion has a positive twin: a bus that quietly
@@ -143,7 +183,7 @@ public final class FakeInviteBus: @unchecked Sendable {
     fileprivate func register(
         _ userID: UUID,
         _ token: UUID,
-        _ continuation: AsyncStream<MatchInvite>.Continuation
+        _ continuation: AsyncStream<InviteFrame>.Continuation
     ) {
         lock.withLock { live[userID] = (token, continuation) }
     }
@@ -154,8 +194,8 @@ public final class FakeInviteBus: @unchecked Sendable {
         }
     }
 
-    fileprivate func deliver(_ invite: MatchInvite, to recipientID: UUID) {
-        let continuation = lock.withLock { () -> AsyncStream<MatchInvite>.Continuation? in
+    fileprivate func deliver(_ frame: InviteFrame, to recipientID: UUID) {
+        let continuation = lock.withLock { () -> AsyncStream<InviteFrame>.Continuation? in
             guard let found = live[recipientID] else {
                 droppedCount += 1
                 return nil
@@ -163,15 +203,15 @@ public final class FakeInviteBus: @unchecked Sendable {
             deliveredCount += 1
             return found.continuation
         }
-        continuation?.yield(invite)
+        continuation?.yield(frame)
     }
 }
 
 /// One user's endpoint on a ``FakeInviteBus``.
 public final class FakeInviteChannel: MatchInviteChannel, @unchecked Sendable {
 
-    public let invites: AsyncStream<MatchInvite>
-    private let continuation: AsyncStream<MatchInvite>.Continuation
+    public let invites: AsyncStream<InviteFrame>
+    private let continuation: AsyncStream<InviteFrame>.Continuation
     private let bus: FakeInviteBus
     private let userID: UUID
     private let token = UUID()
@@ -186,8 +226,8 @@ public final class FakeInviteChannel: MatchInviteChannel, @unchecked Sendable {
         bus.register(userID, token, continuation)
     }
 
-    public func send(_ invite: MatchInvite, to recipientID: UUID) async throws {
-        bus.deliver(invite, to: recipientID)
+    public func send(_ frame: InviteFrame, to recipientID: UUID) async throws {
+        bus.deliver(frame, to: recipientID)
     }
 
     public func leave() {

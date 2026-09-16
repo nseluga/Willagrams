@@ -169,6 +169,16 @@ public final class HostLobbyModel {
     /// What the code under it is. Chrome, same rule.
     public static let inviteCodeLabel = "Invite code"
 
+    /// The friend who turned down the open seat, or nil while nobody has.
+    /// Written by `ShellModel` — a decline arrives on the shell's invite
+    /// channel, not on this model's transport — and cleared there when the seat
+    /// is offered again. Observed, so the seat redraws when it changes.
+    public internal(set) var declinedBy: String?
+
+    /// What the open seat says once somebody has declined it. Chrome, same rule
+    /// as ``title`` — this screen names no game concept.
+    public static func declinedLine(_ name: String) -> String { "\(name) said no thanks." }
+
     /// This screen's own name for the settings action. Chrome, same rule.
     public static let settingsLabel = "Match settings"
 

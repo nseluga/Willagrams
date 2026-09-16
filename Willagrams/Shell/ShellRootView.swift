@@ -96,6 +96,9 @@ struct ShellRootView: View {
 
                 Spacer(minLength: DesignTokens.Space.m)
 
+                Button(ShellModel.inviteDeclineLabel) { shell.declineInvite() }
+                    .buttonStyle(.brandQuiet)
+
                 Button(ShellModel.inviteJoinLabel) { shell.joinInvite() }
                     .buttonStyle(.brandPrimary)
             }

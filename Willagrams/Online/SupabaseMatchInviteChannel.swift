@@ -28,6 +28,13 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
     /// The broadcast event every invite travels as.
     static let inviteEvent = "invite"
 
+    /// The broadcast event a decline travels as. A second event on the same
+    /// private topic rather than a second topic or a flag inside the invite
+    /// frame: `0005`'s policies already govern `invites:*`, so a decline needs
+    /// no migration and an old build simply ignores an event it never
+    /// registered a handler for.
+    static let declineEvent = "decline"
+
     static func topic(for userID: UUID) -> String {
         "invites:\(userID.uuidString.lowercased())"
     }
@@ -41,11 +48,11 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
     /// so the tokens have to outlive registration.
     private var subscriptions: [RealtimeSubscription] = []
 
-    let invites: AsyncStream<MatchInvite>
+    let invites: AsyncStream<InviteFrame>
 
     /// Unbounded, so nothing is discarded for want of a reader and the SDK's
     /// synchronous broadcast callback never suspends.
-    private let continuation: AsyncStream<MatchInvite>.Continuation
+    private let continuation: AsyncStream<InviteFrame>.Continuation
 
     init(realtime: RealtimeClientV2, userID: UUID) {
         self.realtime = realtime
@@ -76,9 +83,13 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
         let continuation = continuation
         let token = channel.onBroadcast(event: Self.inviteEvent) { message in
             guard let invite = Self.invite(fromBroadcast: message) else { return }
-            continuation.yield(invite)
+            continuation.yield(.invite(invite))
         }
-        lock.withLock { subscriptions.append(token) }
+        let declineToken = channel.onBroadcast(event: Self.declineEvent) { message in
+            guard let decline = Self.decline(fromBroadcast: message) else { return }
+            continuation.yield(.decline(decline))
+        }
+        lock.withLock { subscriptions.append(contentsOf: [token, declineToken]) }
         try await channel.subscribeWithError()
     }
 
@@ -94,7 +105,7 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
     ///
     /// It throws on anything but a 202, so a policy refusal surfaces here
     /// rather than vanishing the way a broadcast into the void does.
-    func send(_ invite: MatchInvite, to recipientID: UUID) async throws {
+    func send(_ frame: InviteFrame, to recipientID: UUID) async throws {
         let target = realtime.channel(Self.topic(for: recipientID)) { config in
             config.isPrivate = true
         }
@@ -106,7 +117,12 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
             // tear down and no removal for a later channel to wait out.
             Task { await realtime.removeChannel(target) }
         }
-        try await target.httpSend(event: Self.inviteEvent, message: Self.payload(for: invite))
+        switch frame {
+        case .invite(let invite):
+            try await target.httpSend(event: Self.inviteEvent, message: Self.payload(for: invite))
+        case .decline(let decline):
+            try await target.httpSend(event: Self.declineEvent, message: Self.payload(for: decline))
+        }
     }
 
     func leave() {
@@ -170,6 +186,36 @@ final class SupabaseMatchInviteChannel: MatchInviteChannel, @unchecked Sendable 
         guard let frame = try? (message["payload"]?.objectValue ?? [:]).decode(as: Frame.self)
         else { return nil }
         return invite(from: frame)
+    }
+
+    /// A decline's frame, on the same rules as ``Frame``: primitives only, one
+    /// lowercase word per key, nothing an encoder strategy can rename.
+    struct DeclineFrame: Codable, Sendable, Equatable {
+        let match: String
+        let guest: String
+        let name: String
+    }
+
+    static func payload(for decline: MatchDecline) -> DeclineFrame {
+        DeclineFrame(
+            match: decline.matchID.uuidString,
+            guest: decline.guestID.uuidString,
+            name: decline.guestName)
+    }
+
+    static func decline(from frame: DeclineFrame) -> MatchDecline? {
+        guard let matchID = UUID(uuidString: frame.match),
+              let guestID = UUID(uuidString: frame.guest)
+        else { return nil }
+        return MatchDecline(matchID: matchID, guestID: guestID, guestName: frame.name)
+    }
+
+    /// The same `payload` hop ``invite(fromBroadcast:)`` documents.
+    static func decline(fromBroadcast message: JSONObject) -> MatchDecline? {
+        guard let frame = try? (message["payload"]?.objectValue ?? [:])
+            .decode(as: DeclineFrame.self)
+        else { return nil }
+        return decline(from: frame)
     }
 }
 
