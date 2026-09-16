@@ -522,38 +522,47 @@ struct JoinTests {
             encoding: .utf8
         )
 
-        // One contiguous match, not two independent `contains` — a guard for
-        // a guest gated behind `if isHost { joinStatus(join) }` would still
-        // satisfy two separate checks, since both substrings still exist in
-        // the file. Only a call site that sits right after the field, for
-        // every guest, matches this.
-        #expect(
-            source.contains(
-                "joinField(join).id(Self.codeFieldID)\n                            joinStatus(join)"
-            )
-        )
-
-        let start = try #require(source.range(of: "@ViewBuilder private func joinStatus"))
-        // The next declaration, not a doc comment above an unrelated
-        // property — a reorder of `hostActions` (which the doc comment sits
-        // on) must not red this test for the wrong reason.
-        let end = try #require(
-            source.range(of: "private func", range: start.upperBound..<source.endIndex)
-        )
-        #expect(start.upperBound < end.lowerBound)
-        let body = source[start.upperBound..<end.lowerBound]
+        // Normalize the whole file the way `OrientationTests.rootViewWiring()`
+        // normalizes a body — trim each line, drop comments, rejoin — then
+        // match contiguously. Independent `contains` checks are the weakness:
+        // both halves of a gated or conditioned call still exist in the file.
+        // Contiguity is what makes "every guest sees this, unconditionally"
+        // testable, and normalizing makes it indentation-independent.
+        let normalized = source
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.hasPrefix("//") }
             .joined(separator: "\n")
 
+        // Through the closing brace of the `if case .join` arm: anything
+        // wrapped around the call (`if isHost { … }`), anything appended to it
+        // (`.hidden()`), or its removal all break this.
+        #expect(
+            normalized.contains(
+                "joinField(join).id(Self.codeFieldID)\njoinStatus(join)\n}"
+            )
+        )
+
+        let start = try #require(normalized.range(of: "@ViewBuilder private func joinStatus"))
+        // The next declaration of any kind, so the positives below can never
+        // be satisfied out of `hostActions` or anything past it.
+        let end = try #require(
+            ["private func", "private var"]
+                .compactMap { normalized.range(of: $0, range: start.upperBound..<normalized.endIndex) }
+                .min { $0.lowerBound < $1.lowerBound }
+        )
+        #expect(start.upperBound < end.lowerBound)
+        let body = String(normalized[start.upperBound..<end.lowerBound])
+
         #expect(body.contains("switch join.phase"))
         #expect(body.contains("case .joining:"))
         #expect(body.contains("ProgressView()"), "no progress state during the attempt")
-        #expect(body.contains("case .waiting:"))
-        // The copy is read, not restated: the model's own line, not a literal
-        // pasted here.
-        #expect(body.contains("Text(join.waitingLine)"))
+        // Contiguous: the copy is read, not restated, AND the arm draws it for
+        // every guest. `if join.hostName != nil { Text(join.waitingLine) }`
+        // would satisfy two separate `contains` while showing a guest whose
+        // host-profile read failed nothing — and would put the decision in the
+        // view, which the model already makes in `waitingLine`.
+        #expect(body.contains("case .waiting:\nText(join.waitingLine)"))
         #expect(!body.contains("JoinModel.waitingTitle"), "the view must read waitingLine, not rebuild the title itself")
     }
 }
