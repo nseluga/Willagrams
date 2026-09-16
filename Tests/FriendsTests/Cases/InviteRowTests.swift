@@ -39,18 +39,22 @@ struct InviteRowTests {
         #expect(!code.contains { $0.contains("\"Invite to play\"") })
     }
 
-    @Test("The button is drawn inside the accepted section and nowhere else")
+    /// Item 3 moved every row's actions out of the section bodies and into
+    /// `rowActions(_:entry:)`, rendered from `FriendRowSection`, so the old
+    /// scan of "where does the literal sit between these section titles" no
+    /// longer has anything true to say — it would fail the moment a helper
+    /// function moved in the file for an unrelated reason. The section that
+    /// owns the button is asserted at the data layer instead, where
+    /// `FriendRowActionsTests` also pins it, and the view is only checked for
+    /// the parts a data-layer test cannot see: the closure wiring back to the
+    /// shell.
+    @Test("Invite to play is the accepted section's primary action, and nowhere else")
     func onlyAcceptedRowsCarryIt() throws {
+        #expect(FriendRowSection.accepted.primaryAction == .invitePlay)
+        #expect(FriendRowSection.incoming.primaryAction != .invitePlay)
+        #expect(FriendRowSection.outgoing.allActions.isEmpty)
+
         let view = try Self.text("FriendsView.swift")
-
-        let accepted = try #require(view.range(of: "FriendsModel.acceptedSectionTitle"))
-        let outgoing = try #require(view.range(of: "FriendsModel.outgoingSectionTitle"))
-        let incoming = try #require(view.range(of: "FriendsModel.incomingSectionTitle"))
-        let button = try #require(view.range(of: "FriendsModel.invitePlayLabel"))
-
-        #expect(incoming.lowerBound < accepted.lowerBound, "the sections moved; this scan is stale")
-        #expect(button.lowerBound > accepted.lowerBound, "the invite button is above the accepted section")
-        #expect(button.upperBound < outgoing.lowerBound, "the invite button reaches a pending row")
 
         // The tap is reported, not decided: hosting and sending are the shell's.
         #expect(view.contains("onInvite(entry)"))

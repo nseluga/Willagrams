@@ -63,22 +63,7 @@ struct FriendsView: View {
                     // Requests first: the only rows on this screen that are
                     // waiting on the player are the ones they can answer.
                     section(FriendsModel.incomingSectionTitle, model.incoming) { entry in
-                        Button(FriendsModel.acceptLabel) {
-                            Task { await model.accept(entry) }
-                        }
-                        .buttonStyle(.brandPrimary)
-
-                        Button(FriendsModel.declineLabel) {
-                            Task { await model.decline(entry) }
-                        }
-                        .buttonStyle(.brandQuiet)
-
-                        // Declining no longer blocks, so refusing someone for
-                        // good needs its own button on the row that asked.
-                        Button(FriendsModel.blockLabel) {
-                            Task { await model.block(entry) }
-                        }
-                        .buttonStyle(.brandQuiet)
+                        rowActions(.incoming, entry: entry)
                     }
 
                     // Said before the tap, not after it: the two buttons above
@@ -95,16 +80,7 @@ struct FriendsView: View {
                         model.accepted,
                         onOpen: onOpen
                     ) { entry in
-                        Button(FriendsModel.invitePlayLabel) { onInvite(entry) }
-                            .buttonStyle(.brandPrimary)
-
-                        Button(FriendsModel.unfriendLabel) { unfriending = entry }
-                            .buttonStyle(.brandQuiet)
-
-                        Button(FriendsModel.blockLabel) {
-                            Task { await model.block(entry) }
-                        }
-                        .buttonStyle(.brandQuiet)
+                        rowActions(.accepted, entry: entry)
                     }
 
                     // Nothing to do to a request nobody has answered — it is
@@ -343,6 +319,68 @@ struct FriendsView: View {
         .padding(DesignTokens.Space.m)
         .brandCard()
         .disabled(model.isLoading)
+    }
+
+    /// A row's actions, rendered from `FriendRowSection` rather than a second
+    /// hard-coded list: the primary action stays a visible labelled button,
+    /// everything else moves into the overflow `Menu` so a ~310pt card never
+    /// has to fit three vertical bars.
+    @ViewBuilder
+    private func rowActions(_ section: FriendRowSection, entry: FriendEntry) -> some View {
+        if let primary = section.primaryAction {
+            primaryRowButton(primary, entry: entry)
+        }
+
+        if !section.overflowActions.isEmpty {
+            Menu {
+                ForEach(section.overflowActions, id: \.self) { action in
+                    overflowRowButton(action, entry: entry)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .accessibilityLabel(FriendsModel.moreActionsLabel)
+        }
+    }
+
+    @ViewBuilder
+    private func primaryRowButton(_ action: FriendRowAction, entry: FriendEntry) -> some View {
+        switch action {
+        case .accept:
+            Button(FriendsModel.acceptLabel) {
+                Task { await model.accept(entry) }
+            }
+            .buttonStyle(.brandPrimary)
+        case .invitePlay:
+            Button(FriendsModel.invitePlayLabel) { onInvite(entry) }
+                .buttonStyle(.brandPrimary)
+        case .decline, .block, .unfriend:
+            EmptyView()
+        }
+    }
+
+    /// One row inside the overflow menu — plain `Button`s, so `Menu` draws
+    /// its own row chrome rather than the brand button styles.
+    @ViewBuilder
+    private func overflowRowButton(_ action: FriendRowAction, entry: FriendEntry) -> some View {
+        switch action {
+        case .decline:
+            Button(FriendsModel.declineLabel) {
+                Task { await model.decline(entry) }
+            }
+        case .block:
+            // Declining no longer blocks, so refusing someone for good needs
+            // its own action on the row that asked.
+            Button(FriendsModel.blockLabel, role: .destructive) {
+                Task { await model.block(entry) }
+            }
+        case .unfriend:
+            // Routes through the existing confirmation dialog below — this
+            // only asks for the entry, it never unfriends directly.
+            Button(FriendsModel.unfriendLabel, role: .destructive) { unfriending = entry }
+        case .accept, .invitePlay:
+            EmptyView()
+        }
     }
 
     /// A small square tile carrying one initial — the same face and ink the

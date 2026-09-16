@@ -36,6 +36,48 @@ public struct FriendEntry: Identifiable, Sendable, Equatable {
     }
 }
 
+/// One action a friend row can offer, held as data rather than as a view
+/// fragment — a `FriendsView` nested-view comparison passes vacuously the
+/// moment the nesting changes shape for an unrelated reason, so the row's
+/// action set is pinned here instead, where a test can read it with no
+/// SwiftUI at all.
+public enum FriendRowAction: String, CaseIterable, Sendable {
+    case accept, decline, block, invitePlay, unfriend
+}
+
+/// Which of a row's three kinds it is, and how its actions split between the
+/// one visible primary button and the overflow menu. `FriendsView` renders
+/// from this rather than hard-coding either list a second time.
+public enum FriendRowSection: Sendable {
+    case incoming, accepted, outgoing
+
+    /// The one action drawn as a labelled button on the row. `nil` for a
+    /// section with nothing to do — outgoing requests wait, they don't act.
+    public var primaryAction: FriendRowAction? {
+        switch self {
+        case .incoming: .accept
+        case .accepted: .invitePlay
+        case .outgoing: nil
+        }
+    }
+
+    /// The rest of the section's actions, in the order the overflow menu
+    /// lists them.
+    public var overflowActions: [FriendRowAction] {
+        switch self {
+        case .incoming: [.decline, .block]
+        case .accepted: [.unfriend, .block]
+        case .outgoing: []
+        }
+    }
+
+    /// Every action this section offers, primary first — the full set a test
+    /// pins independent of which control draws which entry.
+    public var allActions: [FriendRowAction] {
+        (primaryAction.map { [$0] } ?? []) + overflowActions
+    }
+}
+
 /// The friends list: who you play with, who has asked, and who you have asked.
 ///
 /// Three published sections rather than one list with a status on each row, so
@@ -467,6 +509,11 @@ public final class FriendsModel {
     /// Only ever drawn on an accepted row — the screen passes it to that one
     /// section, so a pending row cannot render it.
     public static let invitePlayLabel = "Invite to play"
+    /// The overflow control's accessibility label — a screen label, not game
+    /// vocabulary, so it lives beside its siblings here rather than in
+    /// `Terminology.swift`. A bare `ellipsis.circle` glyph with no label is
+    /// what a screen reader has nothing to say about; this is that word.
+    public static let moreActionsLabel = "More actions"
     public static let backLabel = "Done"
     public static let emptyMessage = "No friends yet. Share your friend code to add one."
     public static let loadFailedMessage = "Couldn't load your friends. Try again."
