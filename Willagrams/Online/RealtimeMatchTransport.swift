@@ -248,6 +248,10 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
             // the app carries on looking fine.
             peers.pauseGrace()
         case .active:
+            // A transport whose streams are already finished has no match left
+            // to re-join; without this every foreground re-opens the Realtime
+            // socket for a match that is over.
+            guard !peers.isFinished else { return }
             // Re-subscribed first, and only then does the window start counting
             // again: the peer is reachable again only once there is a socket,
             // and a window spent before that is spent on nothing. The channel

@@ -627,7 +627,23 @@ public final class MatchSession: AppActivityListener {
     /// `nonisolated`, and it hops rather than assuming: this is called from
     /// ``AppActivity``, which is driven by a UIKit notification, and a
     /// `@MainActor` callback UIKit ever delivers off the main queue traps.
+    /// Still `nonisolated` — see above; a `@MainActor` conformance traps. What
+    /// it does *not* do any more is always hop: a hop is a queued block, and the
+    /// suspension that follows a lock can land before it runs. The window is
+    /// then banked from a deadline already in the past, which banks zero and
+    /// ends the match on resume — the exact failure this item exists to fix.
+    /// On the main thread, which is where UIKit posts from, the bank is taken
+    /// synchronously, inside the notification, before anything can suspend.
     public nonisolated func appActivityChanged(to phase: AppActivity.Phase) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                switch phase {
+                case .away: appWentAway()
+                case .active: appCameBack()
+                }
+            }
+            return
+        }
         Task { @MainActor [weak self] in
             switch phase {
             case .away: self?.appWentAway()
@@ -659,7 +675,13 @@ public final class MatchSession: AppActivityListener {
             return deadline
         }.max()
         guard let furthest else { return }
-        reconnectSecondsOwed = max(0, Int(furthest.timeIntervalSince(now()).rounded(.up)))
+        // DOWN, never up. Ceiling refunds every spend shorter than a second, so
+        // a lock/unlock loop with a sub-second stretch on screen holds the
+        // budget at thirty for ever while the transport's exact 35s still
+        // finishes the streams — a frozen board behind a banner nothing
+        // resolves. Flooring over-charges by under a second, which is the safe
+        // direction: the grace stays honest and still runs out.
+        reconnectSecondsOwed = max(0, Int(furthest.timeIntervalSince(now()).rounded(.down)))
     }
 
     /// Resumes the window with what was left of it, re-stamped so the banner

@@ -110,6 +110,13 @@ public final class OnlineMatch {
     @ObservationIgnored
     private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
 
+    /// The session's clock, handed down beside ``sleepFor`` and never apart
+    /// from it. A façade that injected only the sleeper would leave every
+    /// shipped session stamping its reconnect deadline on the wall clock while
+    /// waiting it out on the injected one — the two-clock split this item
+    /// removed, still present on the only path that actually builds a session.
+    @ObservationIgnored private let now: @Sendable () -> Date
+
     /// The recorder attached to the session this façade built, if there is a
     /// store to record into. Held so it outlives ``start()``.
     @ObservationIgnored public private(set) var recorder: MatchOutcomeRecorder?
@@ -162,7 +169,8 @@ public final class OnlineMatch {
         dictionaryHash: String,
         outcomeStore: (any MatchOutcomeStore)?,
         activity: AppActivity?,
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void,
+        now: @escaping @Sendable () -> Date
     ) {
         self.record = record
         self.localPlayer = localPlayer
@@ -173,6 +181,7 @@ public final class OnlineMatch {
         self.outcomeStore = outcomeStore
         self.activity = activity
         self.sleepFor = sleepFor
+        self.now = now
         // The transport first, and deliberately: listeners are called in
         // registration order, so on resume the socket is back up before any
         // session's reconnect window starts counting again. A window spent
@@ -256,7 +265,8 @@ public final class OnlineMatch {
         activity: AppActivity? = nil,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
-        }
+        },
+        now: @escaping @Sendable () -> Date = Date.init
     ) async throws -> OnlineMatch {
         guard let userID = await backend.currentUserID else {
             throw OnlineMatchError.notAuthenticated
@@ -273,7 +283,8 @@ public final class OnlineMatch {
             dictionaryHash: dictionaryHash,
             outcomeStore: outcomeStore,
             activity: activity,
-            sleepFor: sleepFor
+            sleepFor: sleepFor,
+            now: now
         )
     }
 
@@ -287,7 +298,8 @@ public final class OnlineMatch {
         activity: AppActivity? = nil,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
-        }
+        },
+        now: @escaping @Sendable () -> Date = Date.init
     ) async throws -> OnlineMatch {
         guard let userID = await backend.currentUserID else {
             throw OnlineMatchError.notAuthenticated
@@ -301,7 +313,8 @@ public final class OnlineMatch {
             dictionaryHash: dictionaryHash,
             outcomeStore: outcomeStore,
             activity: activity,
-            sleepFor: sleepFor
+            sleepFor: sleepFor,
+            now: now
         )
     }
 
@@ -313,7 +326,8 @@ public final class OnlineMatch {
         dictionaryHash: String,
         outcomeStore: (any MatchOutcomeStore)?,
         activity: AppActivity?,
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void,
+        now: @escaping @Sendable () -> Date
     ) async throws -> OnlineMatch {
         let localPlayer = PlayerID(rawValue: userID.uuidString)
         let transport = try await backend.transport(for: record, as: localPlayer)
@@ -339,7 +353,8 @@ public final class OnlineMatch {
             dictionaryHash: dictionaryHash,
             outcomeStore: store,
             activity: activity,
-            sleepFor: sleepFor
+            sleepFor: sleepFor,
+            now: now
         )
     }
 
@@ -461,7 +476,8 @@ public final class OnlineMatch {
             roster: roster,
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
-            sleepFor: sleepFor
+            sleepFor: sleepFor,
+            now: now
         )
         // After the transport, never before — see the note in `init`.
         activity?.add(session)

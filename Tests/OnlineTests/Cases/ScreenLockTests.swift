@@ -722,6 +722,131 @@ struct ScreenLockTests {
         }
     }
 
+    // MARK: - Review findings
+
+    /// The shape `theSessionsReconnectBudgetOnlyShrinks` cannot see: an on-screen
+    /// stretch shorter than ONE SESSION-SECOND. That case runs 20ms at ×100, so
+    /// every cycle spends two whole seconds and a ceiling still rounds them down
+    /// to a drop. A real lock/unlock is a fraction of a second on the real clock,
+    /// and `.rounded(.up)` refunds a fraction entirely: the budget sticks at 30
+    /// for ever while the transport's own 35s still finishes the streams, which
+    /// is a frozen board behind a banner counting to a deadline nothing reaches.
+    /// One session-second per ten real milliseconds here, and one real
+    /// millisecond on screen per cycle — a tenth of a second, which a ceiling
+    /// gives straight back.
+    @Test("A sub-second stretch on screen is still charged, and still ends the match")
+    func aSubSecondStretchOnScreenIsStillCharged() async throws {
+        let table = try await Self.table(clock: ScaledClock(factor: 100))
+
+        table.bus.leave(table.hostChannel)
+        table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
+        try await Self.waitUntil("the reconnect window to arm") {
+            table.guest.reconnectSecondsOwedForTesting != nil
+        }
+
+        var previous = MatchSession.reconnectGraceSeconds + 1
+        for cycle in 0 ..< (MatchSession.reconnectGraceSeconds + 5) {
+            // A tenth of a session-second on screen: under one second, which is
+            // exactly the interval a ceiling rounds away to nothing.
+            try await Task.sleep(for: .milliseconds(1))
+            table.guestActivity.send(.away)
+            await Self.settle()
+            guard let owed = table.guest.reconnectSecondsOwedForTesting else { break }
+            #expect(owed < previous, "cycle \(cycle): \(owed) owed, was \(previous)")
+            previous = owed
+            try await Task.sleep(for: .milliseconds(1))
+            table.guestActivity.send(.active)
+            await Self.settle()
+            // Spent. Nothing is left to shrink, so a sixth reading of zero is
+            // not a top-up and must not be read as one.
+            if owed == 0 { break }
+        }
+
+        // ...and the point of charging it: the match actually ends.
+        try await Self.waitUntil("the peer to be reported gone", within: .seconds(3)) {
+            table.guest.presence(of: Self.hostID) == .gone
+        }
+    }
+
+    /// A hop is a queued block, and the suspension a lock causes can land before
+    /// it runs. The bank has to be taken inside the notification, not after it:
+    /// a `Task { @MainActor }` that only runs on resume reads a deadline already
+    /// in the past, banks zero, and ends the match the moment the screen comes
+    /// back. Told on the main thread — where UIKit posts from — the budget must
+    /// have moved before `appActivityChanged(to:)` returns, with nothing awaited
+    /// in between.
+    @Test("Told on the main thread, the away bank is taken synchronously")
+    func theAwayBankIsTakenWithoutAHop() async throws {
+        let table = try await Self.table(clock: ScaledClock(factor: 100))
+
+        table.bus.leave(table.hostChannel)
+        table.guestChannel.deliverPresence(joined: [], left: [Self.hostID])
+        try await Self.waitUntil("the reconnect window to arm") {
+            table.guest.reconnectSecondsOwedForTesting != nil
+        }
+        // Two session-seconds on screen, so an honest bank is visibly below 30.
+        try await Task.sleep(for: .milliseconds(20))
+
+        table.guest.appActivityChanged(to: .away)
+        // No `await` between the call and the read: a hop has not run yet.
+        let owed = try #require(table.guest.reconnectSecondsOwedForTesting)
+        #expect(owed < MatchSession.reconnectGraceSeconds, "\(owed) owed")
+    }
+
+    /// `makeSession` is the only path that ships a session, so a `now:` the
+    /// façade never takes leaves every shipped match stamping its banner
+    /// deadline on the wall clock while waiting the window out on the injected
+    /// one — `done when:` 2 defeated in production with every unit test green.
+    ///
+    /// Two pins, and between them the whole path. The unapplied method
+    /// references are the COMPILER's: drop `now:` from either entry point and
+    /// this file stops building. The literal is one contiguous match against
+    /// NORMALISED source — every line trimmed, every `//` line dropped — so a
+    /// `now: now` surviving only in a comment cannot satisfy it; it covers the
+    /// remaining span, `makeSession`'s own call into `MatchSession`.
+    ///
+    /// Not pinned end-to-end by value, and that is not for want of trying: no
+    /// façade-built session can observe a peer drop at all today. `watchLobby`
+    /// consumes `transport.peerConnectionStates` and `makeSession` cancels that
+    /// task — and cancelling an `AsyncStream`'s consumer TERMINATES the stream,
+    /// so the session's own `for await` over the same stream receives nothing,
+    /// ever. See the Engineer Report; it is a live defect, not a test limitation.
+    @Test("The façade hands its session the injected clock, not just the sleeper")
+    func theFacadeThreadsItsClockIntoTheSession() throws {
+        _ = OnlineMatch.host(
+            options:backend:dictionary:dictionaryHash:outcomeStore:activity:sleepFor:now:)
+        _ = OnlineMatch.join(
+            code:backend:dictionary:dictionaryHash:outcomeStore:activity:sleepFor:now:)
+
+        let call = """
+            dictionary: dictionary,
+            dictionaryHash: dictionaryHash,
+            sleepFor: sleepFor,
+            now: now
+            """
+        #expect(try Self.normalised(of: "Willagrams/Online/OnlineMatch.swift").contains(call))
+    }
+
+    /// A transport that has already finished has no match left to re-join.
+    /// Without the closed check every foreground re-opens the Realtime socket
+    /// for a match that is over — and the app is foregrounded rather a lot.
+    @Test("A transport that has already left does not re-open its socket")
+    func aFinishedTransportDoesNotReconnect() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let transport = try await RealtimeMatchTransport.connect(
+            localPlayerID: Self.guestID, channel: channel, peerGrace: Self.grace,
+            gapGrace: .seconds(60))
+
+        transport.leave()
+        let before = channel.reconnects
+
+        transport.appActivityChanged(to: .away)
+        transport.appActivityChanged(to: .active)
+
+        #expect(channel.reconnects == before, "\(channel.reconnects) reconnects, was \(before)")
+    }
+
     private static func source(of path: String) throws -> String {
         try String(
             contentsOf: URL(fileURLWithPath: #filePath)
