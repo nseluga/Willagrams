@@ -20,22 +20,34 @@ import WillagramsRules
 /// loses whichever parked second. Every waiter is held and resumed together.
 @MainActor
 final class EveryWaiterClock {
-    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var waiting: [(duration: Duration, continuation: CheckedContinuation<Void, Never>)] = []
 
-    /// How many sleepers are parked on a tick right now. A test that must hand
-    /// out exactly one second waits for every sleeper it expects before
-    /// advancing — otherwise it advances the ones that happened to park first.
+    /// How many sleepers are parked right now, whatever they asked for.
     var parked: Int { waiting.count }
 
-    func sleep(_ duration: Duration) async {
-        await withCheckedContinuation { waiting.append($0) }
+    /// How many sleepers asked for exactly `duration`.
+    ///
+    /// A bare count cannot identify its sleepers, and the same injected clock
+    /// carries more than one kind of wait: `MatchSession` parks its countdown
+    /// tick on `.seconds(1)` and its reconnect-grace window on
+    /// `.seconds(reconnectGraceSeconds)`. A gate on the bare count is satisfied
+    /// by a grace sleeper standing in for a countdown that has not parked yet,
+    /// and ``advance(_:)`` then resumes the wrong pair. The requested duration
+    /// is what tells them apart.
+    func parked(of duration: Duration) -> Int {
+        waiting.count { $0.duration == duration }
     }
 
-    /// Lets one second elapse for everything asleep right now.
-    func advance() {
-        let resume = waiting
-        waiting = []
-        for continuation in resume { continuation.resume() }
+    func sleep(_ duration: Duration) async {
+        await withCheckedContinuation { waiting.append((duration, $0)) }
+    }
+
+    /// Lets the wait elapse for everything asleep right now, or — given a
+    /// duration — only for the sleepers that asked for exactly that.
+    func advance(_ duration: Duration? = nil) {
+        let resume = waiting.filter { duration == nil || $0.duration == duration }
+        waiting.removeAll { duration == nil || $0.duration == duration }
+        for waiter in resume { waiter.continuation.resume() }
     }
 }
 

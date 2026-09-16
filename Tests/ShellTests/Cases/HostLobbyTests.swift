@@ -394,6 +394,36 @@ struct HostLobbyTests {
         #expect(f.shell.route == .menu)
     }
 
+    // MARK: - No cycle through the observation registrar
+
+    /// `watchLobby`'s registration is armed the whole time a lobby sits waiting,
+    /// and a `withObservationTracking` registration is released only when it
+    /// *fires*. So a strong `match` in its `onChange` closes match → registrar →
+    /// closure → match, and a lobby nobody ever joins strands the `OnlineMatch`,
+    /// its transport and its session for the life of the process.
+    ///
+    /// The roster is deliberately never changed again after the lobby opens:
+    /// a second change would fire the registration and break the cycle by
+    /// accident, which is precisely the case this guard must not be green for.
+    @Test("A lobby left without another roster change leaks neither the model nor its match")
+    func aDroppedLobbyLeaksNothing() async throws {
+        let f = try await Self.make()
+        weak var weakLobby: HostLobbyModel?
+        weak var weakMatch: OnlineMatch?
+        do {
+            #expect(f.shell.playAFriend())
+            let lobby = try #require(f.shell.hostLobby)
+            await Self.until("the lobby exists") { lobby.phase == .waiting }
+            weakLobby = lobby
+            weakMatch = try #require(lobby.match)
+        }
+        f.shell.returnToMenu()
+
+        for _ in 0..<50 { await Task.yield() }
+        #expect(weakLobby == nil, "the lobby model was held after the screen closed")
+        #expect(weakMatch == nil, "the OnlineMatch was stranded by an armed observer")
+    }
+
     // MARK: - The error copy
 
     @Test("Every lobby failure is one line of copy, never an error and never a silent exit")

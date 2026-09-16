@@ -16,11 +16,14 @@ struct MatchRunTests {
 
     /// A shell whose seeds are a known increasing sequence and whose countdown
     /// clock returns immediately.
-    static func shell(from first: UInt64 = 500) -> ShellModel {
+    static func shell(
+        from first: UInt64 = 500,
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in }
+    ) -> ShellModel {
         let counter = RematchTests.Counter(first &- 1)
         return ShellModel(
             dictionary: { EveryWordIsReal() },
-            sleepFor: { _ in },
+            sleepFor: sleepFor,
             seedSource: { counter.next() }
         )
     }
@@ -273,16 +276,39 @@ struct MatchRunTests {
     /// A shell dropped mid-match must take itself, its run, that run's session,
     /// board and HUD with it. A strong reference from either the run or the HUD
     /// back to the shell closes a cycle that leaks all five.
+    ///
+    /// The clock is what makes this a pin rather than a coincidence. The cycle
+    /// under test is session → registrar → `endWhenTheMatchDoes`'s closure →
+    /// run, and a registration is released *when it fires* — so a match that
+    /// ends inside the check's own window breaks the cycle by firing, and the
+    /// guard passes whether the capture is weak or not. Every sleeper of this
+    /// run is parked on the injected clock, exactly the countdown's seconds are
+    /// handed out and not one more, and the shell is then dropped while the
+    /// registration is still armed and cannot fire. Stopping short of `.playing`
+    /// would not do: a countdown task parked mid-suspension holds its session
+    /// strongly, and the guard would go red for the wrong reason.
+    ///
+    /// The release is asserted outright rather than waited for: nothing but the
+    /// cycle can hold these five once the shell is gone, so a deadline would
+    /// only be somewhere for a leak to hide.
     @Test("A shell dropped mid-match leaks neither itself nor its run")
     func aDroppedShellLeaksNothing() async throws {
+        let clock = EveryWaiterClock()
         weak var weakShell: ShellModel?
         weak var weakRun: MatchRun?
         weak var weakSession: MatchSession?
         weak var weakHUD: MatchHUDModel?
         try await {
-            let shell = Self.shell()
+            let shell = Self.shell(sleepFor: { await clock.sleep($0) })
             #expect(shell.startSoloPractice())
             let run = try #require(shell.run)
+            // Both ends of a solo match count the same seconds on this clock.
+            for _ in 0..<ShellModel.soloCountdownSeconds {
+                try await SoloMatchTests.waitUntil("both countdowns to park on a tick") {
+                    clock.parked(of: .seconds(1)) == 2
+                }
+                clock.advance(.seconds(1))
+            }
             try await SoloMatchTests.waitUntil("play to begin") {
                 run.session.state.status == .playing
             }
@@ -293,10 +319,13 @@ struct MatchRunTests {
         }()
 
         // Nothing is torn down first: the shell is simply dropped, which is the
-        // case a cycle survives.
-        try await SoloMatchTests.waitUntil("the dropped shell and its run to be released") {
-            weakShell == nil && weakRun == nil && weakSession == nil && weakHUD == nil
-        }
+        // case a cycle survives. The yields only drain the turns the drop itself
+        // queued; the clock is never advanced again.
+        for _ in 0..<20 { await Task.yield() }
+        #expect(weakShell == nil, "the dropped shell was held")
+        #expect(weakRun == nil, "the dropped shell's run was held")
+        #expect(weakSession == nil, "the dropped shell's session was held")
+        #expect(weakHUD == nil, "the dropped shell's HUD was held")
     }
 
     // MARK: - The run is released, not merely unreferenced

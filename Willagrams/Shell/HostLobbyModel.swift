@@ -254,9 +254,15 @@ public final class HostLobbyModel {
         refreshRoster(match)
         withObservationTracking {
             _ = match.lobby
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.match === match else { return }
+        // `match` is captured weakly for the same reason `self` is: `onChange`
+        // is escaping and the match's own observation registrar holds it, so a
+        // strong `match` here closes match → registrar → closure → match. A
+        // registration is released only when it fires, so a lobby that never
+        // changes again would strand the `OnlineMatch`, its transport and its
+        // session for the life of the process.
+        } onChange: { [weak self, weak match] in
+            Task { @MainActor [weak self, weak match] in
+                guard let self, let match, self.match === match else { return }
                 self.watchLobby(match)
             }
         }

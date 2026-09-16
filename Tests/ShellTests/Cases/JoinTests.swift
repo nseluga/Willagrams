@@ -111,6 +111,43 @@ struct JoinTests {
         return model
     }
 
+    // MARK: - No cycle through the observation registrar
+
+    /// `watchStart`'s registration is armed for as long as a guest waits, and a
+    /// `withObservationTracking` registration is released only when it *fires*.
+    /// So strong `match`/`session` captures in its `onChange` close
+    /// session → registrar → closure → session, and a join that never reaches
+    /// `.playing` — declined, dropped, backgrounded — strands both for the life
+    /// of the process. That is the lane objective's own case.
+    ///
+    /// The host never presses Start here: firing the registration would break
+    /// the cycle by accident, which is exactly what this guard must not be
+    /// green for.
+    @Test("A join that never starts leaks neither the model, its match nor its session")
+    func aDroppedJoinLeaksNothing() async throws {
+        let f = try await Self.make()
+        weak var weakModel: JoinModel?
+        weak var weakMatch: OnlineMatch?
+        weak var weakSession: MatchSession?
+        do {
+            let model = try await Self.joinTheLobby(f)
+            // `phase` reaches `.waiting` when the membership row lands, which is
+            // before `awaitStart()` hands the session back and `watchStart` arms
+            // on it. Capturing without this wait races, and a run that lost the
+            // race asserts about a registration that was never made.
+            await Self.until("the guest's session to exist") { model.session != nil }
+            weakModel = model
+            weakMatch = try #require(model.match)
+            weakSession = try #require(model.session)
+        }
+        f.shell.returnToMenu()
+
+        for _ in 0..<50 { await Task.yield() }
+        #expect(weakModel == nil, "the join model was held after the screen closed")
+        #expect(weakMatch == nil, "the OnlineMatch was stranded by an armed observer")
+        #expect(weakSession == nil, "the MatchSession was stranded by an armed observer")
+    }
+
     // MARK: - done when 1
 
     @Test("Entering a live lobby's code reaches the waiting state and writes the membership row")

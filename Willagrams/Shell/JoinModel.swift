@@ -240,9 +240,16 @@ public final class JoinModel {
         }
         withObservationTracking {
             _ = session.state.status
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.watchStart(match: match, session: session)
+        // `match` and `session` are captured weakly for the same reason `self`
+        // is: `onChange` is escaping and the session's own registrar holds it,
+        // so strong captures close session → registrar → closure → session. A
+        // registration is released only when it fires, so a join that never
+        // reaches `.playing` — declined, dropped, backgrounded — would strand
+        // both for the life of the process.
+        } onChange: { [weak self, weak match, weak session] in
+            Task { @MainActor [weak self, weak match, weak session] in
+                guard let self, let match, let session else { return }
+                self.watchStart(match: match, session: session)
             }
         }
     }

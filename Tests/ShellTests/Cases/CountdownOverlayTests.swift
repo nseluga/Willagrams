@@ -52,8 +52,6 @@ struct CountdownOverlayTests {
         try await runCountdown(from: 1)
     }
 
-    /// Drives a real `MatchSession` down from `start` one injected second at a
-    /// time, asserting the overlay at every step including the last.
     /// How many countdowns a solo match runs on the injected clock.
     ///
     /// `SoloMatch` hands the same `sleepFor` to both ends: the local
@@ -64,6 +62,13 @@ struct CountdownOverlayTests {
     /// every countdown is parked on it.
     private static let countdownsPerSoloMatch = 2
 
+    /// The wait a countdown tick asks for. `MatchSession` parks the
+    /// reconnect-grace window on the same injected clock, so the gate below
+    /// counts only the sleepers that asked for a second.
+    private static let tickDuration = Duration.seconds(1)
+
+    /// Drives a real `MatchSession` down from `start` one injected second at a
+    /// time, asserting the overlay at every step including the last.
     private func runCountdown(from start: Int) async throws {
         let clock = EveryWaiterClock()
         let solo = SoloMatch(
@@ -98,8 +103,8 @@ struct CountdownOverlayTests {
 
     private func tick(_ clock: EveryWaiterClock) async throws {
         try await SoloMatchTests.waitUntil("both countdowns to park on a tick") {
-            clock.parked == Self.countdownsPerSoloMatch
+            clock.parked(of: Self.tickDuration) == Self.countdownsPerSoloMatch
         }
-        clock.advance()
+        clock.advance(Self.tickDuration)
     }
 }
