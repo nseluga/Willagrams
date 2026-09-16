@@ -293,6 +293,7 @@ public final class ShellModel {
         services.audio.play(.menuTap)
         hostLobby?.teardown()
         hostLobby = nil
+        lobbyFriends = nil
         join = JoinModel(
             shell: self,
             backend: backend,
@@ -759,11 +760,48 @@ public final class ShellModel {
         returnToMenu()
         guard playAFriend(), let lobby = hostLobby else { return false }
 
-        let recipient = entry.profile.id
+        sendInvite(to: entry.profile.id, from: lobby, over: channel, as: me)
+        return true
+    }
+
+    /// The open seat → invite that friend into the lobby already on screen.
+    ///
+    /// The same send as ``invitePlay(_:)``, reached from the other end: the
+    /// lobby exists and must not be torn down, so this opens nothing and only
+    /// posts the invite. The accepted-only rule is enforced twice on purpose —
+    /// the picker is built from ``invitableFriends``, which is the friends
+    /// screen's own accepted section, and this guard is what holds if a stale
+    /// row survives a friendship changing under the open menu.
+    ///
+    /// - Returns: whether an invite was posted.
+    @discardableResult
+    public func invitePlayFromLobby(_ entry: FriendEntry) -> Bool {
+        guard case .hostLobby = route else { return false }
+        guard entry.friendship.status == .accepted else { return false }
+        guard let channel = inviteChannel, let me = currentProfile, let lobby = hostLobby else {
+            inviteMessage = Self.inviteSendFailedMessage
+            return false
+        }
+
+        sendInvite(to: entry.profile.id, from: lobby, over: channel, as: me)
+        return true
+    }
+
+    /// Posts one invite to `lobby` at `recipient`, replacing whatever send was
+    /// in flight. Shared by both entry points, and deliberately carries no
+    /// route check of its own: the caller decides which screen may reach it,
+    /// and a guard hoisted in here would silently disable one of them.
+    private func sendInvite(
+        to recipient: UUID,
+        from lobby: HostLobbyModel,
+        over channel: any MatchInviteChannel,
+        as me: Profile
+    ) {
         let now = now
         // The code does not exist until the `matches` row has been written, and
         // that write is the lobby's own task — so this waits on it rather than
         // polling, and re-checks that the lobby is still the live one.
+        inviteSend?.cancel()
         inviteSend = Task { @MainActor [weak self] in
             await lobby.work?.value
             guard !Task.isCancelled, let self, self.hostLobby === lobby else { return }
@@ -792,7 +830,6 @@ public final class ShellModel {
                 self.inviteMessage = Self.inviteSendFailedMessage
             }
         }
-        return true
     }
 
     /// What the next solo match will be played with. Lives here rather than on
@@ -824,6 +861,20 @@ public final class ShellModel {
     /// owns a live `OnlineMatch`, so it is built on the way in and torn down by
     /// ``returnToMenu()`` on every way out.
     public private(set) var hostLobby: HostLobbyModel?
+
+    /// The friends list backing the open seat's picker, alive exactly as long
+    /// as ``hostLobby`` is. A second `FriendsModel` rather than a second loader:
+    /// its ``FriendsModel/accepted`` section is already the accepted-only,
+    /// blocked-dropped, name-resolved list the picker needs, and deriving one
+    /// here would be that rule written twice.
+    public private(set) var lobbyFriends: FriendsModel?
+
+    /// Who the open seat may be offered to: accepted friends, nobody else.
+    ///
+    /// A pending request — in either direction — and a blocked player are in
+    /// `FriendsModel`'s other sections or in none at all, so neither can reach
+    /// this list.
+    public var invitableFriends: [FriendEntry] { lobbyFriends?.accepted ?? [] }
 
     /// Whether the menu's online actions can be taken. One question, asked here,
     /// so the view that draws the button and the transition that honours it
@@ -862,6 +913,7 @@ public final class ShellModel {
             sleepFor: sleepFor
         )
         hostLobby = lobby
+        lobbyFriends = currentProfile.map { FriendsModel(me: $0, backend: backend) }
         route = .hostLobby
         lobby.create()
         return true
@@ -1139,6 +1191,9 @@ public final class ShellModel {
         // rather than one per way out.
         hostLobby?.teardown()
         hostLobby = nil
+        // Its whole reason to exist went with the lobby, and a stale accepted
+        // section must not be the next lobby's picker.
+        lobbyFriends = nil
         // The guest's half of the same rule: the join in flight is cancelled and
         // its channel closed before the menu is shown over them.
         join?.teardown()

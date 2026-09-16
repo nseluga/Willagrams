@@ -754,4 +754,189 @@ struct InviteTests {
         g.shellA.returnToMenu()
     }
 
+    // MARK: - The open seat
+
+    /// Three more counterparts around A, one of every relationship that is not
+    /// an accepted friendship: C has asked A, A has asked D, and A has blocked
+    /// E. Without all three present the accepted-only rule below is
+    /// unfalsifiable — a picker that lists nobody would pass it.
+    ///
+    /// Leaves the session on A, which is who every caller loads as.
+    static func seedMixedRelationships(
+        _ f: Two
+    ) async throws -> (incoming: Profile, outgoing: Profile, blocked: Profile) {
+        let c = try await f.backend.signInWithApple(idToken: "invite-c-asks-me", nonce: "invite")
+        _ = try await f.backend.requestFriend(addresseeID: f.a.id)
+        let d = try await f.backend.signInWithApple(idToken: "invite-d-i-asked", nonce: "invite")
+        let e = try await f.backend.signInWithApple(idToken: "invite-e-blocked", nonce: "invite")
+        _ = try await f.backend.signInWithApple(idToken: Self.hostToken, nonce: "invite")
+        _ = try await f.backend.requestFriend(addresseeID: d.id)
+        _ = try await f.backend.block(e.id)
+        return (c, d, e)
+    }
+
+    @Test("The open seat's picker lists accepted friends and nobody else")
+    func openSeatPickerListsAcceptedOnly() async throws {
+        let f = try await Self.make()
+        let other = try await Self.seedMixedRelationships(f)
+
+        #expect(f.shellA.playAFriend())
+        let screen = try #require(f.shellA.lobbyFriends, "the lobby opened with no friend list")
+        await screen.load()
+
+        // The rule. B is accepted; the other three are not, in all three ways
+        // a relationship can fail to be one.
+        #expect(Set(f.shellA.invitableFriends.map(\.profile.id)) == [f.b.id])
+
+        // And the fixture really does hold one of each, so the line above is a
+        // filter and not an empty list: a pending row is in another section,
+        // and a blocked row is in none.
+        #expect(screen.incoming.contains { $0.profile.id == other.incoming.id })
+        #expect(screen.outgoing.contains { $0.profile.id == other.outgoing.id })
+        let sectioned = screen.accepted + screen.incoming + screen.outgoing
+        #expect(!sectioned.contains { $0.profile.id == other.blocked.id })
+        let rows = try await f.backend.friendships()
+        #expect(
+            rows.contains { $0.status == .blocked && $0.other(than: f.a.id) == other.blocked.id },
+            "the blocked row was never seeded, so its absence proves nothing")
+        #expect(rows.filter { $0.status == .pending }.count == 2)
+
+        f.shellA.returnToMenu()
+        #expect(f.shellA.lobbyFriends == nil, "the next lobby would open on this list")
+        #expect(f.shellA.invitableFriends.isEmpty)
+    }
+
+    @Test("The host invites from the open seat without leaving the lobby, and B gets the same banner")
+    func invitingFromTheOpenSeat() async throws {
+        let f = try await Self.make()
+        // The row the friends list hands out — the same `FriendEntry` type the
+        // picker holds, so both entry points are given identical input.
+        let entry = try await Self.rowForB(f)
+        f.shellA.returnToMenu()
+
+        #expect(f.shellA.playAFriend())
+        let lobby = try #require(f.shellA.hostLobby)
+        #expect(f.shellA.invitePlayFromLobby(entry))
+
+        await JoinTests.until("the invite left A") { f.bus.delivered == 1 }
+        await JoinTests.until("B was bannered") { f.shellB.inviteBanner != nil }
+        let banner = try #require(f.shellB.inviteBanner)
+        #expect(banner.hostName == f.a.displayName)
+        #expect(ShellModel.inviteLine(banner).contains(f.a.displayName))
+        #expect(banner.inviteCode == lobby.inviteCode)
+        #expect(banner.matchID == lobby.match?.record.id)
+        #expect(f.shellB.inviteMessage == nil)
+
+        // The whole point of the second entry point: the seat is still open
+        // under the host, on the same lobby, and nothing routed away.
+        #expect(f.shellA.route == .hostLobby)
+        #expect(f.shellA.hostLobby === lobby)
+        #expect(f.shellA.inviteMessage == nil)
+        f.shellA.returnToMenu()
+    }
+
+    @Test("A pending row cannot be invited from the open seat, and the accepted one can")
+    func openSeatRefusesAPendingRow() async throws {
+        let pending = try await Self.make(accepted: false)
+        let outgoing = try await Self.rowForB(pending, accepted: false)
+        #expect(outgoing.friendship.status == .pending)
+        pending.shellA.returnToMenu()
+
+        #expect(pending.shellA.playAFriend())
+        #expect(pending.shellA.invitePlayFromLobby(outgoing) == false)
+        for _ in 0..<200 { await Task.yield() }
+        #expect(pending.bus.delivered == 0, "a pending row sent an invite from the lobby")
+        #expect(pending.shellA.route == .hostLobby, "a refusal must not close the lobby")
+        pending.shellA.returnToMenu()
+
+        // The twin, because `FakeInviteBus` withholds rather than buffers: the
+        // same call on an accepted row over the same fixture does send.
+        let f = try await Self.make()
+        let entry = try await Self.rowForB(f)
+        f.shellA.returnToMenu()
+        #expect(f.shellA.playAFriend())
+        #expect(f.shellA.invitePlayFromLobby(entry))
+        await JoinTests.until("the accepted row sent one") { f.bus.delivered == 1 }
+        f.shellA.returnToMenu()
+    }
+
+    @Test("The friends list keeps its own route guard, and the lobby entry point has its own")
+    func eachEntryPointKeepsItsOwnRouteGuard() async throws {
+        let f = try await Self.make()
+        let entry = try await Self.rowForB(f)
+
+        // On `.friends`: the friends-list call works and the lobby call does
+        // not — the shared send carries neither guard.
+        #expect(f.shellA.route == .friends)
+        #expect(f.shellA.invitePlayFromLobby(entry) == false)
+        #expect(f.shellA.hostLobby == nil)
+        #expect(f.shellA.invitePlay(entry))
+        await JoinTests.until("the friends-list path sent") { f.bus.delivered == 1 }
+
+        // And on `.hostLobby` the pair swaps over.
+        #expect(f.shellA.route == .hostLobby)
+        #expect(f.shellA.invitePlay(entry) == false)
+        #expect(f.shellA.invitePlayFromLobby(entry))
+        await JoinTests.until("the lobby path sent") { f.bus.delivered == 2 }
+        f.shellA.returnToMenu()
+    }
+
+    /// `swift test` never compiles `TwoPlayerView.swift`, so the criterion "the
+    /// host can send an invite from the open seat" is pinned the way
+    /// `JoinTests.joinStatusRendersEachPhase()` pins un-compilable wiring: read
+    /// the source, normalize the whole file, and match ONE contiguous literal.
+    /// Independent `contains` checks would stay green with the picker gated,
+    /// hidden, or wrapped in an `if` no host satisfies.
+    @Test("TwoPlayerView draws the open seat's picker, unconditionally")
+    func openSeatRendersThePicker() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Cases
+            .deletingLastPathComponent()  // ShellTests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // repo root
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Willagrams/Shell/TwoPlayerView.swift"),
+            encoding: .utf8
+        )
+        let normalized = source
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") }
+            .joined(separator: "\n")
+
+        // Through the closing brace of the open seat's `HStack`: removing the
+        // call, gating it, or appending anything to it all break this.
+        #expect(normalized.contains("Spacer(minLength: 0)\ninvitePicker\n}"))
+
+        // The picker itself, whole — declaration through the last modifier and
+        // the var's closing brace. Every arm is inside one literal, so a
+        // `ForEach` wrapped in a condition, an `.hidden()`, a `.disabled(true)`
+        // or a send swapped for something else is a red test rather than a
+        // silent no-op picker.
+        #expect(
+            normalized.contains(
+                """
+                private var invitePicker: some View {
+                let friends = shell.invitableFriends
+                return Menu {
+                if friends.isEmpty {
+                Text(Self.noInvitableFriendsLabel)
+                } else {
+                ForEach(friends) { entry in
+                Button(entry.profile.displayName) {
+                shell.invitePlayFromLobby(entry)
+                }
+                }
+                }
+                } label: {
+                Text(Self.inviteLabel)
+                }
+                .buttonStyle(.brandQuiet)
+                .task { await shell.lobbyFriends?.load() }
+                }
+                """
+            )
+        )
+    }
+
 }

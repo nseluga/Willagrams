@@ -376,12 +376,37 @@ struct TwoPlayerView: View {
                     .foregroundStyle(DesignTokens.Palette.textSecondary)
             }
             Spacer(minLength: 0)
+            invitePicker
         }
         .padding(DesignTokens.Space.m)
         .overlay {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
                 .strokeBorder(DesignTokens.Palette.hairline, style: StrokeStyle(lineWidth: DesignTokens.Stroke.hairline, dash: [4]))
         }
+    }
+
+    /// The open seat's friend picker: every accepted friend, straight from
+    /// `shell.invitableFriends`, each one a tap away from an invite into the
+    /// lobby already on screen. The list is read into a local first so the body
+    /// registers the observation — a `Menu`'s content is built when it opens,
+    /// which is outside this view's tracking.
+    private var invitePicker: some View {
+        let friends = shell.invitableFriends
+        return Menu {
+            if friends.isEmpty {
+                Text(Self.noInvitableFriendsLabel)
+            } else {
+                ForEach(friends) { entry in
+                    Button(entry.profile.displayName) {
+                        shell.invitePlayFromLobby(entry)
+                    }
+                }
+            }
+        } label: {
+            Text(Self.inviteLabel)
+        }
+        .buttonStyle(.brandQuiet)
+        .task { await shell.lobbyFriends?.load() }
     }
 
     private var message: String? {
@@ -415,6 +440,8 @@ struct TwoPlayerView: View {
     /// Screen chrome, per the `Terminology` fence: this screen names no game
     /// concept, so every label here is its own.
     private static let cancelLabel = "Cancel"
+    private static let inviteLabel = "Invite"
+    private static let noInvitableFriendsLabel = "No friends yet"
     private static let screenLabel = "TWO PLAYER"
     private static let hostChipLabel = "Host a game"
     private static let joinChipLabel = "Join a game"
