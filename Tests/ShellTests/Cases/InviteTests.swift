@@ -938,7 +938,7 @@ struct InviteTests {
     ///
     /// The predicates each link branches on are covered the other way, by
     /// value, in the behavioural tests above and below:
-    ///   `shell.showsLaunchScreen == false` — `theWholeReachPathIsCovered`
+    ///   `shell.showsLaunchScreen == false` — `invitingFromTheOpenSeat`
     ///   `shell.route == .hostLobby`        — `invitingFromTheOpenSeat`
     ///   `shell.hostLobby != nil`           — `invitingFromTheOpenSeat`
     ///   `!lobby.canStart`                  — `invitingFromTheOpenSeat`
