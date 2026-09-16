@@ -65,18 +65,27 @@ public final class ProfileModel {
 
     @ObservationIgnored private let backend: (any BackendClient)?
     @ObservationIgnored private let pasteboard: @MainActor (String) -> Void
+    @ObservationIgnored private let onSaved: @MainActor (Profile) -> Void
 
     public init(
         profile: Profile,
         isEditable: Bool,
         backend: (any BackendClient)? = nil,
-        pasteboard: @escaping @MainActor (String) -> Void = { _ in }
+        pasteboard: @escaping @MainActor (String) -> Void = { _ in },
+        onSaved: @escaping @MainActor (Profile) -> Void = { _ in }
     ) {
         self.profile = profile
         self.isEditable = isEditable
         self.backend = backend
         self.pasteboard = pasteboard
+        self.onSaved = onSaved
         self.draftName = profile.displayName
+        // An editable screen with nowhere to write is the one state where the
+        // refusal cannot wait for a tap: the Save button is disabled, so no tap
+        // is coming. Say why on arrival instead of going quiet.
+        if isEditable, backend == nil {
+            self.message = Self.noBackendMessage
+        }
     }
 
     // MARK: - Stats
@@ -114,11 +123,13 @@ public final class ProfileModel {
         draftName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Whether the Save button is enabled. Only an empty draft or a save in
-    /// flight disables it: a too-long name stays pressable so ``save()`` can
-    /// refuse it with ``nameLengthMessage`` — no round trip either way.
+    /// Whether the Save button is enabled. An empty draft, a save in flight, or
+    /// no backend to write through disables it: a too-long name stays pressable
+    /// so ``save()`` can refuse it with ``nameLengthMessage`` — no round trip
+    /// either way. The backend check is here and not only in ``save()`` because
+    /// a button that is enabled and does nothing is worse than a disabled one.
     public var canSave: Bool {
-        isEditable && !trimmedDraft.isEmpty && !isSaving
+        isEditable && backend != nil && !trimmedDraft.isEmpty && !isSaving
     }
 
     /// Sends the draft, and adopts whatever comes back.
@@ -139,6 +150,10 @@ public final class ProfileModel {
             profile = try await backend.updateDisplayName(name)
             draftName = profile.displayName
             message = Self.savedMessage
+            // The owner's copy of the row, not a second source of truth: this
+            // screen is rebuilt from `ShellModel.currentProfile` on every visit,
+            // so without this the next visit reopens on the old name.
+            onSaved(profile)
         } catch {
             // Deliberately one line rather than a second `BackendError` switch:
             // `HostLobbyModel.message(for:)` is the shared mapping and every
@@ -181,6 +196,7 @@ public final class ProfileModel {
     public static let nameLengthMessage = "A name is 1 to 24 characters."
     public static let saveFailedMessage = "Couldn't save that name. Try again."
     public static let savedMessage = "Saved."
+    public static let noBackendMessage = "You're offline, so your name can't be changed right now."
 
     /// What the `display_name` column allows, mirrored client-side.
     public static let nameLength = 1...24

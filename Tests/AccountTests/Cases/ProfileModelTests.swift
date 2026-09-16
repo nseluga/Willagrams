@@ -115,6 +115,72 @@ struct ProfileModelTests {
         }
     }
 
+    // MARK: - done when: no backend means a disabled Save that says why
+
+    /// The button used to be enabled with nothing behind it, and `save()`
+    /// returned in silence. Now the refusal is visible before it is tapped.
+    @Test("With no backend, Save is disabled and the screen says why")
+    func noBackendDisablesSaveAndSaysWhy() async throws {
+        let model = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Ada",
+                friendCode: "ABCD1234",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            isEditable: true
+        )
+
+        #expect(model.message == ProfileModel.noBackendMessage, "the screen went quiet instead of saying why")
+        #expect(model.canSave == false, "Save is offered with nothing behind it")
+
+        model.draftName = "Grace"
+        #expect(model.canSave == false, "a valid draft cannot rescue a missing backend")
+        await model.save()
+        #expect(model.profile.displayName == "Ada")
+    }
+
+    /// The same missing backend is not a complaint on a friend's screen: there
+    /// is no name field there to explain.
+    @Test("A read-only screen with no backend says nothing about saving")
+    func readOnlyWithNoBackendIsSilent() throws {
+        let model = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Stranger",
+                friendCode: "QQQQ9999",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            isEditable: false
+        )
+        #expect(model.message == nil)
+        #expect(model.canSave == false)
+    }
+
+    /// A successful save hands the row to whoever owns it. `ShellModel` is that
+    /// owner; `ProfileRouteTests` pins the shell half.
+    @Test("A successful save hands the stored row back to the owner")
+    func savingHandsTheRowToTheOwner() async throws {
+        let fake = FakeBackend()
+        let profile = try await fake.signInWithApple(idToken: "owner", nonce: "n")
+        nonisolated(unsafe) var handedBack: [Profile] = []
+        let model = ProfileModel(
+            profile: profile,
+            isEditable: true,
+            backend: fake,
+            onSaved: { handedBack.append($0) }
+        )
+
+        model.draftName = "Ada"
+        await model.save()
+        #expect(handedBack.map(\.displayName) == ["Ada"], "the saved row never reached the owner")
+
+        // A refused draft hands nothing back: the stored row did not move.
+        model.draftName = String(repeating: "a", count: 25)
+        await model.save()
+        #expect(handedBack.count == 1)
+    }
+
     // MARK: - guardrail: no stat is computed client-side
 
     @Test("The four stats are the row as read, and there is no fifth")

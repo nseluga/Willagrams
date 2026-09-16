@@ -212,4 +212,16 @@ struct SourceGuardrailTests {
         // only gates on empty so the refusal message stays reachable.
         #expect(model.components(separatedBy: "Self.nameLength.contains").count == 2)
     }
+
+    /// The companion view pin for the two model rules above: `ProfileView` is
+    /// excluded from this target and never compiled, so a model that publishes
+    /// `canSave == false` and a `message` saying why is worth nothing unless the
+    /// view actually gates on one and draws the other.
+    @Test("ProfileView disables Save on canSave and draws the message line")
+    func viewRendersWhatTheModelDecides() throws {
+        let view = try Self.text("ProfileView.swift")
+        #expect(view.contains(".disabled(!model.canSave)"), "the Save button no longer gates on canSave")
+        #expect(view.contains("if let message = model.message {"), "the screen no longer draws the model's message")
+        #expect(view.contains("Text(message)"), "the message is read but never drawn")
+    }
 }

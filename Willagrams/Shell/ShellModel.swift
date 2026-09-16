@@ -328,7 +328,12 @@ public final class ShellModel {
             profile: currentProfile,
             isEditable: true,
             backend: services.backend,
-            pasteboard: Self.pasteboard
+            pasteboard: Self.pasteboard,
+            // The screen rebuilds from `currentProfile` every visit, so the
+            // saved row has to land back here or the old name reappears. Still
+            // one source of truth — the screen hands its row over, it does not
+            // keep a second one.
+            onSaved: { [weak self] saved in self?.currentProfile = saved }
         )
         profileReturn = .menu
         route = .profile

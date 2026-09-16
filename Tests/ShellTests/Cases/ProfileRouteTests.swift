@@ -79,9 +79,12 @@ struct ProfileRouteTests {
     }
 
     /// The screen really writes through the backend the root handed the shell —
-    /// not one it built for itself — so the row the menu re-reads has moved.
-    @Test("A name saved on the screen lands on the row the shell signed in as")
-    func savingReachesTheInjectedBackend() async throws {
+    /// not one it built for itself — and the saved row lands back on
+    /// `ShellModel.currentProfile`, which is what every later visit is built
+    /// from. Asserting only `screen.profile` is what let the stale-name bug ship
+    /// green: the screen's own copy always moved, the shell's never did.
+    @Test("A saved name reaches the shell's own row, not just the screen's")
+    func savingReachesTheShellsRow() async throws {
         let f = try await Self.make()
         #expect(f.shell.showProfile())
 
@@ -92,6 +95,29 @@ struct ProfileRouteTests {
         #expect(screen.profile.displayName == "Ada")
         let stored = try await f.backend.profile(id: f.me.id)
         #expect(stored.displayName == "Ada")
+
+        // The shell's copy — the one source of truth the app reads.
+        #expect(f.shell.currentProfile?.displayName == "Ada")
+        #expect(f.shell.currentProfile?.id == f.me.id, "the shell adopted a different row, not the saved one")
+
+        // And the next visit is rebuilt from it, which is the defect itself.
+        f.shell.returnToMenu()
+        #expect(f.shell.showProfile())
+        #expect(f.shell.profile?.profile.displayName == "Ada")
+        #expect(f.shell.profile?.draftName == "Ada")
+        f.shell.returnToMenu()
+    }
+
+    /// The wiring that carries the save back, pinned on the bytes as well: a
+    /// `showProfile()` that forgets `onSaved:` compiles fine and silently
+    /// restores the stale-name bug.
+    @Test("showProfile hands the screen a way back to the shell's row")
+    func showProfileWiresTheSaveBack() throws {
+        let model = try Self.shellSource("ShellModel.swift")
+        #expect(
+            model.contains("onSaved: { [weak self] saved in self?.currentProfile = saved }"),
+            "showProfile no longer writes the saved row back to currentProfile"
+        )
     }
 
     // MARK: - guardrail: teardown before the route moves
