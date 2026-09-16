@@ -60,7 +60,34 @@ struct OrientationTests {
         #expect(body.contains(".onChange(of: shell.route.isGameplay, initial: true)"))
         #expect(body.contains("OrientationLock.mask = OrientationLock.mask(isGameplay: isGameplay)"))
         #expect(body.contains(".setNeedsUpdateOfSupportedInterfaceOrientations()"))
-        #expect(body.contains(".requestGeometryUpdate(.iOS(interfaceOrientations:"))
+        #expect(body.contains(".requestGeometryUpdate("))
+        #expect(body.contains(".iOS(interfaceOrientations: OrientationLock.mask)"))
+        // The handler is passed by reference. An inline closure would inherit
+        // the view's `@MainActor` isolation and trap when UIKit calls it off
+        // the main queue, which is the iPad launch crash.
+        #expect(body.contains("errorHandler: OrientationPolicy.report(rejection:)"))
+        #expect(!body.contains("debugPrint"))
+    }
+
+    /// The iPad launch crash: UIKit called the rejection handler on
+    /// `com.apple.root.default-qos` while the handler assumed the main actor.
+    /// This runs the real reporting path off the main actor — it compiles only
+    /// while `report` is `nonisolated`, and it runs only if nothing it touches
+    /// asserts a queue.
+    @Test("The rejection report needs no main-actor isolation")
+    func rejectionReportIsNonisolated() async {
+        struct Rejected: Error {}
+        await Task.detached(priority: .background) {
+            // `Thread.isMainThread` is unavailable from an async context; this
+            // is the same question one layer down.
+            #expect(pthread_main_np() == 0)
+            OrientationPolicy.report(rejection: Rejected())
+        }.value
+
+        // And it is reachable as a plain function value of the type UIKit's
+        // `errorHandler:` parameter takes, carrying no isolation with it.
+        let handler: (any Error) -> Void = OrientationPolicy.report(rejection:)
+        handler(Rejected())
     }
 
     @Test("Only the iPhone plist key allows portrait")

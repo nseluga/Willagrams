@@ -67,12 +67,16 @@ struct ShellRootView: View {
                 .first { $0.activationState == .foregroundActive } ??
                 UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
             scene?.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-            scene?.requestGeometryUpdate(.iOS(interfaceOrientations: OrientationLock.mask)) { error in
-                // Rejected rotations (e.g. mid-transition) are not fatal — the
-                // mask still applies on the next opportunity. Logged so a
-                // persistent rejection is visible instead of silent.
-                debugPrint("orientation: requestGeometryUpdate failed: \(error)")
-            }
+            // The error handler is passed by reference, not written inline: a
+            // closure here would inherit this view's `@MainActor` isolation,
+            // and UIKit calls the handler on `com.apple.root.default-qos` when
+            // it rejects the request — which trapped and killed the app on
+            // iPad. `OrientationPolicy.report` is `nonisolated`, so a rejected
+            // rotation is still reported and still not fatal.
+            scene?.requestGeometryUpdate(
+                .iOS(interfaceOrientations: OrientationLock.mask),
+                errorHandler: OrientationPolicy.report(rejection:)
+            )
         }
     }
 
