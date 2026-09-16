@@ -4,8 +4,15 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 ## Current position
 
-- **Status:** round 2 run 2 (2026-09-15) — items 1, 2, 4, 5, 6, 9 and 10 done and merged; item 3 merged too (`auto/final` @ `9c7b223`) but still blocked on its screenshot criterion alone; items 7 and 8 not started, item 7 in flight
-- **Next:** item 7 (Play a Friend match settings, `caution: true`), then item 8 (looping launch screen). Then Nate revises item 3's screenshot criterion (see its `status:`)
+- **Status:** round 2 run 2 (2026-09-15) — **PAUSED at Nate's request after item 8, before the shutdown sequence.** All ten items carry a `status:`: nine done, item 3 blocked on its screenshot criterion alone. Everything is committed on `auto/final` @ `844cab6` in the worktree `/Users/nateseluga/willagrams-wt/final-auto/Willagrams`
+- **Next — the shutdown sequence, deliberately NOT run (it is the heaviest work left and the machine was loaded):**
+  1. Full serial test suite on `auto/final` — every package, one at a time, never while `xcodebuild` runs. Gate only below load ~8
+  2. `xcodebuild -project Willagrams.xcodeproj -scheme Willagrams -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/willagrams-dd-final build` — foreground, never backgrounded
+  3. Lane acceptance: one fresh `dt-review` against the three `Lane done when:` criteria with `git diff lane/final...auto/final`
+  4. Merge `auto/final` into `lane/final` from the `merge` worktree. Never into `main`, no push, no PR
+- **Per-item floors now (counts are floors):** rules 53 · Board 271 · Match 128 · Style 34 · **Shell 263** · Settings 36 · Bot 68 · **Online 147** (1 known pre-existing issue at `WholeMatchScript.swift:98`) · Audio 19 · Account 16 · Friends 49
+- **Owed to Nate, none blocking:** item 3's screenshot criterion needs revising or a human-rotated Simulator; item 2's `elapsedIsMeasuredFromPlaying` driver change wants sign-off; item 6's text self-conflicts on the Join button (code follows "disabled only when empty or in flight"); item 8 left a white system launch-screen flash its `done when:` did not cover
+- **Follow-up items surfaced, not acted on:** `BrandFonts.swift:80,86` uses `.custom(_, fixedSize:)` so NO text in the app scales with Dynamic Type at all — app-wide, pre-existing, deserves its own item; `HostLobbyLayout.swift` is a confirmed orphan kept alive only by its own test (delete both); `JoinModel.swift:272-274` still builds `MatchSetup` from `OnlineMatch.startingHandSize` + `record.options`, dead today but one line from observable; solo's embedded options card shows a "HOST" eyebrow and wraps "Shortest word" at 375pt
 - **Blockers:** item 3's iPad check needs a human-rotated Simulator or a revised criterion. Migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here
 - **Last updated:** 2026-09-15
 
@@ -20,7 +27,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Home rebuilt | done — Home now opens upright as a single column: the wordmark up top, then Multiplayer (marked coming soon), Play a Friend, and a tidy grid of Solo Practice, Profile, Friends and How to Play, with the old tagline gone. (2026-09-15) |
 | One Play / Join a Friend screen | done — Play a Friend and Join a Friend are now one screen: two chips switch between them, the code shows as six tiles, and hosting still copies, shares and starts exactly as before. Switching chips now properly leaves the game you were in, which it previously did not. (2026-09-15) |
 | Play a Friend match settings | done — Playing a friend now has its own settings: a gear on the host's screen opens starting tiles, shortest word, Swap and word list, and the guest's game is dealt with whatever the host chose instead of a fixed 21. The gear closes once you press Start. (2026-09-15) |
-| Looping loading screen | not started |
+| Looping loading screen | done — The app now opens on the wordmark tiles flying together over a dark ground with a "Shuffling the Pool" caption, looping until sign-in and the dictionary are ready and then finishing its cycle before Home appears. One flaw left: the system's own first screen is still white for an instant before the dark one takes over. (2026-09-15) |
 | Profile and Friends restyle | done — Profile and Friends now match the final design: an avatar card, stat cards with a win-rate bar, and friend rows as tiles, with Fastest win, Block and Unfriend all kept. (2026-09-15) |
 | How to Play pager + Solo setup portrait | done — How to Play is now one rule per page with Back and Next and a Done on the last page, and Solo setup fits an upright phone in a single column. (2026-09-15) |
 
