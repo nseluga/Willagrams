@@ -4,19 +4,35 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 ## Current position
 
-- **Status:** round 2 run 2 (2026-09-15) — **PAUSED at Nate's request after item 8, before the shutdown sequence.** All ten items carry a `status:`: nine done, item 3 blocked on its screenshot criterion alone. Everything is committed on `auto/final` @ `844cab6` in the worktree `/Users/nateseluga/willagrams-wt/final-auto/Willagrams`
-- **Next — the shutdown sequence, deliberately NOT run (it is the heaviest work left and the machine was loaded):**
-  1. Full serial test suite on `auto/final` — every package, one at a time, never while `xcodebuild` runs. Gate only below load ~8
-  2. `xcodebuild -project Willagrams.xcodeproj -scheme Willagrams -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/willagrams-dd-final build` — foreground, never backgrounded
-  3. Lane acceptance: one fresh `dt-review` against the three `Lane done when:` criteria with `git diff lane/final...auto/final`
-  4. Merge `auto/final` into `lane/final` from the `merge` worktree. Never into `main`, no push, no PR
-- **Per-item floors now (counts are floors):** rules 53 · Board 271 · Match 128 · Style 34 · **Shell 263** · Settings 36 · Bot 68 · **Online 147** (1 known pre-existing issue at `WholeMatchScript.swift:98`) · Audio 19 · Account 16 · Friends 49
-- **Owed to Nate, none blocking:** item 3's screenshot criterion needs revising or a human-rotated Simulator; item 2's `elapsedIsMeasuredFromPlaying` driver change wants sign-off; item 6's text self-conflicts on the Join button (code follows "disabled only when empty or in flight"); item 8 left a white system launch-screen flash its `done when:` did not cover
-- **Follow-up items surfaced, not acted on:** `BrandFonts.swift:80,86` uses `.custom(_, fixedSize:)` so NO text in the app scales with Dynamic Type at all — app-wide, pre-existing, deserves its own item; `HostLobbyLayout.swift` is a confirmed orphan kept alive only by its own test (delete both); `JoinModel.swift:272-274` still builds `MatchSetup` from `OnlineMatch.startingHandSize` + `record.options`, dead today but one line from observable; solo's embedded options card shows a "HOST" eyebrow and wraps "Shortest word" at 375pt
-- **Blockers:** item 3's iPad check needs a human-rotated Simulator or a revised criterion. Migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here
+- **Status:** round 3 (2026-09-15) — the hand-test round. Nate installed the build on his real iPhone 13 mini and iPad Air and played it for the first time; he found eight functional bugs and four visual breakages. Round 2's shutdown sequence has now been run and closed out (see below), so `lane/final` is at `4fa9b70` and `auto/final` is level with it. Twelve round-3 items are written into `LANE.md`, none started
+- **Round 2's shutdown sequence — run and green (2026-09-15):** full serial suite at or above every floor; `xcodebuild` BUILD SUCCEEDED; `scripts/scratch-verify.sh` green (6 migrations, 55 assertions, 0 leftover rows); lane acceptance `dt-review` returned MET on all three round-2 criteria; `auto/final` merged into `lane/final` as a clean fast-forward to `4fa9b70`
+- **A reproducible iPad launch crash was found after that merge, and it changes round 2's criterion 1 from met to UNMET on the iPad half.** A cold launch on an iPad Air 11-inch (M4) Simulator writes a crash report within ~15s, twice out of two attempts (`Willagrams-2026-09-15-225441.ips`, `-225705.ips`). `EXC_BREAKPOINT`/SIGTRAP on `com.apple.root.default-qos`; the faulting frame is the orientation `requestGeometryUpdate` error handler in `ShellRootView.swift` (~70-75), which is `@MainActor`-isolated but called by UIKit on a background queue. iPhone SE is unaffected. **This is an App Store blocker and is round 3's item 1**
+- **Next:** round-3 item 1 (the iPad launch crash), then items 2-12 in `LANE.md` order
+- **Per-item floors now (counts are floors):** rules 53 · Board 271 · Match 128 · Style 34 · Shell 263 · Settings 36 · Bot 68 · Online 147 (1 known pre-existing issue at `WholeMatchScript.swift:98`) · Audio 19 · Account 16 · Friends 49
+- **Owed to Nate, carried from round 2, none blocking:** item 2's `elapsedIsMeasuredFromPlaying` driver change wants sign-off; item 6's text self-conflicts on the Join button (code follows "disabled only when empty or in flight"); item 8 left a white system launch-screen flash its `done when:` did not cover
+- **Round-3 scope decisions Nate made:** invites stay live-only broadcasts, so no new table, no migration and no production SQL — a friend with the app closed misses the invite, accepted. The lock-screen bug is not a crash: the app stays responsive and only Draw and Swap die. "PvP special match rules" is dropped — solo and Play a Friend already render the same options and he had not found the gear
+- **Blockers:** none open. Three round-2 follow-ups are deliberately out of scope this round and live in `LANE.md`'s `## Out of scope`: app-wide Dynamic Type, the white launch flash (needs the protected `project.pbxproj`), and the `HostLobbyLayout.swift` orphan
+- **Standing constraints:** migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here — the live migration history is empty. `Config/Secrets.local.xcconfig` is gitignored and missing from 29 of 32 worktrees; a device build from one of them silently ships an empty Supabase key and every sign-in fails. `.git/info/exclude` now protects it and `.env` in every worktree
 - **Last updated:** 2026-09-15
 
-## Round 2 — final adjustments
+## Round 3 — hand-test fixes
+
+| Item | Status |
+|------|--------|
+| iPad launch crash | not started |
+| Buttons and codes stop wrapping | not started |
+| Friend row fits a phone | not started |
+| Solo stops saying HOST | not started |
+| A saved name reaches the whole app | not started |
+| Joining says it worked | not started |
+| Invite a friend from the open seat | not started |
+| Decline a match invite | not started |
+| A screen lock no longer kills the match | not started |
+| A dead match says so | not started |
+| Double tap works on a letter | not started |
+| Letters draw when they should | not started |
+
+## Round 2 — final adjustments (shipped 2026-09-15)
 
 | Item | Status |
 |------|--------|

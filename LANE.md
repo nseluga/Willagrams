@@ -1,22 +1,20 @@
-# Willagrams — final lane
+# Willagrams — final lane, round 3
 
 ## Objective
 
-Willagrams feels finished on an iPhone: it opens on a loading animation into a portrait Home, every non-game screen matches the final comp in portrait, a match turns landscape, playing a friend is one screen with its own match settings, a fast drag never flies home onto a free cell, and a resign win never sets the fastest-win record.
+Willagrams survives a real person using it: it never crashes on an iPad, no button or code wraps mid-word on a phone, a saved name sticks, an invite can be sent from the lobby and declined from the banner, a screen lock does not silently kill the match, and the board's double-tap-then-sweep works on a letter.
 
 Lane done when:
-- On an iPhone 13 mini (or SE 3rd gen) Simulator, a cold `xcrun simctl launch` screenshotted at ~1s shows the loading wordmark in portrait, and at ~10s shows Home in portrait with no "shared Pool" line, a disabled Multiplayer button and no Join button. On an iPad Simulator the same launch lands on a landscape Home. All screenshots attached to the run summary.
+- A cold `xcrun simctl launch` on an iPad Simulator reaches Home and stays up — no crash report is written to `~/Library/Logs/DiagnosticReports` — and the same launch on an iPhone SE 3rd gen still reaches portrait Home.
 - Every package suite is green run serially, no count below its floor, and `xcodebuild` reports BUILD SUCCEEDED on the merged branch.
-- `scripts/scratch-verify.sh` still runs 0001–0006 and both SQL fixtures green on the merged branch, (0006 is already live: Nate applied it 2026-09-15 and 40 fastest wins were cleared.)
+- No new Supabase table, migration or live SQL exists: `git diff` touches nothing under `supabase/`, and `scripts/scratch-verify.sh` still runs 0001–0006 and both fixtures green.
 
-Status: cut 2026-09-15 from `lane/polish` @ `c1f038b` (polish 14/14 done, not yet merged to `integration`). Plan: `~/.claude/plans/willagrams-final-scalable-crescent.md`. Nate's decisions: iPad stays landscape everywhere; the drag symptom is "tile follows the finger, then flies back home on release"; restyle all six comp screens while keeping every feature the comp omits; reset every `fastest_win_seconds` to null.
+Status: round 3 cut 2026-09-15 from `lane/final` @ `4fa9b70`, after round 2's ten items merged and its shutdown sequence ran green (full serial suite at floor, BUILD SUCCEEDED, scratch-verify 55 assertions, lane acceptance MET on all three round-2 criteria). Round 3 is the first evidence from a human actually playing the app: Nate installed the build on his iPhone 13 mini and iPad Air and found eight functional bugs plus four visual breakages. Plan: `~/.claude/plans/modular-booping-taco.md`. Nate's decisions: invites stay live-only broadcasts with no new table and no migration (a friend with the app closed misses the invite — accepted); the lock-screen bug is not a crash and wants a real message when the match dies, a waiting state when it is the other player, and tolerance for a brief backgrounding; the "PvP special match rules" report is dropped because the options were already identical to solo and he simply had not found the gear.
 
-Lane: final — The final-adjustments pass after the polish hand test — iPhone portrait outside gameplay, a looping loading screen, Home without the Join button or the shared-pool line, one Play/Join a Friend screen with match settings, restyled Profile/Friends/How to Play, the fast-drag fly-home fix, and resign wins skipping fastest win.
+Lane: final — The final-adjustments pass after the polish hand test, now in its third round: the hand-test defects from Nate's two physical devices.
 
 Owned — this lane's items live inside these paths:
-  none of its own (a pass, like `polish`), plus two scoped grants from MAP.md "Tuning":
-  Willagrams.xcodeproj/project.pbxproj — ONLY the `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone` value (items 3) and the launch-screen background colour (item 8)
-  supabase/migrations/0006_fastest_win_skips_null.sql — already written and scratch-verified during setup; no item edits it
+  none of its own (a pass, like `polish`). No new scoped grant this round — `project.pbxproj` and `supabase/migrations/**` are untouched by every item below.
 
 Open — merged lanes. Wiring items may edit these; rebase onto `integration` first:
   Willagrams/Style/**, Willagrams/Resources/Branding/**, Willagrams/Assets.xcassets/**, Tests/StyleTests/**, docs/ip-review.md
@@ -24,173 +22,198 @@ Open — merged lanes. Wiring items may edit these; rebase onto `integration` fi
   Willagrams/Match/**, Tests/MatchTests/**
   Willagrams/Settings/**, Tests/SettingsTests/**
   Willagrams/Shell/**, Willagrams/App/**, Tests/ShellTests/**
-  Willagrams/Online/**, Tests/OnlineTests/**, supabase/** (except supabase/migrations/**, protected — 0006 above is the one grant)
+  Willagrams/Online/**, Tests/OnlineTests/**, supabase/** (except supabase/migrations/**, protected)
   Willagrams/Account/**, Tests/AccountTests/**
   Willagrams/Friends/**, Tests/FriendsTests/**
   Willagrams/Bot/**, Tests/BotTests/**
   Willagrams/Audio/**, Tests/AudioTests/**
 
 Stop and report if an item requires changing a path outside both lists:
-  protected — Sources/WillagramsRules/** (Contracts, BoardAnalysis, Pool, GameState, MatchMessage, MatchOptions, WordList, Resources/dictionary.txt), Tests/WillagramsRulesTests/**, Willagrams/Match/MatchTransport.swift, Willagrams/Style/DesignTokens.swift (key names — values may change and keys may be added), Willagrams/Style/Terminology.swift, Willagrams.entitlements, Package.swift, supabase/migrations/** (0006 included), Willagrams/Online/BackendContracts.swift, Willagrams/Audio/AudioPlayer.swift
+  protected — Sources/WillagramsRules/** (Contracts, BoardAnalysis, Pool, GameState, MatchMessage, MatchOptions, WordList, Resources/dictionary.txt), Tests/WillagramsRulesTests/**, Willagrams/Match/MatchTransport.swift, Willagrams/Style/DesignTokens.swift (key names — values may change and keys may be added), Willagrams/Style/Terminology.swift, Willagrams.entitlements, Package.swift, supabase/migrations/**, Willagrams/Online/BackendContracts.swift, Willagrams/Audio/AudioPlayer.swift, Willagrams.xcodeproj/**
   an unmerged lane's — fastlane/**, docs/store/** (launch)
-  unowned — repo root files, .claude/**, docs/*.md, progress/**, Willagrams.xcodeproj/** (except the two pbxproj edits above)
+  unowned — repo root files, .claude/**, docs/*.md, progress/**
 
 Frozen contracts — build and test against these; they will not move:
-  Sources/WillagramsRules/MatchMessage.swift + Tests/WillagramsRulesTests/Fixtures/wire-v4.json — `.start` already carries hand size and `MatchOptions`; no wire change this round
+  Sources/WillagramsRules/MatchMessage.swift + Tests/WillagramsRulesTests/Fixtures/wire-v4.json — no wire change this round
   Willagrams/Match/MatchTransport.swift
   Willagrams/Online/BackendContracts.swift — a new backend call goes on a side protocol, as `Willagrams/Online/FriendRequestForgetting.swift` does
   Willagrams/Style/DesignTokens.swift key names
+  supabase/migrations/0005_invite_topic_authorization.sql — the invite RLS this round builds on; already permits a decline sent back to a friend's own topic
 
 ## Global rules
 
 - **Tests.** Run each package serially on an idle machine, never while `xcodebuild` is running (a parallel run produced 22+ spurious timeouts):
-  `swift test` (rules 53) · `swift test --package-path Tests/BoardTests` (265) · `Tests/MatchTests` (128) · `Tests/StyleTests` (31) · `Tests/ShellTests` (227) · `Tests/SettingsTests` (36) · `Tests/BotTests` (68, ~5 min) · `Tests/OnlineTests` (142, 1 known issue, live cases skip without a key) · `Tests/AudioTests` (19) · `Tests/AccountTests` (15) · `Tests/FriendsTests` (49).
+  `swift test` (rules 53) · `swift test --package-path Tests/BoardTests` (271, XCTest — its swift-testing runner reports "0 tests", read the XCTest "Executed N tests" line instead) · `Tests/MatchTests` (128) · `Tests/StyleTests` (34) · `Tests/ShellTests` (263) · `Tests/SettingsTests` (36) · `Tests/BotTests` (68, ~7 min) · `Tests/OnlineTests` (147, 1 known pre-existing issue at `WholeMatchScript.swift:98`, live cases skip without a key) · `Tests/AudioTests` (19) · `Tests/AccountTests` (16) · `Tests/FriendsTests` (49).
   **These counts are floors.** A count may only go up. Never delete a passing test to hold a number; a test pinning behaviour this round changes is rewritten to the new rule, not deleted.
 - **Stale builds lie.** After changing any type in `Sources/WillagramsRules` or `Willagrams/Match`, run `swift package --package-path Tests/<pkg> clean` before trusting a red.
-- **Views are not compiled by `swift test`.** After any SwiftUI or project edit, run `xcodebuild -project Willagrams.xcodeproj -scheme Willagrams -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/willagrams-dd-final build`. The item isn't done until it says BUILD SUCCEEDED.
+- **Views are not compiled by `swift test`.** After any SwiftUI or project edit, run `xcodebuild -project Willagrams.xcodeproj -scheme Willagrams -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/willagrams-dd-final build`. Never background it. The item isn't done until it says BUILD SUCCEEDED.
+- **A crash leaves evidence.** Several items below change app lifecycle or concurrency isolation. After any such item, launch on BOTH an iPhone SE 3rd gen and an iPad Simulator and confirm no new `Willagrams-*.ips` appears in `~/Library/Logs/DiagnosticReports`. A green suite does not catch a main-actor isolation trap — round 2 shipped one.
 - **Nested-package symlinks.** `Tests/ShellTests/BoardSrc` and `Tests/ShellTests/StyleSrc` are directories of per-file symlinks. A new file under `Willagrams/Board/` or `Willagrams/Style/` stays invisible to ShellTests until it is symlinked there. Every other `*Src` is a directory symlink. The app target uses file-system synchronized groups, so a new source file needs no project-file entry.
-- **Size decisions live in plain structs** (not `View`s), so ShellTests/StyleTests can assert on them. Landscape phone stays `verticalSizeClass == .compact`; portrait phone is `horizontalSizeClass == .compact` with a regular vertical class. **One exception to "no idiom checks":** the orientation lock in `Willagrams/App/` may read the idiom, because iPad must stay landscape while iPhone rotates, and no size class distinguishes them at launch. Nowhere else.
+- **Size decisions live in plain structs** (not `View`s), so ShellTests/StyleTests can assert on them. Landscape phone stays `verticalSizeClass == .compact`; portrait phone is `horizontalSizeClass == .compact` with a regular vertical class. **One exception to "no idiom checks":** the orientation lock in `Willagrams/App/` may read the idiom. Nowhere else.
 - **`MatchSession` is at a Swift 6.3.3 toolchain limit.** One more *observed* stored property aborts MatchTests with `swift_task_dealloc`. New storage is `@ObservationIgnored`. Run MatchTests after every edit to that file.
-- **Never touch the live backend.** No `supabase db push`, no `supabase link`, and no Supabase MCP `execute_sql`/`apply_migration` against any project. `0006` was written, scratch-verified, and **applied live by Nate on 2026-09-15** (guard present, 0 fastest wins left). **Never `supabase db push`**: the live migration history is empty, so a push would re-run 0001–0005. Gated live OnlineTests may run with `WILLAGRAMS_LIVE_TESTS=1` only for cases that do not depend on 0006. Never print or commit `.env` or `Config/Secrets.local.xcconfig`.
+- **Never touch the live backend.** No `supabase db push`, no `supabase link`, and no Supabase MCP `execute_sql`/`apply_migration` against any project. **No item this round may add a migration or edit one.** The live migration history is empty, so a push would re-run 0001–0005. Never print or commit `.env` or `Config/Secrets.local.xcconfig`.
+- **`Config/Secrets.local.xcconfig` is gitignored and does not travel into a new worktree.** A build from a worktree without it silently ships an empty `SupabaseAnonKey` and every sign-in fails with "Couldn't sign in." Copy it from this worktree before building for a device; never print it.
 - **Behavioral checks.** The Simulator can be booted, launched (`xcrun simctl launch`), rotated only by the app itself, and screenshotted (`xcrun simctl io booted screenshot`), but nothing can tap it (AXe cannot drive this Xcode). A screen reachable only by tapping is Nate's hand test: name it in the run summary with what to look at, and never claim it verified.
-- **The comp.** `docs/design/willagrams-final.dc.html` is the visual truth for Home, Loading, Play/Join, Profile, Friends and How to Play: layout, type, colour, spacing, radii, copy. The repo is the truth for behaviour, and **this LANE.md wins over the comp** where they disagree (the comp still shows the shared-Pool line and a separate Join button — both go). Map comp values onto existing `DesignTokens` keys; add a key only when none fits. The comp's Replay button and the loading footer line are mock-only — do not build them.
-- Player-facing game vocabulary comes from `Terminology.swift` (protected). No new game term may be inlined. Menu labels ("Solo Practice", "Play a Friend", "Multiplayer", "Coming soon") are screen copy, not game terms; they live beside the existing `title` constants in the Shell models.
-- Context: `MAP.md` (lanes, the 2026-09-15 amendment, the toolchain note), `docs/design/README.md`, the plan file above.
-
-## Out of scope
-
-- Real Multiplayer (three or more players, matchmaking). Home gets a disabled placeholder only.
-- iPad portrait and iPad multitasking. Nate: iPad stays landscape.
-- Any live SQL. `0006` is already applied, and the auto-mode classifier blocks agents from production SQL.
-- A blocked player can delete their own block row (`friendships_delete_own`). Still a separate `/foundation`.
-- Sign in with Apple and the `launch` lane. Both wait on the paid Apple Developer membership.
+- **The comp.** `docs/design/willagrams-final.dc.html` is the visual truth for Home, Loading, Play/Join, Profile, Friends and How to Play. The repo is the truth for behaviour, and **this LANE.md wins over the comp** where they disagree. Map comp values onto existing `DesignTokens` keys; add a key only when none fits.
+- Player-facing game vocabulary comes from `Terminology.swift` (protected). No new game term may be inlined. Menu and screen labels live beside the existing `title` constants in the Shell models.
+- Context: `MAP.md`, `docs/design/README.md`, the plan file above.
 
 ---
 
-- task: Stop a fast drag from flying home. Nate's symptom — the tile follows the finger, then flies back to its origin on release — means `TileDrag.landing` (`Willagrams/Board/BoardDrag.swift` ~142–240) refused the drop; the only live refusals are an occupied target (~line 220) and bad geometry. Prime cause, to be proven by a failing test first: the held tile is DRAWN lifted by `DesignTokens.Motion.tileLift` (-8pt, `DesignTokens.swift` ~173) but `landing` measures the drop from the un-lifted centre (~178–184). At the zoomed-out cell sizes a phone uses (16–24pt, so half a cell is 8–12pt) the cell the eye aims at resolves one row low, usually onto an occupied cell, and is refused. Confirm in `BoardView` that the lift is really applied to the dragged tile's drawn position (and in which direction and units) before building on it. Fix in two parts. (1) Measure from the lifted centre: `drop`/`landed`/`landing` take a `lift: CGFloat` (default 0, so the ~100 existing call sites compile), and `BoardView`/`BoardModel.commit` pass `DesignTokens.Motion.tileLift` — the same value the renderer draws with, never a second literal. (2) One-cell forgiveness for single-tile drags: when the target is occupied, land on the free cell within one cell (8-neighbourhood) whose centre is nearest the release point; refuse only when none is free. Group drags keep all-or-nothing. While here, delete the dead `threshold` parameter only if doing so is mechanical; otherwise leave the ponytail comment.
+- task: Stop the iPad launch crash. `ShellRootView.swift` (~63-76) reacts to `route.isGameplay` by calling `scene?.requestGeometryUpdate(.iOS(interfaceOrientations:))` with a trailing error handler that calls `debugPrint`. UIKit invokes that handler on `com.apple.root.default-qos` when the geometry request is rejected or times out, but the closure is `@MainActor`-isolated by context, so Swift's isolation check traps — `dispatch_assert_queue` → `EXC_BREAKPOINT`/SIGTRAP — and the app dies. Reproduced twice on an iPad Air 11-inch (M4) Simulator: launch, and ~15s later a `Willagrams-*.ips` whose faulting frame is `closure #4 in closure #3 in ShellRootView.routed.getter`. The iPhone SE does not hit it because its request succeeds. Make the handler safe to call from any executor — hop to the main actor before touching anything isolated, or mark the closure so no isolation is assumed — keeping the existing "a rejected rotation is not fatal" intent that the comment already states.
   guardrails:
-    - A group drag lands only if every target cell is free; forgiveness never applies to a group
-    - A release with no free cell within one cell of its target still returns the tile to its origin with the `.reject` haptic, and the board value is untouched
-    - No change to how a drag starts (hit-testing, long-press, pan disambiguation) or to pinch
-    - `BoardDrag.swift` stays host-compilable (no SwiftUI/UIKit import); the lift is injected, not read from `DesignTokens`
+    - The orientation POLICY does not change — iPad stays landscape, iPhone stays portrait outside gameplay. This item only fixes how a rejected request is reported
+    - Do not silence the report by deleting the handler; a persistent rejection must still be visible
+    - No `project.pbxproj` edit — the orientation keys are already correct and the file is protected this round
   done when:
-    - The item report states whether the lift hypothesis held, citing the `BoardView` line that applies the lift and the test that failed before the fix
-    - A BoardTests case, run at cell sizes 16, 24 and 48: a single-tile drag whose translation puts the tile's LIFTED drawn centre inside empty cell X lands in X, including when the cell directly below X is occupied. It fails with the lift removed from `landing` (mutation-checked)
-    - A BoardTests case: a single tile released onto an occupied cell with one free neighbour lands on that neighbour; with all eight neighbours occupied it returns to its origin and fires `.reject`; a two-tile group released partly onto an occupied cell is refused whole. Each fails with its rule removed (mutation-checked)
-    - BoardTests and ShellTests remain green at or above their floors; any existing case pinning "occupied → origin" for a single tile is rewritten to the forgiveness rule, not deleted
+    - A cold launch on an iPad Simulator reaches Home and writes no new crash report to `~/Library/Logs/DiagnosticReports`, repeated three times
+    - A cold launch on an iPhone SE 3rd gen Simulator still reaches portrait Home with no new crash report
+    - A test pins that the rejection path does not require main-actor isolation
+    - ShellTests green at or above 263; `xcodebuild` BUILD SUCCEEDED
   caution: true
-  parallel-group: a
-  status: done (2026-09-15, 8d9f610 — QA PASS at af117d7 with M1–M5 isolated mutations; review 0/1/2, the Important (16pt sub-cell release) fixed + mutation-checked in 8d9f610; delta review of af117d7..8d9f610 and a quiet-machine ShellTests 227/227 run by the session orchestrator)
+  status: not started
 
-- task: Resign wins stop counting toward fastest win. Today `MatchOutcomeRecorder` (`Willagrams/Online/MatchOutcomeRecorder.swift` ~250) sends `elapsedSeconds` for any win, and SQL `record_outcome` (`supabase/migrations/0004_record_outcome.sql`) folds it into `fastest_win_seconds`. **The server half is already done** (setup, 2026-09-15). `supabase/migrations/0006_fastest_win_skips_null.sql` re-creates `record_outcome` so a win with `elapsed_seconds = null` leaves `fastest_win_seconds` alone, and resets every fastest win. `supabase/tests/rls_behavior.sql` has the null cases; they pass on scratch (55 assertions) and fail without 0006. Do not edit either file. This item is the Swift half. Swift: `recordOutcome(..., elapsedSeconds: Int?)` on `MatchOutcomeStore` (a Willagrams/Online protocol — confirm it is not in `BackendContracts.swift`; if it is, stop and report); the recorder passes nil when the match did not end by the winner's own win claim (`MatchSession.winningPlacements == nil` — verify every `finish(winner:placements:)` caller in `MatchSession.swift` to confirm nil means exactly resign/abandon); `ProfileStats` mirrors it (nil → fastest unchanged); `SupabaseBackend+Outcome.swift` encodes an explicit JSON `null` for the key (a missing key would fail the RPC, which has no default); `FakeBackend` and every test double follow. 0006 is live (applied 2026-09-15), so a gated `MatchOutcomeRecorderLiveTests` case for a null-elapsed win may be added.
+- task: Buttons and friend codes stop wrapping mid-word. `Willagrams/Style/ButtonStyles.swift` (~15-26 primary, ~36-54 quiet) sets no `lineLimit`, no `minimumScaleFactor` and no `fixedSize`, and its compact font engages only on `verticalSizeClass == .compact` — landscape phone. A portrait phone therefore gets the full 20pt semibold plus 24pt horizontal padding per button, which is why Nate's screenshots show "Copy" broken across two lines as `Cop`/`y`, `Standa`/`rd` in Solo, and friend codes wrapping under the name. Give the shared styles a single-line rule with a scale floor, and engage the compact font on a portrait phone (`horizontalSizeClass == .compact`) as well. Apply the same guard plus `fixedSize` to the friend-code text in `FriendsView.swift` (the "Your code" card ~182-205 and the per-row code ~329-332) and `ProfileView.swift` (~234-261). Fix it in the shared style, not at each call site — every caller already routes through it.
   guardrails:
-    - No migration file (0001–0006) and no SQL fixture is edited
-    - Nothing is applied to the live project — no `supabase db push`, no MCP SQL
-    - A win by the winner's own claim still records its elapsed time exactly as today; played/won/tiles counters are unchanged for every outcome
-    - `BackendContracts.swift` does not move
+    - One change in the shared styles; do not paste `lineLimit` at individual call sites that the styles already cover
+    - A friend code must never be scaled to the point of illegibility or truncated with an ellipsis — it has to stay readable and copyable in full
+    - Landscape phone and iPad layouts do not regress
   done when:
-    - An OnlineTests case: a match the local player wins because the opponent resigned leaves `fastestWinSeconds` unchanged (nil stays nil, 42 stays 42) while played and won each go up by 1. It fails if the recorder's nil-for-resign branch is removed (mutation-checked). The existing resign case that expected 7 (`MatchOutcomeRecorderTests` ~162–172) is rewritten to this rule
-    - An OnlineTests case: a win by claim in 30s still sets `fastestWinSeconds` to 30 from nil and to 30 from 42
-    - An OnlineTests case on the Supabase RPC params encoding: nil elapsed produces JSON containing `"elapsed_seconds":null` (key present), 30 produces `"elapsed_seconds":30`
-    - `ProfileStats` (the Swift mirror every test double applies) gives the same rows as the SQL fixture's null cases: `(6,3,7,20)` + a win with nil elapsed and 2 tiles → `(7,4,9,20)`; a fresh row + a win with nil elapsed and 1 tile → `(1,1,1,nil)`
+    - No label rendered through the shared button styles wraps to a second line at 375pt width; a test pins the single-line rule and the portrait-phone compact font
+    - The friend code renders in full on one line on both the Profile card and a friend row
+    - StyleTests green at or above 34, FriendsTests at or above 49, AccountTests at or above 16; `xcodebuild` BUILD SUCCEEDED
   caution: true
-  parallel-group: a
-  status: done (2026-09-15, 4bdb10a — QA PASS, review 0/0/2; Nate signs off on the `elapsedIsMeasuredFromPlaying` driver change)
+  status: not started
 
-- task: iPhone plays portrait everywhere except the game. Add `AppRoute.isGameplay` (`Willagrams/Shell/AppRoute.swift`): true for `.countdown`, `.match`, `.results`, false for every other route. Add `Willagrams/App/OrientationLock.swift`: a `UIApplicationDelegate` adopted via `@UIApplicationDelegateAdaptor` in `WillagramsApp.swift`, whose `application(_:supportedInterfaceOrientationsFor:)` returns a static mask. A plain `OrientationPolicy.mask(isGameplay:isPad:) -> UIInterfaceOrientationMask` decides it: iPad → `.landscape` always; iPhone → `.landscape` in gameplay, `.portrait` otherwise. `ShellRootView` (`Willagrams/Shell/ShellRootView.swift`) observes `route.isGameplay` with `.onChange(of:initial: true)`, sets the mask, calls `setNeedsUpdateOfSupportedInterfaceOrientations()` on the key window's root view controller, and `windowScene.requestGeometryUpdate(.iOS(interfaceOrientations:))`. In `project.pbxproj` change only `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone` (Debug and Release, ~lines 208/235) to add `UIInterfaceOrientationPortrait`; the iPad key is untouched. The app keeps its pure SwiftUI `App` lifecycle — the adaptor is the only delegate, and it does nothing else.
+- task: The friend row fits a phone. Even at the compact font, three labelled buttons will not fit the ~310pt card `FriendsView.swift` gives a row (~307-342) — Nate's screenshot shows three enormous vertical bars where "Invite to play", "Unfriend" and "Block" should be, in both the accepted section (~93-108) and the "Wants to be friends" section (~65-82). Keep the primary action visible on the row and move the destructive ones into an overflow menu. Reuse the existing unfriend confirmation dialog (~143-152) rather than adding a second one.
   guardrails:
-    - iPad orientation behaviour is unchanged: landscape left/right on every route
-    - No navigation container is introduced (ShellTests' guardrail stays green); routing is untouched
-    - The only pbxproj change is the iPhone orientation key's value; no other project setting moves
+    - Every action available today stays available — Invite to play, Unfriend, Block, Accept, Decline. None may be dropped, only relocated
+    - Unfriend still asks before acting, through the existing dialog
+    - Unfriending still never removes a block (the round-1 rule)
   done when:
-    - A ShellTests case: `isGameplay` is true exactly for countdown, match and results (every `AppRoute` case enumerated, so a new case forces a decision), and `OrientationPolicy.mask` returns `.portrait` for (false, iPhone), `.landscape` for (true, iPhone), `.landscape` for iPad either way. Mutation-checked
-    - `xcodebuild` BUILD SUCCEEDED; a cold launch on an iPhone 13 mini Simulator screenshots portrait (image height > width) and on an iPad Simulator landscape; both attached
-    - "start solo practice — the countdown turns landscape; finish or resign — Home returns to portrait" is named as Nate's hand test
+    - A friend row renders at one card height at 375pt width with no button wrapping
+    - Each of Accept, Decline, Block, Invite to play and Unfriend is still reachable, and a test pins that the row's action set is unchanged
+    - FriendsTests green at or above 49; `xcodebuild` BUILD SUCCEEDED
+  ui: true
+  status: not started
+
+- task: Solo Practice stops saying HOST. `Willagrams/Settings/Views/MatchOptionsView.swift:39` hard-codes `Text(verbatim: "HOST")` in the non-embedded header, and Solo's setup screen (`SoloSetupView.swift` ~79) renders exactly that header — so a single-player screen is labelled HOST. Make the eyebrow the caller's choice with no "HOST" default, or move it into the embedded-only branch, so Solo shows no eyebrow and the host lobby still shows its own.
+  guardrails:
+    - The host lobby's embedded options card keeps whatever eyebrow it shows today
+    - No change to which options are offered in either place — solo and PvP already render the same form and that is correct
+  done when:
+    - Solo setup renders no "HOST" text; a test pins its absence there and its presence in the host lobby
+    - SettingsTests green at or above 36, ShellTests at or above 263; `xcodebuild` BUILD SUCCEEDED
+  status: not started
+
+- task: A saved name reaches the whole app. `ProfileModel.save()` (`Willagrams/Account/ProfileModel.swift` ~128-148) already writes the new display name and succeeds — the name is in the database. But `ShellModel.currentProfile` (`Willagrams/Shell/ShellModel.swift:99`) is assigned in exactly one place, the sign-in task at ~207, and the save never writes back, so `showProfile()` (~324-336) rebuilds the screen from the stale row on every visit and the old name reappears. Hand the saved row back to the shell so `currentProfile` updates. Fix the second defect in the same file while there: `canSave` (~120-122) omits a backend check while `save()` (~129) returns silently when the backend is nil, so with no backend the Save button is enabled and does nothing without a word to the player — fold the check into `canSave` and say why.
+  guardrails:
+    - The name length rule (1...24, trimmed) and the existing validation messages do not change
+    - Do not add a second source of truth for the profile — `ShellModel.currentProfile` stays the one the app reads
+  done when:
+    - After a successful save, `ShellModel.currentProfile` carries the new name, and reopening Profile shows it; a test asserts the shell's copy changed, not only the screen's
+    - With a nil backend, Save is disabled and the screen says why, instead of being enabled and silently doing nothing
+    - `ProfileRouteTests.swift` (~83) is rewritten to the new rule rather than deleted; AccountTests green at or above 16, ShellTests at or above 263
   caution: true
-  ui: true
-  parallel-group: a
-  status: blocked (2026-09-15, MERGED into auto/final at 9c7b223 ahead of item 5 as planned, was auto/final-a3 @ 4533ac0 — QA FAIL on the iPad screenshot criterion ONLY: `simctl io screenshot` always returns native portrait pixels and iPadOS 26.5 letterboxes a landscape-only app, so "height > width" cannot prove orientation on either device; revise the criterion. Every other criterion is met. Also: portrait iPhone Home keeps its landscape layout and is cut off until item 5 lands — do not merge ahead of item 5. Owed gates CLOSED at 4533ac0: delta pin of the initial mask default, uiMask/delegate wiring scan and pbxproj exact-literal, each mutation-checked and cp-restored byte-identical; ShellTests 233/233; BUILD SUCCEEDED)
+  status: not started
 
-- task: Tighter margins on a portrait phone. `.screenPadding()` (`Willagrams/Style/DesignTokens.swift` ~199–218) picks 12 when `verticalSizeClass == .compact`, else 40, so a portrait phone (vertical regular) gets 40 on every screen. Add `Space.screenMarginPhone = 16` (new key; no rename) and choose through a plain function `ScreenMargin.value(horizontal:vertical:)`: vertical compact → `screenMarginCompact` (12), horizontal compact → `screenMarginPhone` (16), else `screenMargin` (40). `.screenPadding()` reads both size classes and calls it. One change covers every screen that already uses `.screenPadding()`.
+- task: Joining a friend's game says it worked. `JoinModel` already computes `waitingTitle` (~112), `waitingLine` (~137) and `hostName` (~82); all three are tested and **no view reads any of them** — `TwoPlayerView` never looks at `join.phase`, so after a guest enters a code the screen gives no sign the join succeeded. Render the state the model already publishes: the `.joining` phase shows progress, the `.waiting` phase shows that the join worked and names the host being waited on. This is wiring over existing, already-tested code — do not restate the copy in the view.
   guardrails:
-    - No existing DesignTokens key is renamed or removed; StyleTests' token guardrails stay green
-    - iPad (regular/regular) keeps 40; landscape phone keeps 12
+    - The copy stays `JoinModel`'s; the view renders it and decides nothing
+    - The join flow itself does not change — only what the guest is shown about it
   done when:
-    - A StyleTests case: `ScreenMargin.value` returns 16 for (compact, regular), 12 for (compact, compact) and (regular, compact), 40 for (regular, regular); and `screenMarginCompact < screenMarginPhone < screenMargin`
-    - `xcodebuild` BUILD SUCCEEDED
+    - After a successful join the guest sees a waiting state naming the host, and during the attempt sees a progress state
+    - A test pins that the view reads `join.phase` and renders each phase's published line
+    - ShellTests green at or above 263; `xcodebuild` BUILD SUCCEEDED
   ui: true
-  status: done (2026-09-15, e4ef400 — QA PASS, 5 mutations killed; StyleTests 34, xcodebuild SUCCEEDED. The 16pt path is only visible once item 3 lands)
+  status: not started
 
-- task: Home, rebuilt from comp screen 01 plus Nate's list. `Willagrams/Shell/MenuView.swift` + `MenuLayout.swift`. On a portrait phone: a single column — mute control top-right, the `WordmarkTiles` crossword near the top sized from the available width, a flexible gap, then the PLAY mono label and the buttons anchored to the bottom. **No tagline**: delete the `"One shared \(Terminology.pool)…"` string (~249–250) and its render site (~127–131). Button slots, in order: **Multiplayer** — primary style, disabled, with a small "Coming soon" caption; **Play a Friend** — primary, opens the merged screen (item 6) via the existing `shell.playAFriend()`; then the quiet two-column grid **Solo Practice · Profile · Friends · How to Play**. Solo Practice moves into the grid slot Join used to hold and keeps its action. Join a Friend leaves Home (it is reached from the Play a Friend screen, item 6). Put the slot list in a plain value (e.g. `MenuLayout.actions`) that ShellTests can read. `MenuLayout` gains a portrait mode (width < height); the iPad landscape two-column layout keeps its structure with the same slot changes. `onlineUnavailableReason`'s caption stays under the online buttons. Fix the stale doc comment (~3–14).
+- task: Invite a friend from the open seat. Invites already work end to end as live Realtime broadcasts on a private `invites:<uuid>` topic — `MatchInvite.swift`, `SupabaseMatchInviteChannel.swift`, `ShellModel.inviteArrived(_:)` (~605), the banner in `ShellRootView.swift` (~81-100) — and `0005_invite_topic_authorization.sql` already restricts sending to accepted friends. The only gap is reach: `ShellModel.invitePlay(_:)` guards `guard case .friends = route` (~722), so an invite can be sent only from the Friends list and never from the lobby where you are actually sitting waiting for someone. Extract the send half of `invitePlay` (~721-760) into a helper that takes an already-open lobby, so the Friends path and a new lobby path share one implementation, and add a friend picker to the open-seat row in `TwoPlayerView.swift` (~343-365) listing accepted friends only.
   guardrails:
-    - iPad keeps its landscape two-column structure; only the slot contents change there
-    - The Menu still scrolls under the largest accessibility Dynamic Type sizes rather than clipping (`ViewThatFits` fallback stays)
-    - Every action Home had still reaches its screen — Join through the Play a Friend screen — nothing is orphaned
+    - No new table, no migration, no live SQL — an invite stays a broadcast and only a broadcast
+    - The existing Friends-list entry point keeps working unchanged, including its `route == .friends` guard
+    - Only accepted friends may be listed or invited; a pending or blocked relationship must not appear in the picker
   done when:
-    - A ShellTests case: the menu's action list is exactly [Multiplayer (disabled), Play a Friend, Solo Practice, Profile, Friends, How to Play] in that order, with no Join entry; and `MenuLayout(size: CGSize(width: 375, height: 812))` reports portrait mode with a total content height that fits 812 minus portrait safe-area insets
-    - No Swift file under `Willagrams/` contains "One shared" (grep), and the Multiplayer button is disabled in the view (a ShellTests case on the slot's `isEnabled`)
-    - `xcodebuild` BUILD SUCCEEDED; an iPhone 13 mini Simulator launch screenshot shows the portrait Home with every slot and no scroll indicator; attached
+    - The host can send an invite from the open seat without leaving the lobby, and the same invite arrives as the banner the Friends-list path produces
+    - A pending-request or blocked person never appears in the picker; a test pins the accepted-only rule
+    - `git diff` touches nothing under `supabase/`; ShellTests green at or above 263, OnlineTests at or above 147
   ui: true
-  status: done (2026-09-15, 17dffc2 — QA PASS on attempt 2; ShellTests 248 (measured merged floor 244), BUILD SUCCEEDED, no "One shared" under Willagrams/. Screenshots at .claude/dev-team/screens/qa-item5-home-se-portrait.png and qa-item5-home-ipad-landscape.png; session orchestrator confirmed the portrait shot by eye against attempt 1's clipped version. DEVICE SUBSTITUTION: no iPhone 13 mini runtime exists on this machine, so every shot is iPhone SE (3rd gen) at 375x667 — 145pt shorter than the 375x812 the criterion names, i.e. a strictly harder fit test; the 375x812 MenuLayout assertion is present and passing alongside a stricter 375x667 one. Two mutations reported non-isolable and not claimed otherwise: the "no Join" assertion cannot be separated from the exact-list equality, and flipping isPortrait cascades into an iPad test via quietColumns. The Dynamic Type guardrail is UNEXERCISABLE — see the BrandFonts note in item 9's status)
+  status: not started
 
-- task: One Play / Join a Friend screen, from comp screen 03. New `Willagrams/Shell/TwoPlayerView.swift` renders both `.hostLobby` and `.join` (ShellRootView points both routes at it with a mode). Layout: top bar Cancel · "TWO PLAYER" mono label · a trailing slot (the gear from item 7 — leave a same-width spacer here); hero title "Play a Friend" / "Join a Friend" (the models' existing `title` constants) and subtitle "Share the code below. One friend, one seat." / "Enter the code from your friend’s screen."; "Host a game" / "Join a game" chips; the six-character code as six tiles (host: the invite code, last tile accent; join: the typed characters, empty slots dashed); join mode's text field "Type the six characters"; host mode's Copy/Share row and roster rows (a seated player "Ready", a dashed "Open seat — Waiting for your friend to join."); one bottom primary button, Start (host) or Join (join, styled disabled until six characters). Chips call `shell.playAFriend()` / `shell.showJoin()`, which already tear down the other model. `joinInvite()` and `invitePlay()` still land in the right mode. Move the polish work across intact: join's `@FocusState` + `scrollTo` on focus + `.scrollDismissesKeyboard(.interactively)`, validation messages reachable (Join disabled only when empty or in flight), host code/roster/Start behaviour from `HostLobbyView`, error/status messages from both models. Then delete `HostLobbyView.swift` and `JoinView.swift`.
+- task: Decline a match invite. The banner in `ShellRootView.swift` (~95) offers Join and nothing else, so an unwanted invite can only be ignored. Add a Decline beside Join that clears the banner, and tell the host: send a decline back on the host's own `invites:<hostID>` topic, which the existing policy `invites_send_to_accepted_friend` in `0005` already permits — the recipient is an accepted friend of the host, so no migration is needed. Show the host that the invite was declined at the open seat. `ShellModel.showsInvites(_:)` (~518) currently allows only `.menu, .friends, .profile, .join`, so the host sitting on `.hostLobby` cannot receive the decline — widen it to accept a decline frame there.
   guardrails:
-    - No change to `HostLobbyModel`/`JoinModel` online behaviour in this item — lobby creation, joining, Start, cancel and teardown work exactly as today; only who renders them changes
-    - Switching chips never leaves two live lobbies: the model being left is torn down (its backend cancel/leave happens) before the other starts
-    - Invalid join input still never reaches the backend
+    - No new table, no migration, no live SQL
+    - Declining must not send a match invite back, block, or unfriend — it is one message and nothing more
+    - A decline must not be able to reach a stranger: the same accepted-friend restriction that governs an invite governs a decline
+    - `InviteTests.swift` (~389 `onlyFourRoutesShowInvites`) pins the old route rule — rewrite it to the new rule, never delete it
   done when:
-    - A ShellTests case: from `.hostLobby`, the Join chip's action leaves the route at `.join` and the host model's teardown recorded its backend cancel; from `.join`, the Host chip's action leaves the route at `.hostLobby` and the join model is torn down. Each fails with its teardown removed (mutation-checked)
-    - A ShellTests case on a plain value backing the code tiles: host mode yields six filled tiles with the last marked accent; join mode with "AB1" yields three filled and three empty
-    - `HostLobbyView.swift` and `JoinView.swift` no longer exist; `xcodebuild` BUILD SUCCEEDED
-    - "Play a Friend: switch Host/Join, type a code with the keyboard up, Start with a friend joined" is named as Nate's hand test
-  ui: true
-  status: done — `auto/final` @ `6449c10`. `TwoPlayerView.swift` + `CodeTiles.swift` render both `.hostLobby` and `.join`; `HostLobbyView.swift`/`JoinView.swift` deleted. Switch cases in `Tests/ShellTests/Cases/TwoPlayerSwitchTests.swift`; 4 of 5 mutations isolated, the 5th ("invalid join never reaches the backend") declared structurally non-isolable — `FakeBackend` has no call counter and an invalid code writes no row either way, so it is proven only by the `model.work != nil` proxy. ShellTests 252/252, OnlineTests 146, BUILD SUCCEEDED. Both screenshots read by the orchestrator and by me. Item text was wrong that `showJoin()`/`playAFriend()` already tear down the other model — they did not; fixed here. Two flags for Nate: the item self-conflicts on the Join button (code follows "disabled only when empty or in flight", which keeps validation messages reachable), and `HostLobbyLayout.swift` is now an orphan kept alive only by its own test — delete both in a cleanup item
-
-- task: Play a Friend gets the solo match settings, minus the CPU. In `TwoPlayerView`'s trailing slot, host mode only, a gear button opens a sheet with `MatchOptionsForm` (`Willagrams/Settings/Model/MatchOptionsForm.swift`, the form solo uses — swap on/off, minimum word length, dictionary) plus the starting-tiles stepper (`SoloSetup.handSizeRange` 5…40, `SoloSetup.handSizeLabel`), seeded from and saved to `SettingsStore`. No bot/difficulty control. The gear is disabled once Start is pressed. `HostLobbyModel` (`Willagrams/Shell/HostLobbyModel.swift`) holds mutable `options` and `handSize`; `start()` (~222) passes them to `OnlineMatch.start(...)` (`Willagrams/Online/OnlineMatch.swift`), which sends them in `.start` in place of the hard-coded `startingHandSize` (~64, used ~394) and `record.options` (~396). The `.start` message already carries both — no wire change. Confirm the guest reads options and hand size only from `.start` (grep every read of `matches.options`/`record.options`); if anything a guest shows before the start reads the row, report it.
-  guardrails:
-    - No wire, `MatchMessage` or `BackendContracts` change; the dictionary-hash gate at start still refuses a mismatched dictionary
-    - Solo practice's settings and its bot controls are unchanged
-    - Settings cannot change after Start is pressed; a second `.start` is still ignored
-  done when:
-    - An OnlineTests (or ShellTests) case over the fake transport: the host sets starting tiles to 10 and swap off, starts, and the guest's session has `startingHandSize == 10`, swap disabled, and both racks hold 10 tiles. It fails with the hard-coded 21 restored (mutation-checked)
-    - A ShellTests case: after `start()` the settings action is unavailable, and changed settings persist through `SettingsStore` to the next lobby
-    - MatchTests, OnlineTests and ShellTests are green at or above their floors; `xcodebuild` BUILD SUCCEEDED
-    - "host sets 10 tiles + swap off via the gear; the guest deals 10 and sees no Swap" is named as Nate's two-device hand test
+    - Declining clears the banner on the guest's device and the host sees that the invite was declined at the open seat
+    - The host receives a decline while on `.hostLobby`, and a rewritten `onlyFourRoutesShowInvites` pins exactly which frames each route accepts
+    - `git diff` touches nothing under `supabase/`; ShellTests green at or above 263, OnlineTests at or above 147
   caution: true
-  ui: true
-  status: done — `auto/final` @ `7f12c3c` (+ `2813d63` index-only cleanup). 3 attempts, full caution team. Host-only gear in `TwoPlayerView`'s trailing slot opens a one-screen match-settings sheet; `HostLobbyModel.start()` passes `handSize`/`options` to `OnlineMatch.start(...)`, which sends them in `.start` — `startingHandSize` survives only as a default argument. QA VERDICT PASS (after one FAIL at `f0a4aaa` on a flaky test). dt-review: 0 Critical, 1 Important (fixed: `canEditSettings` was a latched stored flag that left a retryable start with a permanently dead gear — now derived `phase == .waiting && work == nil`), 4 Minor. ShellTests 254 · OnlineTests 147 · MatchTests 128 · SettingsTests 36 · BUILD SUCCEEDED. Guest-read grep done as asked: nothing a guest shows before `.start` reads the row — but `JoinModel.swift:272-274` still builds its `MatchSetup` from `OnlineMatch.startingHandSize` + `record.options`, dead on the online path today and one line from being observable if `MatchSetup` ever feeds the countdown or HUD. Reported, left unfixed
+  status: not started
 
-- task: A loading screen that loops until the app is ready, from comp screen 02. `ShellModel` (`Willagrams/Shell/ShellModel.swift`) gains launch state: `launch()` awaits `signInTask` (capped at 6s — on timeout Home shows its existing signing-in state) and `loadedDictionary()` (~64–77), then marks ready. New `Willagrams/Shell/LaunchView.swift`: the nine wordmark tiles (the `WordmarkTiles` crossword — WILLA across, GRAMS down through the accent A) start scattered and rotated at the comp's per-tile offsets (G 13,-86,18° · R -119,-126,-27° · W -29,36,24° · I 157,-18,-21° · L -25,138,30° · L -195,-178,-31° · A -125,-28,14° · M 11,70,-26° · S -263,32,28°; delays 0/.05/.1/.15/.2/.25/.4(A)/.3/.35s), fly into place with the comp's overshoot, then the whole mark clicks (scale 1→1.04→.99→1), a ring expands from 0.72 to 1.25 at half opacity, and six small squares burst from the accent A — one 4.2s cycle, keyframes as in the comp's `wg-fly`/`wg-click`/`wg-ring`/`wg-spark`. Below it a thin looping bar (1.5s) and the mono caption "Shuffling the Pool" (Pool via `Terminology.pool`). The loop policy lives in a plain testable driver: at the end of every cycle, not ready → replay; ready → this is the final cycle, then transition to Home. Readiness arriving mid-cycle never cuts the animation short. Shown on cold launch only, gated in `ShellRootView`. Reduce Motion → the static wordmark and bar, exiting as soon as ready. Launch background #1A1710 (the comp's ground) through an `Assets.xcassets` colour and the generated launch screen's background colour setting in `project.pbxproj`, so there is no white flash; if the generated launch screen offers no such setting, leave the project file alone and report it.
+- task: A screen lock no longer kills the match. There is no scene-phase observer anywhere in the app — a sweep finds lifecycle handling only in `Willagrams/Audio/SystemAudioPlayer.swift` (~85). Locking the phone suspends the process and drops the websocket, and on resume two stacked graces fire at once: `MatchSession.reconnectGraceSeconds` (30s) reaches `awayPeersAreGone()` (`MatchSession.swift` ~565-579), which is one-way and cancels the pump; and `RealtimeMatchTransport.defaultPeerGrace` (35s, ~105) reaches `close()`, finishing the `inbound`/`states` AsyncStreams (~212-213), and a finished AsyncStream cannot restart — the `for await` loops in `beginReceiving` (~483, ~490) exit permanently. The UI stays responsive because SwiftUI is unaffected, which is exactly what Nate reported: everything responds except Draw and Swap, which route through the dead pump. Add the app's first scene-phase observer and route it into the online stack so a brief backgrounding is survivable: the graces must not spend their budget while suspended, and on resume the transport re-subscribes before they resume counting. Note `MatchSession.swift` (~544) already builds a wall-clock `Date` deadline while the wait itself is `sleepFor`-driven, so the two disagree by exactly the suspend duration — pick one clock.
   guardrails:
-    - Sign-in and the dictionary load start exactly when they do today — the loading screen waits on them, it does not delay or re-trigger them
-    - Launch can never hang: sign-in failure or timeout still exits the loop to Home
-    - Invite deep links arriving during launch still route once Home is up (the invite banner path is untouched)
+    - `MatchSession` is at a toolchain limit — any new stored property there is `@ObservationIgnored`, and MatchTests runs after every edit to that file
+    - A peer who is genuinely gone must still be detected; this item makes the grace honest about suspended time, it does not make it infinite
+    - Do not change the wire format or `MatchTransport`; both are frozen contracts
+    - `SupabaseMatchChannel.swift` (~81-93) has a presence `retrack` workaround for supabase-swift 2.55.1 losing presence after a socket drop — a screen lock takes exactly that path. Do not remove it
   done when:
-    - ShellTests cases on the loop driver: not ready at a cycle end → replays; ready mid-cycle → exits exactly at that cycle's end and not before; sign-in timing out at 6s → exits at the next cycle end; Reduce Motion + ready → exits immediately. Each mutation-checked
-    - `xcodebuild` BUILD SUCCEEDED; an iPhone 13 mini Simulator cold launch screenshotted at ~1s shows the loading tiles in portrait and at ~10s shows Home; both attached
-    - "watch a cold launch — tiles come together, click and spark, repeat until ready, finish the cycle, then Home" is named as Nate's hand test
-  ui: true
-  status: done — `auto/final` @ `844cab6`. 2 attempts. Loop policy lives in `LaunchLoop.swift`, a plain struct with injected elapsed time and injected readiness — no sleeps, no wall clock, 9 tests in 0.19s, 30/30 in isolation. 5 mutations, all isolated. Shell 263 (floor 254), Style 34, BUILD SUCCEEDED. **Device substitution: no iPhone 13 mini runtime exists on this machine; the screenshot criterion was met on iPhone SE (3rd gen) 375×667 — same width, 145pt shorter, so stricter. The named device was not used.** **The pbxproj clause could not be delivered and its own escape hatch was taken:** this Xcode's generated launch screen has no working background-colour setting (`INFOPLIST_KEY_UILaunchScreen_BackgroundColor` and `_UIColorName` both resolve in `-showBuildSettings` but never reach the built `Info.plist`); `project.pbxproj` and `Config/Info.plist` are byte-identical to HEAD. **Consequence still open for Nate: the pre-first-frame system launch screen is white and flashes into the dark loader** — the `done when:` is satisfied but the item's stated intent ("so there is no white flash") is not. Only remaining routes are a storyboard launch screen or a different Info.plist merge strategy, both outside this item
+    - A match survives a 60-second background-and-resume: Draw and Swap still work afterwards, pinned by a test that drives the scene-phase transition against a fake clock
+    - Time spent backgrounded does not count against either grace, and the session's deadline and its sleep agree on one clock
+    - A peer that never returns is still reported gone after the grace, so the fix does not hang a dead match forever
+    - MatchTests green at or above 128, OnlineTests at or above 147, ShellTests at or above 263; no new crash report on an iPhone or iPad Simulator launch
+  caution: true
+  status: not started
 
-- task: Restyle Profile and Friends from comp screens 04–05, portrait. `Willagrams/Account/ProfileView.swift`: top bar PROFILE label · Done; a card with the accent avatar tile (initial of the display name), the name as an inline field with its Save button, the friend code in mono under it; three stat cards (Played, Won, Tiles placed) **plus the existing Fastest win** (keep it — the comp omits it); a Win rate card with a bar (won ÷ played, shown as a whole percent; hidden or "—" at zero played); a Friend code card with Copy and Share. `Willagrams/Friends/FriendsView.swift`: large "Friends" title · Done; a Your code card with a Share code button; Add a friend with the 8-character lookup field and Look up button and its hint line; the empty state (three tiles spelling ADD over "No friends yet. Share your friend code to add one."); friend rows as tiles with a Play button, **keeping the existing Block and Unfriend actions** and pending requests. Keep the polish work intact: `@FocusState`, `scrollTo` on focus, `.scrollDismissesKeyboard(.interactively)`, `.onSubmit`, reachable validation messages.
+- task: A dead match says so. When the graces really do expire, `awayPeersAreGone()` (`MatchSession.swift` ~565-579) cancels the pump and nothing at all reaches the player — Draw and Swap simply stop responding with no message, which is what Nate read as a crash. Surface the end state instead of dead buttons, and while a peer is inside the reconnect window show that the game is waiting on them rather than leaving a frozen board. Nate's words: if the game dies it should say so, and if it is waiting on the other player it should show a waiting state.
   guardrails:
-    - No behaviour changes: every action both screens have today still exists and calls the same model method
-    - Validation still happens in the models before any backend call; message strings unchanged
+    - Do not extend or shorten the grace here — this item reports the outcome, item above owns the timing
+    - The waiting state must be distinguishable from the ended state; a player must never be told the match ended while it can still recover
   done when:
-    - An AccountTests case on a plain win-rate value: 2 won of 3 played → 67; 0 played → no rate; mutation-checked
-    - Both views still declare `@FocusState` and `.scrollDismissesKeyboard(.interactively)`, and Friends rows still offer Block and Unfriend (grep)
-    - AccountTests and FriendsTests green at or above floors; `xcodebuild` BUILD SUCCEEDED; "Profile and Friends in portrait against the comp" is named as Nate's hand test
+    - When the reconnect grace expires the player sees that the match ended, instead of unresponsive Draw and Swap buttons
+    - While a peer is inside the reconnect window the board shows a waiting indicator naming that it is waiting on the other player
+    - A test pins both states and the transition between them; MatchTests green at or above 128, ShellTests at or above 263
   ui: true
-  parallel-group: e
-  status: done (2026-09-15, 0b9b5d7, merged into auto/final — QA PASS first attempt; AccountTests 16 (floor 15), FriendsTests 49, BUILD SUCCEEDED. `ProfileModel.winRatePercent` mutation-checked with both guards isolated. Hand test cannot run until item 3 merges — the app is still landscape-only. Carried for Nate: the Friends accepted-row's three fixed-width buttons are tight at iPhone SE width; `SourceGuardrailTests` literal source-string scans bent production shape into a single-use `doneButton(onBack:)` helper and should be scoped to the declaration before the next screen restyle)
+  status: not started
 
-- task: How to Play as a pager, from comp screen 06, and Solo setup fitting portrait. `Willagrams/Shell/HowToPlayView.swift`: Back · "N OF M" mono label; one rule per page — accent number tile, large title, body — with dots and Back / Next buttons at the bottom; Next on the last page reads Done and returns to Home. Rule titles and bodies stay verbatim from `Willagrams/Shell/HowToPlay.swift` (M is however many rules it has). Page state lives in a plain `HowToPlayPager` value. `Willagrams/Shell/SoloSetupView.swift`: lay its existing controls out as a single portrait column with the start action anchored at the bottom, using item 4's margins, so it fits a 375×812 phone without clipping.
+- task: Double tap then slide works when the slide starts on a letter. The grab decision in `BoardGesture.swift` (~130-143) is already correct — in selection mode a letter the selection does not hold becomes `.paint`, pinned by `BoardSelectionTests.swift` (~482). The fault is upstream: `selection.isActive` is still false when the sweep begins, because the double tap never reaches `enterSelection()` when it lands on a letter. `DragGesture(minimumDistance: 0)` (`BoardView.swift` ~203) claims every touch-down; on a bare cell the grab is `.pan` and nothing is written, so the tap pair completes, but on a letter `model.began` builds a `TileDrag` and fires a haptic (~406-417) and the tap's release commits a zero-translation drop inside `withAnimation` (~429-452), writing the owner's `@Observable` board and model state between the first and second tap. `Drag.grab` is a `let` decided once (~40-41), so a late `enterSelection()` cannot rescue a drag already decided `.tile`. Make a tap on a tile write nothing: keep `minimumDistance: 0`, which is load-bearing for pan and paint and the documented reason `.highPriorityGesture` was rejected (~247-251), but defer building the `TileDrag` for a `.tile` grab until the translation clears a small threshold, leaving `.pan` and `.paint` beginning at touch-down as they do now.
   guardrails:
-    - Rule copy is not edited; `Terminology` titles stay `Terminology` references
-    - Solo setup's options and its start behaviour are unchanged
+    - `minimumDistance: 0` stays, and the double tap stays `.simultaneousGesture` — `BoardSourceTests.swift` (~805) pins both by source scan and records that a competing tap loses every sequence to a zero-distance drag
+    - Dragging a tile must still feel immediate; the threshold is the smallest that stops a tap from committing, not a perceptible delay
+    - The grab decision itself does not move — it stays decided once, at touch-down, in `BoardGesture`
   done when:
-    - A ShellTests case: `HowToPlayPager` starts at page 1 of M, Next advances, Back at page 1 stays, the last page's primary label is "Done", and its label reads "1 OF M" in the format the comp shows. Mutation-checked
-    - `xcodebuild` BUILD SUCCEEDED; "How to Play paging and Solo setup in portrait" is named as Nate's hand test
-  ui: true
-  parallel-group: e
-  status: done (2026-09-15, 570c80c, merged into auto/final — QA PASS; ShellTests 238 (floor 227), BUILD SUCCEEDED. M = 6 rules. Carried for Nate: two of the five pager mutations (initial page, Next advance) are structurally non-isolable — `pageLabel` derives from `page` and `next()` is the only forward transition — so they fail 2–3 named assertions rather than one; the other three are clean. Portrait fit and comp fidelity are deferred to the named hand test, which needs item 3 merged)
+    - A `.tile` grab whose drag never moved commits nothing, writes no board or model state and fires no pickup or snap haptic; a test pins this
+    - Sweeping from a letter after a double tap selects multiple tiles, verified by Nate on a device
+    - BoardTests green at or above 271 (read the XCTest "Executed N tests" line) and every existing selection and drag pin stays green; `xcodebuild` BUILD SUCCEEDED
+  caution: true
+  status: not started
+
+- task: Letters draw when they should. Two independent faults make tiles appear late or lag behind the grid. First, `BoardView.swift` (~704-707) animates on `value: Set(cells.compactMap { $0.tile?.id })` with a 0.45s ease-out; its comment says the set changes only on a draw, a swap or the deal, but `cells` is viewport-culled (`BoardRender.swift` ~97), so the set changes every time any tile crosses the viewport edge — every pan, pinch, recenter and the opening framing — restarting a 0.45s animation over every tile's offset, which is why letters trail the board. Key it on the tiles on the board rather than the culled view, matching the intent already written. Second, `arrivedToken` is `@State` initialised to 0 (~125) while the owner's `arrivalToken` is already at least 1, and countdown and match are separate `switch` branches in `ShellRootView`, so the match screen's fresh `BoardView` re-arms the entire opening hand as `.fromBag` — starting at the bag corner at opacity 0 — for ~0.47s; seed it from the owner's current token on appear. Delete `arrivalProgress`, `arrivalCorner` and `arrivalScale` (~117, ~182, ~572, ~581, ~587) while there: all three are written and passed but never read, and the flight is actually driven by the transition at ~688.
+  guardrails:
+    - A genuine new tile from a Draw or a Swap must still fly in from the bag — this item stops tiles already on the board from re-flying, and must not disable the arrival animation
+    - `BoardRenderTests.swift` (~358, ~378) pins arrival classification, including the pan-into-view case; both stay green
+    - Deleting the dead state must not change any rendered geometry — confirm the three properties are genuinely unread before removing them
+  done when:
+    - Panning or pinching a board no longer restarts the deal animation: a test pins that the animation's trigger value is independent of which tiles are currently visible
+    - Entering a match does not re-fly the opening hand from the bag; a test pins that an already-delivered batch is not re-armed by a freshly built view
+    - Letters stay with their cells during a pan and are on screen when the board appears, verified by Nate on a device
+    - BoardTests green at or above 271; `xcodebuild` BUILD SUCCEEDED
+  caution: true
+  status: not started
+
+## Not yet specified
+
+- Whether the reconnect grace should differ between a lock-screen suspend and a force-quit — a force-quit is unrecoverable and could be reported faster than 30s, but nothing distinguishes them today. Revisit after the scene-phase item.
+
+## Out of scope
+
+- PvP special match rules. Dropped 2026-09-15: solo and Play a Friend already render the same `MatchOptionsView` off the same form and the same `SettingsStore`, and the only solo-exclusive control is bot difficulty. Nate had not found the gear; the delta is zero.
+- A persistent invites table. Nate chose live-only broadcasts: a friend with the app closed misses the invite, and that is accepted for now. Revisiting it means a migration, which this round forbids.
+- Real Multiplayer (three or more players, matchmaking). Home keeps its disabled placeholder.
+- iPad portrait and iPad multitasking. iPad stays landscape — the crash item fixes how a rejected rotation is reported, not the policy.
+- Dynamic Type. `BrandFonts.swift` (~80, ~86) uses `.custom(_, fixedSize:)` so no text in the app scales at all. App-wide and pre-existing; it deserves its own round.
+- The white system launch-screen flash before the dark loading screen takes over. Round 2 left it; it needs a launch-storyboard change and `project.pbxproj` is protected this round.
+- `HostLobbyLayout.swift`, a confirmed orphan kept alive only by its own test. Delete both in a cleanup round.
+- Sign in with Apple and the `launch` lane. Both wait on the paid Apple Developer membership.
