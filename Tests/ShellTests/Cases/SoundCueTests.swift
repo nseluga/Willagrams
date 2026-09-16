@@ -22,6 +22,11 @@ import WillagramsRules
 final class EveryWaiterClock {
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
+    /// How many sleepers are parked on a tick right now. A test that must hand
+    /// out exactly one second waits for every sleeper it expects before
+    /// advancing — otherwise it advances the ones that happened to park first.
+    var parked: Int { waiting.count }
+
     func sleep(_ duration: Duration) async {
         await withCheckedContinuation { waiting.append($0) }
     }

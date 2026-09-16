@@ -105,7 +105,27 @@ struct SoloMatchTests {
         #expect(opener.lastNote == nil)
         try await Self.waitUntil("the pool host to receive the start") { pooled.state.status == .playing }
         #expect(pooled.poolRemaining != nil)
-        #expect(opener.poolRemaining == nil)
+        // The shipped rule, since `checkpoint: item 13 guest pool count`
+        // (00a49e0): the pool's device broadcasts `.poolCount` after the deal
+        // and on every round, so the end WITHOUT the pool sees the same bag as
+        // the end holding it. `nil` is only the state before the first count
+        // lands. Where the pool lives is what this test pins, and that is
+        // asserted below — not who is allowed to know how many tiles are left.
+        try await Self.waitUntil("the opener's bag count to arrive") { opener.poolRemaining != nil }
+        #expect(opener.poolRemaining == pooled.poolRemaining)
+        // The pool itself still lives on roster[0], and this is what proves it:
+        // the opener holds no pool, so its Draw can only be served by `pooled`
+        // answering the request off the wire. Both ends then read one tile
+        // fewer each — the pool deals to every player per round.
+        let dealt = try #require(opener.poolRemaining)
+        try await Self.waitUntil("the opener's opening hand") { opener.state.hand.count == 21 }
+        #expect(opener.draw())
+        try await Self.waitUntil("the tile the far pool deals back") {
+            opener.state.hand.count == 22
+        }
+        try await Self.waitUntil("the bag count to drop on both ends") {
+            opener.poolRemaining == dealt - 2 && pooled.poolRemaining == dealt - 2
+        }
         pooled.leave()
         opener.leave()
     }

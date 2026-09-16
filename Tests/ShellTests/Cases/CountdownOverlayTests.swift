@@ -5,30 +5,6 @@ import WillagramsRules
 @testable import Match
 @testable import Shell
 
-/// A clock that hands out one second only when this test says so.
-///
-/// The session's countdown is the only thing that sleeps in these tests, so a
-/// suspended sleeper is always the countdown waiting for its next tick. Nothing
-/// here waits on wall-clock time: three seconds cost nothing and cannot flake.
-@MainActor
-final class StepClock {
-    private var waiting: CheckedContinuation<Void, Never>?
-
-    /// Whether the countdown is parked on a tick.
-    var isWaiting: Bool { waiting != nil }
-
-    func sleep(_ duration: Duration) async {
-        await withCheckedContinuation { waiting = $0 }
-    }
-
-    /// Lets one second elapse.
-    func advance() {
-        let resume = waiting
-        waiting = nil
-        resume?.resume()
-    }
-}
-
 @MainActor
 @Suite("Countdown overlay")
 struct CountdownOverlayTests {
@@ -78,8 +54,18 @@ struct CountdownOverlayTests {
 
     /// Drives a real `MatchSession` down from `start` one injected second at a
     /// time, asserting the overlay at every step including the last.
+    /// How many countdowns a solo match runs on the injected clock.
+    ///
+    /// `SoloMatch` hands the same `sleepFor` to both ends: the local
+    /// `MatchSession` and the bot far end's own `MatchSession`, and BOTH count
+    /// the same seconds down. A clock holding one continuation lost whichever
+    /// second parked first — the countdown under test was stranded and the
+    /// waits below timed out. `tick` therefore hands the second out only once
+    /// every countdown is parked on it.
+    private static let countdownsPerSoloMatch = 2
+
     private func runCountdown(from start: Int) async throws {
-        let clock = StepClock()
+        let clock = EveryWaiterClock()
         let solo = SoloMatch(
             setup: MatchSetup(
                 seed: 20260817,
@@ -110,8 +96,10 @@ struct CountdownOverlayTests {
         #expect(CountdownOverlay(session: solo.session) == nil)
     }
 
-    private func tick(_ clock: StepClock) async throws {
-        try await SoloMatchTests.waitUntil("the countdown to park on a tick") { clock.isWaiting }
+    private func tick(_ clock: EveryWaiterClock) async throws {
+        try await SoloMatchTests.waitUntil("both countdowns to park on a tick") {
+            clock.parked == Self.countdownsPerSoloMatch
+        }
         clock.advance()
     }
 }
