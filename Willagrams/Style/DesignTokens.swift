@@ -23,6 +23,9 @@ public enum DesignTokens {
         public static let surface = Color("surface")
         /// An empty grid cell.
         public static let cellEmpty = Color("cellEmpty")
+        /// The loading screen's ground. Fixed in both appearances — the loader
+        /// draws itself dark whatever the system theme is.
+        public static let launchGround = Color("launchGround")
 
         // MARK: Ink
 

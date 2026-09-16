@@ -109,6 +109,49 @@ public final class ShellModel {
     /// it; nothing in the app reads it.
     @ObservationIgnored private(set) var signInTask: Task<Void, Never>?
 
+    // MARK: - Launch
+
+    /// Whether the loading screen is still up. True for exactly one cold
+    /// launch: this model is built once per process, so nothing has to
+    /// remember that the loader has already been shown.
+    public private(set) var showsLaunchScreen = true
+
+    /// The two gates ``LaunchLoop`` reads. Written here and nowhere else.
+    public private(set) var isDictionaryLoaded = false
+    public private(set) var hasSignInSettled = false
+
+    @ObservationIgnored private var launchTask: Task<Void, Never>?
+
+    /// Waits on the work `init` already started — it starts nothing, delays
+    /// nothing and re-triggers nothing — and marks each gate as it lands.
+    ///
+    /// The six-second cap on sign-in is deliberately *not* here: ``LaunchLoop``
+    /// applies it against injected time, so a launch can never hang on a dead
+    /// network and no test has to wait six real seconds to prove it.
+    ///
+    /// Idempotent, so the screen's `.task` re-running cannot start a second
+    /// wait or build the dictionary twice.
+    public func launch() {
+        guard !isDictionaryLoaded else { return }
+        if let signInTask {
+            launchTask = Task { @MainActor [weak self] in
+                await signInTask.value
+                self?.hasSignInSettled = true
+            }
+        } else {
+            // No sign-in in this build: there is nothing to wait for, and
+            // waiting for it anyway would hold the loader for the full cap.
+            hasSignInSettled = true
+        }
+        // The ~172k-entry set read, paid here behind the loading screen rather
+        // than in the gap before the first match.
+        _ = loadedDictionary()
+        isDictionaryLoaded = true
+    }
+
+    /// The loading screen's last cycle has finished. The one way it comes down.
+    public func finishLaunch() { showsLaunchScreen = false }
+
     public static let signingInReason = "Signing in…"
     public static let noSignInReason = "Online play is unavailable in this build."
 
@@ -182,6 +225,7 @@ public final class ShellModel {
     /// socket after the model has gone is one nothing can ever tear down.
     deinit {
         signInTask?.cancel()
+        launchTask?.cancel()
         inviteTask?.cancel()
         inviteExpiry?.cancel()
         inviteSend?.cancel()

@@ -13,8 +13,39 @@ public struct WordmarkTiles: View {
     /// from it, so a caller picks one number and the mark stays in proportion.
     private let cell: CGFloat
 
-    public init(cell: CGFloat) {
+    /// Where one tile sits relative to where it belongs, and how it gets there.
+    ///
+    /// The default — exactly in place, unanimated — is the mark as every screen
+    /// but the loading one draws it. The loading screen is the only caller that
+    /// passes anything else, which is why this is one closure rather than a
+    /// second copy of the tile chrome living over in `Willagrams/Shell`.
+    public struct Placement: Equatable, Sendable {
+        public var offset: CGSize
+        public var rotation: Angle
+        public var animation: Animation?
+
+        public static let inPlace = Placement()
+
+        public init(
+            offset: CGSize = .zero,
+            rotation: Angle = .zero,
+            animation: Animation? = nil
+        ) {
+            self.offset = offset
+            self.rotation = rotation
+            self.animation = animation
+        }
+    }
+
+    /// Answered per grid position, row and column zero-indexed into the 5x5.
+    private let placement: (Int, Int) -> Placement
+
+    public init(
+        cell: CGFloat,
+        placement: @escaping (Int, Int) -> Placement = { _, _ in .inPlace }
+    ) {
         self.cell = cell
+        self.placement = placement
     }
 
     private var gap: CGFloat { (cell / 7).rounded() }
@@ -49,15 +80,23 @@ public struct WordmarkTiles: View {
     @ViewBuilder
     private func square(_ letter: Character?, row: Int, column: Int) -> some View {
         if let letter {
-            WordmarkTile(
-                letter: letter,
-                size: cell,
-                letterSize: letterSize,
-                isCrossing: row == Self.crossing.row && column == Self.crossing.column
-            )
+            tile(letter, row: row, column: column)
         } else {
             Color.clear.frame(width: cell, height: cell)
         }
+    }
+
+    private func tile(_ letter: Character, row: Int, column: Int) -> some View {
+        let place = placement(row, column)
+        return WordmarkTile(
+            letter: letter,
+            size: cell,
+            letterSize: letterSize,
+            isCrossing: row == Self.crossing.row && column == Self.crossing.column
+        )
+        .rotationEffect(place.rotation)
+        .offset(place.offset)
+        .animation(place.animation, value: place)
     }
 }
 

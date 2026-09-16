@@ -120,6 +120,9 @@ let package = Package(
                 "ShellRootView.swift", "MenuView.swift", "CountdownView.swift",
                 "MatchHUD.swift", "MatchView.swift", "ResultsView.swift",
                 "HowToPlayView.swift", "SoloSetupView.swift", "TwoPlayerView.swift",
+                // The loading screen. `LaunchLoop.swift` beside it is the
+                // policy and carries no SwiftUI, so it compiles here.
+                "LaunchView.swift",
             ]
         ),
         .testTarget(

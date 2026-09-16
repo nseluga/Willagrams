@@ -26,6 +26,9 @@ struct ColorSetTests {
         "hairline":      (("2C2718", 0.12), ("F5EEDC", 0.14)),
         "cellEmpty":     (("2C2718", 0.05), ("F5EEDC", 0.06)),
         "textSecondary": (("2C2718", 0.64), ("F0E7D0", 0.60)),
+        // The loading screen's ground. Fixed in both appearances: the loader
+        // draws itself dark whatever the system theme is.
+        "launchGround":  (("1A1710", 1), ("1A1710", 1)),
     ]
 
     /// Tokens the direction needs that the palette tables do not name.

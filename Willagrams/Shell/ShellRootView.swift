@@ -25,7 +25,18 @@ struct ShellRootView: View {
 
     let shell: ShellModel
 
+    /// The loading screen covers the app until the launch loop hands over, and
+    /// never again after that. The decision is `ShellModel`'s, as every other
+    /// one here is — this only renders the answer.
     var body: some View {
+        if shell.showsLaunchScreen {
+            LaunchView(shell: shell)
+        } else {
+            routed
+        }
+    }
+
+    private var routed: some View {
         Group {
             switch shell.route {
             case .menu: MenuView(shell: shell)

@@ -86,6 +86,7 @@ public struct StyleGallery: View {
         ("boardSurface", DesignTokens.Palette.boardSurface),
         ("surface", DesignTokens.Palette.surface),
         ("cellEmpty", DesignTokens.Palette.cellEmpty),
+        ("launchGround", DesignTokens.Palette.launchGround),
         ("ink", DesignTokens.Palette.ink),
         ("onInk", DesignTokens.Palette.onInk),
         ("textPrimary", DesignTokens.Palette.textPrimary),
