@@ -822,6 +822,17 @@ struct InviteTests {
         // came up true, the picker would be pinned in source and unreachable in
         // fact.
         #expect(lobby.canStart == false, "the seat the picker sits in was not open")
+        // The picker's own predicate, by value: the `else` arm that draws the
+        // `ForEach` is the one a waiting host reaches, not "No friends yet".
+        // `.task` is what runs this load in the view.
+        await f.shellA.lobbyFriends?.load()
+        #expect(f.shellA.invitableFriends.isEmpty == false, "the picker would draw its empty arm")
+        #expect(f.shellA.invitableFriends.contains { $0.profile.id == f.b.id })
+        // `ShellRootView.body`'s predicate, by value: the launch screen is down
+        // by the time any of this is on screen, so `routed` is what renders.
+        f.shellA.finishLaunch()
+        #expect(f.shellA.showsLaunchScreen == false)
+        #expect(f.shellA.route == .hostLobby)
         #expect(f.shellA.invitePlayFromLobby(entry))
 
         await JoinTests.until("the invite left A") { f.bus.delivered == 1 }
@@ -911,45 +922,119 @@ struct InviteTests {
         for _ in 0..<200 { await Task.yield() }
     }
 
-    /// `swift test` never compiles `TwoPlayerView.swift`, so the criterion "the
-    /// host can send an invite from the open seat" is pinned the way
-    /// `JoinTests.joinStatusRendersEachPhase()` pins un-compilable wiring: read
-    /// the source, normalize the whole file, and match ONE contiguous literal.
-    /// Independent `contains` checks would stay green with the picker gated,
-    /// hidden, or wrapped in an `if` no host satisfies.
-    @Test("TwoPlayerView draws the open seat's picker, unconditionally")
+    /// The reach half of criterion 1, pinned to ONE invariant:
+    ///
+    ///   every declaration AND every predicate on the path from
+    ///   `ShellRootView`'s route arm to `shell.invitePlayFromLobby` is either
+    ///   inside one contiguous literal or asserted by value.
+    ///
+    /// `swift test` compiles neither `ShellRootView.swift` nor
+    /// `TwoPlayerView.swift` — the `Shell` target excludes every SwiftUI file —
+    /// so the declarations are pinned by reading source off disk, the
+    /// `OrientationTests.rootViewWiring()` technique, normalized identically:
+    /// trim each line, drop `//` lines, join with `\n`. One literal per whole
+    /// declaration, never several independent `contains`: independent checks
+    /// prove the strings exist in the file, not that a host reaches them.
+    ///
+    /// The predicates each link branches on are covered the other way, by
+    /// value, in the behavioural tests above and below:
+    ///   `shell.showsLaunchScreen == false` — `theWholeReachPathIsCovered`
+    ///   `shell.route == .hostLobby`        — `invitingFromTheOpenSeat`
+    ///   `shell.hostLobby != nil`           — `invitingFromTheOpenSeat`
+    ///   `!lobby.canStart`                  — `invitingFromTheOpenSeat`
+    ///   `!friends.isEmpty`                 — `invitingFromTheOpenSeat`
+    ///   the Button's action                — `invitingFromTheOpenSeat`, `openSeatRefusesAPendingRow`
+    /// `isHost` and `if case .host = mode` are `private` and take no runtime
+    /// value a test can reach, so the literal is the only cover they can have —
+    /// which is exactly why `isHost` needs one.
+    ///
+    /// Known ceiling, deliberate and not traded away: pinning whole
+    /// declarations the length of the chain means any legitimate future edit
+    /// anywhere on that path false-reds this test, and whoever makes it
+    /// re-extends the literal. That is the price of pinning reachability
+    /// instead of presence.
+    @Test("Every link from the route arm to the picker is pinned")
     func openSeatRendersThePicker() throws {
-        let root = URL(fileURLWithPath: #filePath)
+        let repo = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // Cases
             .deletingLastPathComponent()  // ShellTests
             .deletingLastPathComponent()  // Tests
             .deletingLastPathComponent()  // repo root
-        let source = try String(
-            contentsOf: root.appendingPathComponent("Willagrams/Shell/TwoPlayerView.swift"),
-            encoding: .utf8
-        )
-        let normalized = source
-            .components(separatedBy: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.hasPrefix("//") }
-            .joined(separator: "\n")
+        func normalized(_ file: String) throws -> String {
+            try String(contentsOf: repo.appendingPathComponent(file), encoding: .utf8)
+                .components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+        let root = try normalized("Willagrams/Shell/ShellRootView.swift")
+        let two = try normalized("Willagrams/Shell/TwoPlayerView.swift")
 
-        // ONE contiguous literal per link of the chain that reaches the
-        // picker, each spanning a WHOLE declaration — `body` through
-        // `hostActions` through `openSeatRow` through `invitePicker`. The
-        // category this closes is "an edit to an ENCLOSING view defeats the
-        // pin": a condition added anywhere above the call, a modifier appended
-        // to any link (`.hidden()`, `.disabled(true)`, `.opacity(0)`), a
-        // swapped branch, or a wrapper around the roster all fall inside one of
-        // these four literals and turn this red. Several independent `contains`
-        // would prove only that the strings exist somewhere in the file.
-        //
-        // The price is brittleness: any legitimate edit to any of these four
-        // declarations false-reds this test, and whoever makes it re-extends
-        // the literal. That is the correct price for pinning reachability.
+        // Link: ShellRootView.body, whole.
+        #expect(root.contains(#"""
+var body: some View {
+if shell.showsLaunchScreen {
+LaunchView(shell: shell)
+} else {
+routed
+}
+}
+"""#))
 
-        // body, whole.
-        #expect(normalized.contains(#"""
+        // Link: ShellRootView.routed, whole.
+        #expect(root.contains(#"""
+private var routed: some View {
+Group {
+switch shell.route {
+case .menu: MenuView(shell: shell)
+case .soloSetup: SoloSetupView(shell: shell)
+case .howToPlay: HowToPlayView(shell: shell)
+case .hostLobby: hostLobby
+case .join: joinScreen
+case .profile: profileScreen
+case .friends: friendsScreen
+case .countdown: countdown
+case .match: match
+case .results: results
+}
+}
+.frame(maxWidth: .infinity, maxHeight: .infinity)
+.background(DesignTokens.Palette.canvasTop)
+.overlay(alignment: .top) { inviteBanner }
+.onChange(of: shell.route.isGameplay, initial: true) { _, isGameplay in
+OrientationLock.mask = OrientationLock.mask(isGameplay: isGameplay)
+let scene = UIApplication.shared.connectedScenes
+.compactMap { $0 as? UIWindowScene }
+.first { $0.activationState == .foregroundActive } ??
+UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+scene?.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+scene?.requestGeometryUpdate(
+.iOS(interfaceOrientations: OrientationLock.mask),
+errorHandler: OrientationPolicy.report(rejection:)
+)
+}
+}
+"""#))
+
+        // Link: ShellRootView.hostLobby, whole.
+        #expect(root.contains(#"""
+@ViewBuilder private var hostLobby: some View {
+if let lobby = shell.hostLobby {
+TwoPlayerView(shell: shell, mode: .host(lobby))
+}
+}
+"""#))
+
+        // Link: TwoPlayerView.isHost, whole.
+        #expect(two.contains(#"""
+private var isHost: Bool {
+if case .host = mode { return true }
+return false
+}
+"""#))
+
+        // Link: TwoPlayerView.body, whole.
+        #expect(two.contains(#"""
 var body: some View {
 VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
 topBar
@@ -1007,8 +1092,8 @@ primaryButton
 }
 """#))
 
-        // hostActions, whole.
-        #expect(normalized.contains(#"""
+        // Link: TwoPlayerView.hostActions, whole.
+        #expect(two.contains(#"""
 @ViewBuilder private var hostActions: some View {
 if case .host(let lobby) = mode {
 VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
@@ -1040,8 +1125,8 @@ openSeatRow
 }
 """#))
 
-        // openSeatRow, whole.
-        #expect(normalized.contains(#"""
+        // Link: TwoPlayerView.openSeatRow, whole.
+        #expect(two.contains(#"""
 private var openSeatRow: some View {
 HStack(spacing: DesignTokens.Space.m) {
 RoundedRectangle(cornerRadius: DesignTokens.Radius.tile, style: .continuous)
@@ -1067,8 +1152,8 @@ RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
 }
 """#))
 
-        // invitePicker, whole.
-        #expect(normalized.contains(#"""
+        // Link: TwoPlayerView.invitePicker, whole.
+        #expect(two.contains(#"""
 private var invitePicker: some View {
 let friends = shell.invitableFriends
 return Menu {
