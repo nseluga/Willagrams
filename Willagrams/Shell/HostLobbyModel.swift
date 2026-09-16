@@ -234,6 +234,7 @@ public final class HostLobbyModel {
                     options: storedOptions,
                     backend: backend,
                     dictionary: dictionary,
+                    activity: shell.services.activity,
                     sleepFor: sleepFor
                 )
                 // A cancel that landed while the row was being written still

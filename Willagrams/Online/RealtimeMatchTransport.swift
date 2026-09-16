@@ -55,9 +55,17 @@ protocol MatchChannel: Sendable {
     /// Untracks and leaves. Synchronous so `leave()` stays callable from a
     /// `deinit`; the underlying unsubscribe is fire-and-forget.
     func leave()
+
+    /// Nudges the socket back up after the app was off screen.
+    ///
+    /// Synchronous and fire-and-forget for the reason ``leave()`` is: the
+    /// lifecycle callback that drives it is not `async`. No default: a conformer
+    /// that silently did nothing here would look identical to a working one
+    /// right up until somebody locked their phone.
+    func reconnect()
 }
 
-public actor RealtimeMatchTransport: MatchTransport {
+public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
 
     public nonisolated let localPlayerID: PlayerID
     public nonisolated let inboundMessages: AsyncStream<MatchMessage>
@@ -215,18 +223,46 @@ public actor RealtimeMatchTransport: MatchTransport {
             } else {
                 // Arming replaces any timer still running, so a
                 // leave/re-join/leave inside one window closes on the second
-                // leave's window rather than the first's.
-                peers.armGrace(
-                    Task {
-                        try? await Task.sleep(for: grace)
-                        guard !Task.isCancelled else { return }
-                        close()
-                    })
+                // leave's window rather than the first's. The roster owns the
+                // timer, not this closure: it also has to be paused and re-armed
+                // from `appActivityChanged(to:)`, which has no reach in here.
+                peers.armGrace(grace, close: close)
             }
         }
     }
 
+    // MARK: - The app leaving the screen
+
+    /// The app's scene phase changed.
+    ///
+    /// Already `nonisolated` — no hop, and nothing here touches actor state, so
+    /// a notification delivered off the main queue is simply handled where it
+    /// lands.
+    public nonisolated func appActivityChanged(to phase: AppActivity.Phase) {
+        switch phase {
+        case .away:
+            // A suspended process cannot hear a peer rejoin, so none of the
+            // window is the peer's to lose. Without this the streams finish
+            // during the lock and `finish()` is one-way: the session's pump
+            // exits for good and Draw and Swap stop answering while the rest of
+            // the app carries on looking fine.
+            peers.pauseGrace()
+        case .active:
+            // Re-subscribed first, and only then does the window start counting
+            // again: the peer is reachable again only once there is a socket,
+            // and a window spent before that is spent on nothing. The channel
+            // re-tracks its own presence when the status returns to
+            // `.subscribed` — see `SupabaseMatchChannel.subscribe(as:)`.
+            channel.reconnect()
+            peers.resumeGrace()
+        }
+    }
+
     // MARK: - MatchTransport
+
+    /// Whether the peer-gone latch has closed. The streams finishing is the
+    /// observable event, but a test that is not consuming them needs to ask.
+    nonisolated var isFinishedForTesting: Bool { peers.isFinished }
 
     /// Hands `message` to the channel.
     ///
@@ -276,6 +312,22 @@ private final class PeerRoster: @unchecked Sendable {
     private var channelClosed = false
     private var graceTask: Task<Void, Never>?
 
+    /// When the running window expires, and what to run then. Kept so the
+    /// window can be banked while the app is off screen and re-armed with what
+    /// was left of it. `ContinuousClock` runs through a suspension, which is
+    /// exactly why the remaining time is computed at the moment of pausing —
+    /// on screen, where it is still honest — and never by consulting a clock
+    /// afterwards.
+    private var graceDeadline: ContinuousClock.Instant?
+    private var gracePaused: Duration?
+    private var graceClose: (@Sendable () -> Void)?
+
+    /// Whether the app is off screen. Arming while away banks the window
+    /// instead of starting it — the drop that opens a window is often *heard*
+    /// after the phone is already locked, and a window started then would burn
+    /// entirely on a process that is not running.
+    private var away = false
+
     /// `true` if `player` was not already present.
     func insert(_ player: PlayerID) -> Bool {
         lock.withLock { finished ? false : players.insert(player).inserted }
@@ -300,19 +352,79 @@ private final class PeerRoster: @unchecked Sendable {
         }
     }
 
-    /// Holds the pending last-peer grace timer, replacing any predecessor.
-    func armGrace(_ task: Task<Void, Never>) {
-        lock.withLock {
-            graceTask?.cancel()
-            graceTask = task
+    /// Arms the last-peer grace for `duration`, replacing any predecessor.
+    func armGrace(_ duration: Duration, close: @escaping @Sendable () -> Void) {
+        let previous: Task<Void, Never>? = lock.withLock {
+            defer {
+                graceClose = close
+                gracePaused = away ? duration : nil
+                graceDeadline = away ? nil : ContinuousClock.now.advanced(by: duration)
+            }
+            let previous = graceTask
+            graceTask = nil
+            return previous
         }
+        previous?.cancel()
+        guard !isAwayNow else { return }
+        let task = Task {
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled else { return }
+            close()
+        }
+        // The window could have been paused between the two locks. Handing the
+        // task over under the lock lets `pauseGrace` cancel it either way.
+        let stale: Bool = lock.withLock {
+            guard !away else { return true }
+            graceTask = task
+            return false
+        }
+        if stale { task.cancel() }
+    }
+
+    private var isAwayNow: Bool { lock.withLock { away } }
+
+    /// Banks what is left of a running window and stops it. Idempotent: a
+    /// second background notification cannot bank a second, longer remainder.
+    func pauseGrace() {
+        let task: Task<Void, Never>? = lock.withLock {
+            guard !away else { return nil }
+            away = true
+            if let deadline = graceDeadline {
+                gracePaused = max(.zero, ContinuousClock.now.duration(to: deadline))
+                graceDeadline = nil
+            }
+            defer { graceTask = nil }
+            return graceTask
+        }
+        task?.cancel()
+    }
+
+    /// Re-arms a banked window with exactly what was left of it. A peer that
+    /// never comes back still runs out: the remainder is what it had, not a
+    /// fresh budget, so no amount of locking and unlocking holds a dead match
+    /// open.
+    func resumeGrace() {
+        let work: (Duration, @Sendable () -> Void)? = lock.withLock {
+            guard away else { return nil }
+            away = false
+            guard let remaining = gracePaused, let close = graceClose else { return nil }
+            return (remaining, close)
+        }
+        guard let (remaining, close) = work else { return }
+        armGrace(remaining, close: close)
     }
 
     func cancelGrace() {
-        lock.withLock {
-            graceTask?.cancel()
-            graceTask = nil
+        let task: Task<Void, Never>? = lock.withLock {
+            defer {
+                graceTask = nil
+                graceDeadline = nil
+                gracePaused = nil
+                graceClose = nil
+            }
+            return graceTask
         }
+        task?.cancel()
     }
 
     /// Latches the channel torn down. `true` only for the first caller.

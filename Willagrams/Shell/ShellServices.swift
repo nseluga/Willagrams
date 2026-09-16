@@ -58,13 +58,19 @@ public struct ShellServices {
     /// that simply never receives an invite.
     public let inviteChannel: (@Sendable (UUID) -> any MatchInviteChannel)?
 
+    /// The app's one scene-phase observer. Not optional and not nil-able: a
+    /// shell that cannot hear the app leave the screen is a shell whose online
+    /// matches die on a screen lock, so the default is a real one.
+    public let activity: AppActivity
+
     public init(
         backend: (any BackendClient)? = nil,
         audio: any AudioPlayer = SilentAudioPlayer(),
         settings: SettingsStore? = nil,
         audioSettings: AudioSettings = AudioSettings(defaults: .standard),
         signIn: (any ShellSignIn)? = nil,
-        inviteChannel: (@Sendable (UUID) -> any MatchInviteChannel)? = nil
+        inviteChannel: (@Sendable (UUID) -> any MatchInviteChannel)? = nil,
+        activity: AppActivity = AppActivity()
     ) {
         self.backend = backend
         self.audio = audio
@@ -72,5 +78,6 @@ public struct ShellServices {
         self.audioSettings = audioSettings
         self.signIn = signIn
         self.inviteChannel = inviteChannel
+        self.activity = activity
     }
 }

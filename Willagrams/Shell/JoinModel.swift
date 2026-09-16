@@ -171,6 +171,7 @@ public final class JoinModel {
                     code: code,
                     backend: backend,
                     dictionary: dictionary,
+                    activity: shell.services.activity,
                     sleepFor: sleepFor
                 )
                 // A cancel that landed while the row was being written still

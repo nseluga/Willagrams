@@ -92,6 +92,12 @@ public final class OnlineMatch {
     @ObservationIgnored private let dictionaryHash: String
     @ObservationIgnored private let outcomeStore: (any MatchOutcomeStore)?
 
+    /// The app's scene phase, or nil where nothing is listening (a test, a
+    /// preview). Held so every session this façade builds can be registered
+    /// as it is built — a session created after the app went away still gets
+    /// the next resume.
+    @ObservationIgnored private let activity: AppActivity?
+
     /// One countdown tick, handed straight to `MatchSession`. Injected so a
     /// test can open a match without waiting out `countdownSeconds` of real
     /// time — the same seam the match lane already uses.
@@ -149,6 +155,7 @@ public final class OnlineMatch {
         dictionary: any WordList,
         dictionaryHash: String,
         outcomeStore: (any MatchOutcomeStore)?,
+        activity: AppActivity?,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void
     ) {
         self.record = record
@@ -158,7 +165,19 @@ public final class OnlineMatch {
         self.dictionary = dictionary
         self.dictionaryHash = dictionaryHash
         self.outcomeStore = outcomeStore
+        self.activity = activity
         self.sleepFor = sleepFor
+        // The transport first, and deliberately: listeners are called in
+        // registration order, so on resume the socket is back up before any
+        // session's reconnect window starts counting again. A window spent
+        // before there is a socket is spent on nothing.
+        //
+        // `MatchTransport` is a frozen contract, so the capability arrives by
+        // conditional cast rather than by widening it — the same shape
+        // `MatchAbandoning` and `FriendForgetting` use.
+        if let listening = transport as? any AppActivityListener {
+            activity?.add(listening)
+        }
         // The local player is a member of their own lobby from the first frame:
         // nothing on the presence stream ever names this device.
         self.lobby = [localPlayer]
@@ -228,6 +247,7 @@ public final class OnlineMatch {
         dictionary: (any WordList)? = nil,
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
         outcomeStore: (any MatchOutcomeStore)? = nil,
+        activity: AppActivity? = nil,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         }
@@ -246,6 +266,7 @@ public final class OnlineMatch {
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
             outcomeStore: outcomeStore,
+            activity: activity,
             sleepFor: sleepFor
         )
     }
@@ -257,6 +278,7 @@ public final class OnlineMatch {
         dictionary: (any WordList)? = nil,
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
         outcomeStore: (any MatchOutcomeStore)? = nil,
+        activity: AppActivity? = nil,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         }
@@ -272,6 +294,7 @@ public final class OnlineMatch {
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
             outcomeStore: outcomeStore,
+            activity: activity,
             sleepFor: sleepFor
         )
     }
@@ -283,6 +306,7 @@ public final class OnlineMatch {
         dictionary: (any WordList)?,
         dictionaryHash: String,
         outcomeStore: (any MatchOutcomeStore)?,
+        activity: AppActivity?,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void
     ) async throws -> OnlineMatch {
         let localPlayer = PlayerID(rawValue: userID.uuidString)
@@ -308,6 +332,7 @@ public final class OnlineMatch {
             dictionary: dictionary ?? defaultDictionary(),
             dictionaryHash: dictionaryHash,
             outcomeStore: store,
+            activity: activity,
             sleepFor: sleepFor
         )
     }
@@ -425,13 +450,16 @@ public final class OnlineMatch {
         presencePump?.cancel()
         presencePump = nil
         hasStarted = true
-        return MatchSession(
+        let session = MatchSession(
             transport: transport,
             roster: roster,
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
             sleepFor: sleepFor
         )
+        // After the transport, never before — see the note in `init`.
+        activity?.add(session)
+        return session
     }
 
     /// Starts recording what the match does, if this façade was given somewhere

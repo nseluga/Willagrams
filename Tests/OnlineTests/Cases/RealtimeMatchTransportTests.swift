@@ -80,6 +80,7 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
     /// a bug, so it is counted rather than tolerated.
     private(set) var subscribeCount = 0
     private(set) var leaveCount = 0
+    private(set) var reconnectCount = 0
     private(set) var sentEnvelopes: [WireEnvelope] = []
 
     /// Set to make `subscribe` throw, standing in for a channel the server
@@ -112,6 +113,10 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
         bus.leave(self)
     }
 
+    func reconnect() {
+        lock.withLock { reconnectCount += 1 }
+    }
+
     func deliverWire(_ envelope: WireEnvelope) {
         lock.withLock { wire }?(envelope)
     }
@@ -122,6 +127,7 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
 
     var subscribes: Int { lock.withLock { subscribeCount } }
     var leaves: Int { lock.withLock { leaveCount } }
+    var reconnects: Int { lock.withLock { reconnectCount } }
     var sent: [WireEnvelope] { lock.withLock { sentEnvelopes } }
 }
 

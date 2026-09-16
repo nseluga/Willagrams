@@ -128,6 +128,18 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
         }
     }
 
+    /// Brings the socket back up after a suspension.
+    ///
+    /// `connect()` is idempotent in supabase-swift 2.55.1 — `ConnectionManager`
+    /// hands back the in-flight or established connection rather than opening a
+    /// second one — so a resume with a live socket costs nothing. The channel
+    /// re-tracks its own presence off `onStatusChange` when the rejoin lands;
+    /// see the gate in ``subscribe(as:)``.
+    func reconnect() {
+        let realtime = realtime
+        Task { await realtime.connect() }
+    }
+
     /// Teardown is async but ``leave()`` is not, so re-entering the same match
     /// races a still-running removal: `RealtimeClientV2.channel(topic:)` hands
     /// back the live instance for a topic it still holds, and the pending

@@ -93,7 +93,7 @@ public enum PeerPresence: Sendable, Equatable {
 /// once the peer is back and the session is no longer frozen.
 @MainActor
 @Observable
-public final class MatchSession {
+public final class MatchSession: AppActivityListener {
 
     // MARK: - Observed state
 
@@ -392,6 +392,25 @@ public final class MatchSession {
     /// property and independent of this fix. Store the message when that lands.
     @ObservationIgnored private var owesTerminalMessage = false
 
+    /// Seconds of reconnect grace not yet spent *on screen*.
+    ///
+    /// Non-nil exactly while somebody is inside their window. It is what makes
+    /// the window survivable across a screen lock: the budget is banked when the
+    /// app goes away and re-armed from the same number when it comes back, so a
+    /// suspended minute costs the peer nothing and a peer that never returns
+    /// still runs out of it. An `Int` rather than a `Duration` — see the
+    /// toolchain note on ``owesTerminalMessage``.
+    @ObservationIgnored private var reconnectSecondsOwed: Int?
+
+    /// The app is off screen.
+    ///
+    /// Nothing arms a reconnect window here. A suspended process gives the peer
+    /// no chance to come back, and both clocks this session could use — `Date()`
+    /// and `ContinuousClock` behind `Task.sleep` — keep running through the
+    /// suspension, so an un-paused window is spent entirely on time in which
+    /// nothing could possibly have happened.
+    @ObservationIgnored private var isAway = false
+
     /// - Parameters:
     ///   - transport: the wire. This session becomes the sole consumer of its
     ///     inbound stream immediately.
@@ -538,19 +557,41 @@ public final class MatchSession {
             return
         }
 
-        // A `Date` for the shell to count down to. The wait itself is timed by
-        // the injected clock below, never by comparing this against `Date()`:
-        // it is a display value, and the clock is the seam a test drives.
-        peerPresences[player] = .reconnecting(
-            deadline: Date().addingTimeInterval(TimeInterval(Self.reconnectGraceSeconds))
-        )
+        // Puts the peer in the state ``armReconnectWait(seconds:)`` looks for.
+        // The deadline it stamps a line below is the real one — both the
+        // banner's `Date` and the wait come from that one call, so they cannot
+        // be derived from two different instants.
+        peerPresences[player] = .reconnecting(deadline: Date())
+        armReconnectWait(seconds: Self.reconnectGraceSeconds)
+    }
+
+    /// Stamps the reconnect deadline and arms the wait for it, from one number
+    /// and one instant.
+    ///
+    /// One clock, not two. The `Date` the shell counts down to and the
+    /// `sleepFor` the window actually runs on are both derived here, in the same
+    /// synchronous call: the deadline is `now + seconds` and the sleep is
+    /// exactly `seconds`. Every path that pauses or resumes the window comes
+    /// back through here, so the two can never drift apart by a suspension —
+    /// which is precisely what they used to do.
+    ///
+    /// Arms nothing while the app is away; ``appCameBack()`` arms it then.
+    private func armReconnectWait(seconds: Int) {
+        reconnectSecondsOwed = seconds
         reconnectTask?.cancel()
+        reconnectTask = nil
+        let deadline = Date().addingTimeInterval(TimeInterval(seconds))
+        for player in roster {
+            guard case .reconnecting = presence(of: player) else { continue }
+            peerPresences[player] = .reconnecting(deadline: deadline)
+        }
+        guard !isAway else { return }
         reconnectTask = Task { @MainActor [weak self] in
             // The closure, not `self`: holding the session across the whole
             // window would keep a dropped session alive for it.
             guard let sleepFor = self?.sleepFor else { return }
             do {
-                try await sleepFor(.seconds(Self.reconnectGraceSeconds))
+                try await sleepFor(.seconds(seconds))
             } catch {
                 return  // cancelled
             }
@@ -558,13 +599,63 @@ public final class MatchSession {
             // observe cancellation, and a peer that came back must not have the
             // match ended out from under it.
             guard !Task.isCancelled else { return }
+            self?.reconnectSecondsOwed = nil
             self?.awayPeersAreGone()
         }
+    }
+
+    // MARK: - The app leaving the screen
+
+    /// The app's scene phase changed.
+    ///
+    /// `nonisolated`, and it hops rather than assuming: this is called from
+    /// ``AppActivity``, which is driven by a UIKit notification, and a
+    /// `@MainActor` callback UIKit ever delivers off the main queue traps.
+    public nonisolated func appActivityChanged(to phase: AppActivity.Phase) {
+        Task { @MainActor [weak self] in
+            switch phase {
+            case .away: self?.appWentAway()
+            case .active: self?.appCameBack()
+            }
+        }
+    }
+
+    /// Banks whatever is left of the reconnect window.
+    ///
+    /// Only the part of it that ran on screen is spent. The stamped deadline is
+    /// the authority for how much that was, because on screen it and the wait
+    /// were armed from the same instant.
+    public func appWentAway() {
+        guard !isAway else { return }
+        isAway = true
+        guard reconnectSecondsOwed != nil else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        let furthest = peerPlayerIDs.compactMap { player -> Date? in
+            guard case let .reconnecting(deadline) = presence(of: player) else { return nil }
+            return deadline
+        }.max()
+        guard let furthest else { return }
+        reconnectSecondsOwed = max(0, Int(furthest.timeIntervalSinceNow.rounded(.up)))
+    }
+
+    /// Resumes the window with what was left of it, re-stamped so the banner
+    /// and the wait start from this instant rather than the one before the
+    /// suspension.
+    ///
+    /// Not a reset: a peer that is genuinely gone keeps whatever it had already
+    /// spent, so a lock/unlock loop cannot hold a dead match open for ever.
+    public func appCameBack() {
+        guard isAway else { return }
+        isAway = false
+        guard let owed = reconnectSecondsOwed else { return }
+        armReconnectWait(seconds: owed)
     }
 
     /// The deadline passed. Every peer still away has left for good, and if
     /// that leaves fewer than two players the match is over with nobody named.
     private func awayPeersAreGone() {
+        reconnectSecondsOwed = nil
         var anyLeft = false
         for player in roster {
             guard case .reconnecting = presence(of: player) else { continue }
@@ -616,6 +707,10 @@ public final class MatchSession {
         guard !isFrozen else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
+        // The second gate on the same window. Cancelling the task alone would
+        // leave a budget behind that `appCameBack()` would happily re-arm, and
+        // a peer that is back would be waited out all over again.
+        reconnectSecondsOwed = nil
         guard let seconds = heldCountdownSeconds else {
             // A freeze that landed on the moment of the deal bailed out of it and
             // re-armed it. The countdown is already spent, so this is the only
@@ -1208,6 +1303,7 @@ public final class MatchSession {
         countdownTask?.cancel()
         heldCountdownSeconds = nil
         reconnectTask?.cancel()
+        reconnectSecondsOwed = nil
         // The window that cancel just closed will never resolve, so a presence
         // left at `.reconnecting` puts a banner and a countdown to a deadline
         // nothing reaches over an end screen — the same lie `peerDropped()`
