@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The host's options screen.
+/// The match options screen, and the rows behind the host lobby's gear.
 ///
 /// Deliberately dumb: every control writes straight to ``MatchOptionsForm``,
 /// which owns the bounds. The stepper carries no range of its own — the clamp
@@ -36,9 +36,9 @@ public struct MatchOptionsView: View {
     private var screen: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
-                Text(verbatim: "HOST")
-                    .monoLabel()
-
+                // No eyebrow: the only non-embedded caller is solo setup, which
+                // has no host. The host lobby brings its own eyebrow and embeds
+                // the rows, so it never saw this one.
                 Text(verbatim: "Match options")
                     .font(DesignTokens.Typography.title)
                     .foregroundStyle(DesignTokens.Palette.textPrimary)
