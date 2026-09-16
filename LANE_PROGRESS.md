@@ -4,8 +4,8 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 
 ## Current position
 
-- **Status:** round 2 run 2 (2026-09-15) — items 1, 2, 4, 9 and 10 done and merged; item 3 merged too (`auto/final` @ `9c7b223`) but still blocked on its screenshot criterion alone; items 5–8 not started, item 5 in flight
-- **Next:** Nate revises item 3's screenshot criterion (see its `status:`), then continue — merge `auto/final-a3` only with or after item 5 (Home rebuilt), or the portrait iPhone Home is cut off
+- **Status:** round 2 run 2 (2026-09-15) — items 1, 2, 4, 5, 6, 9 and 10 done and merged; item 3 merged too (`auto/final` @ `9c7b223`) but still blocked on its screenshot criterion alone; items 7 and 8 not started, item 7 in flight
+- **Next:** item 7 (Play a Friend match settings, `caution: true`), then item 8 (looping launch screen). Then Nate revises item 3's screenshot criterion (see its `status:`)
 - **Blockers:** item 3's iPad check needs a human-rotated Simulator or a revised criterion. Migration `0006` is live (Nate applied it 2026-09-15: 40 of 1,274 fastest wins cleared, null guard present). Never `supabase db push` here
 - **Last updated:** 2026-09-15
 
@@ -18,7 +18,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | iPhone portrait except gameplay | blocked — The phone now opens upright, but the iPad landscape check can't be proven from a simulator screenshot, and the upright Home is cut off until Home is rebuilt. (2026-09-15) |
 | Tighter phone margins | done — Screens on an upright phone now sit 16pt from the edge instead of 40, so they stop looking cramped; iPad and sideways phone are unchanged. (2026-09-15) |
 | Home rebuilt | done — Home now opens upright as a single column: the wordmark up top, then Multiplayer (marked coming soon), Play a Friend, and a tidy grid of Solo Practice, Profile, Friends and How to Play, with the old tagline gone. (2026-09-15) |
-| One Play / Join a Friend screen | not started |
+| One Play / Join a Friend screen | done — Play a Friend and Join a Friend are now one screen: two chips switch between them, the code shows as six tiles, and hosting still copies, shares and starts exactly as before. Switching chips now properly leaves the game you were in, which it previously did not. (2026-09-15) |
 | Play a Friend match settings | not started |
 | Looping loading screen | not started |
 | Profile and Friends restyle | done — Profile and Friends now match the final design: an avatar card, stat cards with a win-rate bar, and friend rows as tiles, with Fastest win, Block and Unfriend all kept. (2026-09-15) |
