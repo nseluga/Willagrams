@@ -19,7 +19,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Tighter phone margins | done — Screens on an upright phone now sit 16pt from the edge instead of 40, so they stop looking cramped; iPad and sideways phone are unchanged. (2026-09-15) |
 | Home rebuilt | done — Home now opens upright as a single column: the wordmark up top, then Multiplayer (marked coming soon), Play a Friend, and a tidy grid of Solo Practice, Profile, Friends and How to Play, with the old tagline gone. (2026-09-15) |
 | One Play / Join a Friend screen | done — Play a Friend and Join a Friend are now one screen: two chips switch between them, the code shows as six tiles, and hosting still copies, shares and starts exactly as before. Switching chips now properly leaves the game you were in, which it previously did not. (2026-09-15) |
-| Play a Friend match settings | not started |
+| Play a Friend match settings | done — Playing a friend now has its own settings: a gear on the host's screen opens starting tiles, shortest word, Swap and word list, and the guest's game is dealt with whatever the host chose instead of a fixed 21. The gear closes once you press Start. (2026-09-15) |
 | Looping loading screen | not started |
 | Profile and Friends restyle | done — Profile and Friends now match the final design: an avatar card, stat cards with a win-rate bar, and friend rows as tiles, with Fastest win, Block and Unfriend all kept. (2026-09-15) |
 | How to Play pager + Solo setup portrait | done — How to Play is now one rule per page with Back and Next and a Done on the last page, and Solo setup fits an upright phone in a single column. (2026-09-15) |
