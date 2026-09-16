@@ -89,6 +89,11 @@ public enum DesignTokens {
         /// The screen edge margin on a portrait phone (compact width, regular
         /// height): between the landscape-phone and iPad margins.
         public static let screenMarginPhone: CGFloat = 16
+
+        /// The gap between the six code tiles on the Two Player screen — comp
+        /// screen 03's `gap:7px`, tighter than every other named gap so six
+        /// tiles plus their gaps fit a portrait phone's width.
+        public static let codeTileGap: CGFloat = 7
     }
 
     /// Line weights. Small and deliberate — the direction leans on edges, not fills.

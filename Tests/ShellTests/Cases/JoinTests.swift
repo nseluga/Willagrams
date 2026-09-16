@@ -434,7 +434,7 @@ struct JoinTests {
     /// (see `MenuLayoutTests`'s no-Join-entry case); it is reached from the
     /// Play a Friend screen instead, which item 6 wires up. This test only
     /// covers `ShellRootView`'s side of the route.
-    @Test("The join route renders JoinView")
+    @Test("The join route renders TwoPlayerView")
     func theRouteIsWired() throws {
         let shell = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -445,7 +445,7 @@ struct JoinTests {
         let root = try String(
             contentsOf: shell.appendingPathComponent("ShellRootView.swift"), encoding: .utf8)
         #expect(root.contains("case .join:"), "no .join case in ShellRootView")
-        #expect(root.contains("JoinView("), "no JoinView in ShellRootView")
+        #expect(root.contains("TwoPlayerView("), "no TwoPlayerView in ShellRootView")
 
         // The View is excluded, or this package stops building for macOS.
         let manifest = try String(
@@ -455,7 +455,7 @@ struct JoinTests {
                 .appendingPathComponent("Package.swift"),
             encoding: .utf8
         )
-        #expect(manifest.contains("\"JoinView.swift\""))
+        #expect(manifest.contains("\"TwoPlayerView.swift\""))
     }
 }
 

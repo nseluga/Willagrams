@@ -243,6 +243,7 @@ public struct StyleGallery: View {
                     ("screenMarginCompact", DesignTokens.Space.screenMarginCompact),
                     ("screenMarginPhone", DesignTokens.Space.screenMarginPhone),
                     ("screenMargin", DesignTokens.Space.screenMargin),
+                    ("codeTileGap", DesignTokens.Space.codeTileGap),
                 ]) { width in
                     DesignTokens.Palette.accent.frame(width: width, height: DesignTokens.Space.s)
                 }

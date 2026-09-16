@@ -98,17 +98,18 @@ struct ShellRootView: View {
 
     /// The host's lobby. Absent when `ShellModel` has already torn it down,
     /// which renders nothing rather than fabricating a second one — same rule as
-    /// the three match screens below.
+    /// the three match screens below. One screen with `.join` below it —
+    /// `TwoPlayerView` renders both, told apart by `mode`.
     @ViewBuilder private var hostLobby: some View {
         if let lobby = shell.hostLobby {
-            HostLobbyView(shell: shell, lobby: lobby)
+            TwoPlayerView(shell: shell, mode: .host(lobby))
         }
     }
 
     /// The guest's join screen, on the same terms as the host's lobby above.
     @ViewBuilder private var joinScreen: some View {
         if let join = shell.join {
-            JoinView(shell: shell, join: join)
+            TwoPlayerView(shell: shell, mode: .join(join))
         }
     }
 

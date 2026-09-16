@@ -230,18 +230,25 @@ public final class ShellModel {
     /// built on the way in and torn down by ``returnToMenu()`` on every way out.
     public private(set) var join: JoinModel?
 
-    /// Menu → the join screen.
+    /// Menu → the join screen, or the host lobby's Join chip → the same
+    /// screen without a trip through the menu.
     ///
     /// Refused on the same terms as ``playAFriend()``: joining writes a
-    /// `match_players` row, and there is nobody to write one as.
+    /// `match_players` row, and there is nobody to write one as. From
+    /// `.hostLobby` the lobby being left is torn down — its backend cancel
+    /// runs — before this one is built, so switching chips never leaves two
+    /// live lobbies even for the one turn between them.
     ///
     /// - Returns: whether the route moved.
     @discardableResult
     public func showJoin() -> Bool {
-        guard case .menu = route, canPlayOnline, let backend = services.backend else {
+        guard route == .menu || route == .hostLobby,
+              canPlayOnline, let backend = services.backend else {
             return false
         }
         services.audio.play(.menuTap)
+        hostLobby?.teardown()
+        hostLobby = nil
         join = JoinModel(
             shell: self,
             backend: backend,
@@ -749,21 +756,29 @@ public final class ShellModel {
     /// cannot disagree.
     public var canPlayOnline: Bool { currentProfile != nil && services.backend != nil }
 
-    /// Menu → host lobby, building the lobby that screen renders.
+    /// Menu → host lobby, building the lobby that screen renders. Also the
+    /// join screen's Host chip → the same lobby, without a trip through the
+    /// menu.
     ///
     /// Refused with no sign-in and no backend, for the same reason the button is
     /// disabled: a lobby needs a `matches` row and there is nobody to write one
     /// as. The rules are whatever ``SettingsStore`` last stored, so a host plays
-    /// under the options they last chose for solo.
+    /// under the options they last chose for solo. From `.join` the join in
+    /// flight is torn down — its backend cancel runs — before this one is
+    /// built, so switching chips never leaves two live lobbies even for the
+    /// one turn between them.
     ///
     /// - Returns: whether the route moved.
     @discardableResult
     public func playAFriend() -> Bool {
-        guard case .menu = route, canPlayOnline, let backend = services.backend else {
+        guard route == .menu || route == .join,
+              canPlayOnline, let backend = services.backend else {
             return false
         }
         services.audio.play(.menuTap)
         dropInviteBanner()
+        join?.teardown()
+        join = nil
         let lobby = HostLobbyModel(
             shell: self,
             backend: backend,
