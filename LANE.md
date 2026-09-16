@@ -49,6 +49,9 @@ Frozen contracts — build and test against these; they will not move:
 - **A row the backend hands back is written to `ShellModel.currentProfile`, or it is a stale-row bug.** `currentProfile` is the app's one profile source of truth. Item 6 found two callers discarding a returned row: `ProfileModel.save()` (the saved name never reached the shell) and `MatchOutcomeRecorder.swift:263` (Played / Won / Tiles placed / Fastest win frozen at sign-in). Any new backend call returning a profile row writes it back, and its test asserts `shell.currentProfile` changed — not the screen's own copy, which is exactly the assertion that shipped this bug green in round 2.
 - **A fix that adds an async refresh can make the test that proves the fix vacuous.** Item 6 attempt 2's new `showProfile()` re-read raced ahead of the assertions and supplied the answer, so deleting the production write-back left the whole suite green where attempt 1 had gone red on three behavioural issues. After every fix pass, re-run the PREVIOUS attempt's mutation set as well as the new one, and record each mutation's issue count so a silent drop to zero is visible.
 - **`guard let self` before an `await` is a STRONG capture.** `[weak self]` on the closure alone does not bound a suspended task's lifetime — item 6's builder asserted it did and QA disproved it by experiment. Bind what the suspension needs before the `await`, rebind self after.
+- **A "the view renders X" pin is ONE contiguous match against normalized source, never several independent `contains`.** ShellTests excludes the view files, so a source scan is the only headless pin available — and independent substring checks prove the strings exist in the file, not that a user reaches them unconditionally. Item 7 burned two attempts on this: its pin stayed green when the call was gated `if isHost`, when `.hidden()` was appended to the call, and when the rendered arm was wrapped in `if someOptional != nil`. Normalize the whole file (trim each line, drop `//` lines, join with `\n`), then match a single literal spanning the anchor line, the call, and the block's closing brace — the technique `OrientationTests.rootViewWiring` already uses. Gate the attempt on a mutation that makes the call **unreachable**, not merely absent. The price is brittleness: adding a legitimate sibling view next to a pinned call false-reds the test, and you extend the literal. That is the correct price. Live for items 8, 9, 11 and 13.
+- **Fix the vacuity CLASS, not the one mutation QA named.** Item 7's attempt 2 patched exactly the reported hole and was re-failed by two fresh mutations of the same shape. When QA reports a vacuous guard, ask what category of edit defeats it and close that category; QA invents fresh mutations each round rather than only re-running the builder's transcript.
+- **Compare like with like before calling a count a drop.** A `--filter`ed mutation run under-counts issues against a full-suite run (item 7 saw 1 filtered vs 2 full for the same mutation).
 - **Do not create `STANDARDS.md`, or any other file, at the repo root.** The repo root is an unowned path for this lane. `dt-review` has now invented that exact file twice in this round; both times it was deleted and its content folded into these Global rules, which is where a durable rule belongs.
 - **ShellTests also excludes the SwiftUI view files** from its target and points its Style target at `StyleSrc`, so most Style, Friends and view-only edits are invisible to it. Before believing any ShellTests red, confirm the file you changed is even in its target.
 - **Stale builds lie.** After changing any type in `Sources/WillagramsRules` or `Willagrams/Match`, run `swift package --package-path Tests/<pkg> clean` before trusting a red.
@@ -79,7 +82,7 @@ Frozen contracts — build and test against these; they will not move:
     - A cold launch on an iPad Simulator reaches Home and writes no new crash report to `~/Library/Logs/DiagnosticReports`, repeated three times
     - A cold launch on an iPhone SE 3rd gen Simulator still reaches portrait Home with no new crash report
     - A test pins that the rejection path does not require main-actor isolation
-    - ShellTests green at or above 263; `xcodebuild` BUILD SUCCEEDED
+    - ShellTests green at or above 271 with 0 issues; `xcodebuild` BUILD SUCCEEDED
   caution: true
   status: done — the `debugPrint` moved out of the inline closure into `nonisolated static func OrientationPolicy.report(rejection:)`, passed by reference as `errorHandler:`, so it no longer inherits `@MainActor`. No `Task {}` hop, so mask-update ordering is unchanged. ShellTests 264, `xcodebuild` BUILD SUCCEEDED, 3 clean iPad cold launches + 1 iPhone SE portrait launch, no new crash report. Commit `493452a`. NOT verified, needs a human: that a *successful* rotation applies the landscape mask, and the gameplay re-request
 
@@ -160,7 +163,7 @@ Frozen contracts — build and test against these; they will not move:
   done when:
     - The host can send an invite from the open seat without leaving the lobby, and the same invite arrives as the banner the Friends-list path produces
     - A pending-request or blocked person never appears in the picker; a test pins the accepted-only rule
-    - `git diff` touches nothing under `supabase/`; ShellTests green at or above 263, OnlineTests at or above 147
+    - `git diff` touches nothing under `supabase/`; ShellTests green at or above 271 with 0 issues, OnlineTests at or above 147
   ui: true
   status: not started
 
@@ -173,7 +176,7 @@ Frozen contracts — build and test against these; they will not move:
   done when:
     - Declining clears the banner on the guest's device and the host sees that the invite was declined at the open seat
     - The host receives a decline while on `.hostLobby`, and a rewritten `onlyFourRoutesShowInvites` pins exactly which frames each route accepts
-    - `git diff` touches nothing under `supabase/`; ShellTests green at or above 263, OnlineTests at or above 147
+    - `git diff` touches nothing under `supabase/`; ShellTests green at or above 271 with 0 issues, OnlineTests at or above 147
   caution: true
   status: not started
 
@@ -187,7 +190,7 @@ Frozen contracts — build and test against these; they will not move:
     - A match survives a 60-second background-and-resume: Draw and Swap still work afterwards, pinned by a test that drives the scene-phase transition against a fake clock
     - Time spent backgrounded does not count against either grace, and the session's deadline and its sleep agree on one clock
     - A peer that never returns is still reported gone after the grace, so the fix does not hang a dead match forever
-    - MatchTests green at or above 128, OnlineTests at or above 147, ShellTests at or above 263; no new crash report on an iPhone or iPad Simulator launch
+    - MatchTests green at or above 128, OnlineTests at or above 147, ShellTests at or above 271 with 0 issues; no new crash report on an iPhone or iPad Simulator launch
   caution: true
   status: not started
 
@@ -198,7 +201,7 @@ Frozen contracts — build and test against these; they will not move:
   done when:
     - When the reconnect grace expires the player sees that the match ended, instead of unresponsive Draw and Swap buttons
     - While a peer is inside the reconnect window the board shows a waiting indicator naming that it is waiting on the other player
-    - A test pins both states and the transition between them; MatchTests green at or above 128, ShellTests at or above 263
+    - A test pins both states and the transition between them; MatchTests green at or above 128, ShellTests at or above 271 with 0 issues
   ui: true
   status: not started
 
