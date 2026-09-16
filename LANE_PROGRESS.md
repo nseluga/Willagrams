@@ -17,7 +17,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 | Resign wins skip fastest win | done — A win because your opponent resigned or left now counts as a win but never sets your fastest-win time; winning by playing out still records it. (2026-09-15) |
 | iPhone portrait except gameplay | blocked — The phone now opens upright, but the iPad landscape check can't be proven from a simulator screenshot, and the upright Home is cut off until Home is rebuilt. (2026-09-15) |
 | Tighter phone margins | done — Screens on an upright phone now sit 16pt from the edge instead of 40, so they stop looking cramped; iPad and sideways phone are unchanged. (2026-09-15) |
-| Home rebuilt | not started |
+| Home rebuilt | done — Home now opens upright as a single column: the wordmark up top, then Multiplayer (marked coming soon), Play a Friend, and a tidy grid of Solo Practice, Profile, Friends and How to Play, with the old tagline gone. (2026-09-15) |
 | One Play / Join a Friend screen | not started |
 | Play a Friend match settings | not started |
 | Looping loading screen | not started |
