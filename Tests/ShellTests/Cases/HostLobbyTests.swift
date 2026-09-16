@@ -307,17 +307,27 @@ struct HostLobbyTests {
         // guard has already passed, and `OnlineMatch.start` refuses a lobby
         // that no longer holds two. That is the throw, from the real path.
         //
-        // The wait is on the façade, not on the model: the presence frame
-        // reaches `match.lobby` one turn before the model's observer re-reads
-        // it, and that one turn is the window a real disconnect lands in.
+        // Nothing here waits for that window — the press happens *inside* it.
+        // `onChange` runs synchronously on the presence pump's own turn, before
+        // the lobby's mutation completes: the model's observer has only been
+        // enqueued, so `canStart` is still true and the press goes through,
+        // and by the time the queued work reads the façade the seat is gone.
+        // Both orderings after that land in the same place, so there is no
+        // scheduling guess anywhere in this case.
         let match = try #require(lobby.match)
+        withObservationTracking {
+            _ = match.lobby
+        } onChange: {
+            MainActor.assumeIsolated {
+                #expect(lobby.canStart, "the model's observer ran first")
+                lobby.start()
+                #expect(lobby.canEditSettings == false, "the gear is live during the start")
+            }
+        }
         f.wire.announce(.disconnected(f.guest.playerID))
-        await Self.until("the seat empties on the façade") { match.lobby.count == 1 }
-        #expect(lobby.canStart, "the model has already caught up; no press is possible")
-        lobby.start()
-        #expect(lobby.canEditSettings == false, "the gear is live during the start")
 
-        await Self.until("the start came back") { lobby.work == nil }
+        await Self.until("the failed start came back") { lobby.message != nil }
+        #expect(lobby.work == nil)
         #expect(f.shell.run == nil, "the start was supposed to fail")
         #expect(lobby.message != nil)
         #expect(lobby.phase == .waiting)

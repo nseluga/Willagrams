@@ -120,8 +120,11 @@ public final class HostLobbyModel {
     /// lobby back in `.waiting` and re-offers Start, and the gear comes back
     /// with it: nothing was sent, so nothing is a rule only this device holds.
     ///
-    /// `work` is not observed, but it never moves without `phase` moving in the
-    /// same synchronous step, so the view is always re-read at the boundary.
+    /// `work` is not observed, and is correct today only because there is no
+    /// suspension point between the catch's `phase = .waiting` and its
+    /// `work = nil` — the pair lands in one uninterrupted main-actor run, so
+    /// the observed half is what re-reads the view. An `await` inserted
+    /// between them would publish a state this property lies about.
     public var canEditSettings: Bool { phase == .waiting && work == nil }
 
     /// What Start would send: the edited form, or the stored options while the
