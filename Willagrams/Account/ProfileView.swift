@@ -119,6 +119,8 @@ struct ProfileView: View {
                     Text(model.profile.friendCode)
                         .font(DesignTokens.Typography.monoLabel)
                         .tracking(DesignTokens.Typography.monoLabelTracking)
+                        .lineLimit(ButtonLabelFit.lineLimit)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(DesignTokens.Palette.textSecondary)
                 }
             }
@@ -238,6 +240,8 @@ struct ProfileView: View {
             HStack(spacing: DesignTokens.Space.m) {
                 Text(model.profile.friendCode)
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
+                    .lineLimit(ButtonLabelFit.lineLimit)
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .textSelection(.enabled)
                     .accessibilityLabel(

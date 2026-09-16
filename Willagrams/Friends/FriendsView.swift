@@ -186,6 +186,8 @@ struct FriendsView: View {
 
                 Text(model.myFriendCode)
                     .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    .lineLimit(ButtonLabelFit.lineLimit)
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .textSelection(.enabled)
                     .accessibilityLabel(
@@ -329,6 +331,8 @@ struct FriendsView: View {
                 Text(entry.profile.friendCode)
                     .font(DesignTokens.Typography.monoLabel)
                     .tracking(DesignTokens.Typography.monoLabelTracking)
+                    .lineLimit(ButtonLabelFit.lineLimit)
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(DesignTokens.Palette.textSecondary)
             }
 
