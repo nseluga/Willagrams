@@ -110,11 +110,19 @@ public final class HostLobbyModel {
 
     private var storedHandSize: Int
 
-    /// Whether the settings are still open. False from the moment Start is
-    /// accepted and never true again on this lobby: the `.start` carries what
-    /// was chosen, and a value edited after it left would be a rule only this
-    /// device believed.
-    public private(set) var canEditSettings = true
+    /// Whether the settings are still open: exactly when the lobby is up and
+    /// nothing is in flight.
+    ///
+    /// Derived rather than latched, so it cannot disagree with the button
+    /// beside it. `phase` is `.starting` from the press onward — the gear is
+    /// dead while a start is in flight and stays dead through a successful
+    /// hand-off, because nothing resets `phase`. A start that *throws* puts the
+    /// lobby back in `.waiting` and re-offers Start, and the gear comes back
+    /// with it: nothing was sent, so nothing is a rule only this device holds.
+    ///
+    /// `work` is not observed, but it never moves without `phase` moving in the
+    /// same synchronous step, so the view is always re-read at the boundary.
+    public var canEditSettings: Bool { phase == .waiting && work == nil }
 
     /// What Start would send: the edited form, or the stored options while the
     /// form has not been built.
@@ -288,17 +296,15 @@ public final class HostLobbyModel {
     public func start() {
         guard canStart, phase == .waiting, let match, work == nil else { return }
         message = nil
+        // Shut before anything awaits: `canEditSettings` reads `.starting`, so
+        // the gear is unavailable from the press, not from whenever the open
+        // comes back.
         phase = .starting
-        // Shut before anything awaits: the gear is unavailable from the press,
-        // not from whenever the open comes back, and it never reopens — a
-        // failed start still sent nothing, but the settings this screen would
-        // reopen on are the ones already written back below.
-        canEditSettings = false
         let chosen = chosenOptions
         let hand = handSize
-        // Start is where the choices are written back, so the next lobby — and
-        // the next solo match — opens on what this match is about to be played
-        // under. The same rule `startSoloPractice` follows.
+        // Start is where the choices are written back, so the next lobby opens
+        // on what this match is about to be played under. The same rule
+        // `startSoloPractice` follows.
         store?.save(chosen)
         store?.saveHandSize(hand)
         work = Task { @MainActor [weak self] in

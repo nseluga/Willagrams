@@ -20,7 +20,7 @@ struct OnlineMatchOfflineTests {
     /// lane's, and this suite is not the place to fight it.
     static let options = MatchOptions(
         minimumWordLength: 5,
-        swapEnabled: false,
+        swapEnabled: true,
         dictionaryID: "standard",
         dictionaryHash: MatchOptions.standardDictionaryHash
     )
@@ -336,10 +336,11 @@ struct OnlineMatchOfflineTests {
     @Test("The host's chosen hand size and options are what the guest plays under")
     func theHostsChosenSettingsTravel() async throws {
         let f = try await Self.fixture(creatorToken: "A", guestToken: "B")
-        // The row was written with `Self.options` — minimum length 5. The host
-        // chooses 4 below, so a guest reading the row rather than the start
-        // would come out at 5 and this fails.
+        // The row was written with `Self.options` — minimum length 5, swap on.
+        // The host chooses 4 and swap off below, so a guest reading the row
+        // rather than the start comes out at 5 with swap on, and this fails.
         #expect(f.guest.record.options.minimumWordLength == 5)
+        #expect(f.guest.record.options.swapEnabled)
         f.creatorWire.announce(.connected(f.guestPlayer))
         f.guestWire.announce(.connected(f.creatorPlayer))
         await Self.until("two in the creator's lobby") { f.creator.lobby.count == 2 }

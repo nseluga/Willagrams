@@ -92,14 +92,7 @@ struct TwoPlayerView: View {
         .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenPadding()
-        .background {
-            LinearGradient(
-                colors: [DesignTokens.Palette.canvasTop, DesignTokens.Palette.canvasBottom],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-        }
+        .background { canvas }
     }
 
     /// Cancel · the screen's own mono label · the match-settings gear, host
@@ -140,37 +133,70 @@ struct TwoPlayerView: View {
         .sheet(isPresented: $showsSettings) { settingsSheet(lobby) }
     }
 
-    /// The starting hand, which is this screen's own, then the settings lane's
-    /// options screen embedded as it ships — the same two halves
-    /// `SoloSetupView.rules` draws, with no bot row and no second copy of
-    /// either control.
+    /// One screen, not a panel pasted onto one: this screen's own title, one
+    /// card holding the starting hand and then the settings lane's rows
+    /// embedded as they ship, and Done as the primary button at the bottom —
+    /// the same shape as Start below the lobby.
+    ///
+    /// There is no second copy of any rule row here: everything under the
+    /// hairline is `MatchOptionsView`'s, bound straight to the model's form.
     private func settingsSheet(_ lobby: HostLobbyModel) -> some View {
         @Bindable var lobby = lobby
-        return ScrollView {
-            VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-                Stepper(value: $lobby.handSize, in: SoloSetup.handSizeRange) {
-                    HStack {
-                        Text(SoloSetup.handSizeLabel)
-                            .foregroundStyle(DesignTokens.Palette.textPrimary)
-                        Spacer()
-                        Text(String(lobby.handSize))
-                            .foregroundStyle(DesignTokens.Palette.textSecondary)
+        return VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+            Text(HostLobbyModel.settingsLabel)
+                .font(DesignTokens.Typography.title)
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
+                    Stepper(value: $lobby.handSize, in: SoloSetup.handSizeRange) {
+                        HStack {
+                            Text(SoloSetup.handSizeLabel)
+                                .foregroundStyle(DesignTokens.Palette.textPrimary)
+                            Spacer()
+                            Text(String(lobby.handSize))
+                                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                        }
+                        .font(DesignTokens.Typography.body)
                     }
-                    .font(DesignTokens.Typography.body)
-                }
-                .tint(DesignTokens.Palette.accent)
-                .padding(.horizontal, DesignTokens.Space.l)
+                    .tint(DesignTokens.Palette.accent)
 
-                if let form = Binding($lobby.optionsForm) {
-                    MatchOptionsView(form: form)
+                    if let form = Binding($lobby.optionsForm) {
+                        hairline
+                        MatchOptionsView(form: form, embedded: true)
+                    }
                 }
-
-                Button(Self.doneLabel) { showsSettings = false }
-                    .buttonStyle(.brandPrimary)
-                    .padding(.horizontal, DesignTokens.Space.l)
+                .padding(DesignTokens.Space.l)
+                .brandCard()
+                .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
             }
-            .padding(.vertical, DesignTokens.Space.l)
+
+            Button { showsSettings = false } label: {
+                Text(Self.doneLabel).frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.brandPrimary)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .screenPadding()
+        .background { canvas }
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(DesignTokens.Palette.hairline)
+            .frame(height: DesignTokens.Stroke.hairline)
+    }
+
+    /// The screen's ground, shared by the lobby and its settings sheet so the
+    /// two never read as different surfaces.
+    private var canvas: some View {
+        LinearGradient(
+            colors: [DesignTokens.Palette.canvasTop, DesignTokens.Palette.canvasBottom],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .ignoresSafeArea()
     }
 
     /// "Host a game" / "Join a game" — the mode switch itself.

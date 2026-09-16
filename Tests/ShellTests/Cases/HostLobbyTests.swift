@@ -279,8 +279,50 @@ struct HostLobbyTests {
         #expect(next.optionsForm == nil)
         next.loadOptions()
         #expect(next.optionsForm?.swapEnabled == false)
-        #expect(next.canEditSettings)
+        // Read once the second lobby is up, not while its row is still being
+        // written: `canEditSettings` is derived from the phase now, and a lobby
+        // that does not exist yet has nothing to configure.
         await Self.until("the second lobby exists") { next.phase != .creating }
+        #expect(next.canEditSettings)
+        f.shell.returnToMenu()
+    }
+
+    /// A start that fails hands the screen back, gear and all.
+    ///
+    /// `canStart` stays true after a throw so the host may press Start again —
+    /// a retry offered with a permanently dead gear was the bug. Nothing was
+    /// sent, so the settings are still only this device's to change.
+    @Test("A start that throws re-opens the match settings")
+    func aFailedStartReopensTheSettings() async throws {
+        let f = try await Self.make()
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+        #expect(lobby.canEditSettings)
+
+        // The seat empties between the press and the open: `start()`'s own
+        // guard has already passed, and `OnlineMatch.start` refuses a lobby
+        // that no longer holds two. That is the throw, from the real path.
+        //
+        // The wait is on the façade, not on the model: the presence frame
+        // reaches `match.lobby` one turn before the model's observer re-reads
+        // it, and that one turn is the window a real disconnect lands in.
+        let match = try #require(lobby.match)
+        f.wire.announce(.disconnected(f.guest.playerID))
+        await Self.until("the seat empties on the façade") { match.lobby.count == 1 }
+        #expect(lobby.canStart, "the model has already caught up; no press is possible")
+        lobby.start()
+        #expect(lobby.canEditSettings == false, "the gear is live during the start")
+
+        await Self.until("the start came back") { lobby.work == nil }
+        #expect(f.shell.run == nil, "the start was supposed to fail")
+        #expect(lobby.message != nil)
+        #expect(lobby.phase == .waiting)
+        #expect(lobby.canEditSettings, "the retry is offered with a dead gear")
+
         f.shell.returnToMenu()
     }
 
