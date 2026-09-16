@@ -21,7 +21,7 @@ LANE.md is the contract; this tracks where we are in it. If they disagree, LANE.
 |------|--------|
 | iPad launch crash | done — The app no longer dies on an iPad a few seconds after opening. The message iOS sends back when it refuses a rotation used to be handled on the wrong thread, which killed the app; it is now handled safely wherever it arrives. Three cold iPad launches and an iPhone launch came up clean. Still needs your eyes: that the iPad actually turns landscape, which nothing here can tap or rotate to check. (2026-09-15) |
 | Buttons and codes stop wrapping | done — Button labels no longer break mid-word on an upright phone: they now shrink slightly instead of wrapping, and the smaller phone font finally applies upright as well as sideways. Friend codes are pinned to one line at full size and can never shrink or get cut off. One fix covered all four things you photographed — `Cop`/`y`, the giant bars on Friends, the wrapped codes, and `Standa`/`rd` in Solo. Still needs your eyes: those screens only open by tapping. (2026-09-16) |
-| Friend row fits a phone | not started |
+| Friend row fits a phone | done — A friend now takes one tidy row: the main action (Accept, or Invite to play) stays on the row as a button, and Decline, Block and Unfriend moved into a "More actions" menu behind a dots icon. Nothing was dropped — all five still work, and Unfriend still asks first. The three giant bars are gone. Still needs your eyes: Friends only opens by tapping. (2026-09-16) |
 | Solo stops saying HOST | not started |
 | A saved name reaches the whole app | not started |
 | Joining says it worked | not started |
