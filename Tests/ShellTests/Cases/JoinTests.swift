@@ -429,7 +429,12 @@ struct JoinTests {
     /// route reaching a real screen is checked against the bytes on disk — the
     /// same approach `ShellRootViewTests` takes. The names are asserted present,
     /// so a rename turns this red rather than vacuously green.
-    @Test("The join route renders JoinView, and the menu has a way in")
+    ///
+    /// The menu no longer has a way in of its own — Join a Friend leaves Home
+    /// (see `MenuLayoutTests`'s no-Join-entry case); it is reached from the
+    /// Play a Friend screen instead, which item 6 wires up. This test only
+    /// covers `ShellRootView`'s side of the route.
+    @Test("The join route renders JoinView")
     func theRouteIsWired() throws {
         let shell = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -441,11 +446,6 @@ struct JoinTests {
             contentsOf: shell.appendingPathComponent("ShellRootView.swift"), encoding: .utf8)
         #expect(root.contains("case .join:"), "no .join case in ShellRootView")
         #expect(root.contains("JoinView("), "no JoinView in ShellRootView")
-
-        let menu = try String(
-            contentsOf: shell.appendingPathComponent("MenuView.swift"), encoding: .utf8)
-        #expect(menu.contains("shell.showJoin()"), "no way onto the join screen from the menu")
-        #expect(menu.contains("JoinModel.title"), "the menu's join action is unlabelled")
 
         // The View is excluded, or this package stops building for macOS.
         let manifest = try String(

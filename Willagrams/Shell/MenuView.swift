@@ -1,25 +1,21 @@
 import SwiftUI
 
-/// The root screen: the wordmark, the one thing the app can currently play, and
-/// a way into the rules.
+/// The root screen: the wordmark and the six things Home can do —
+/// ``MenuLayout/actions``, in that fixed order.
 ///
-/// No Host or Join row — there is no `GKMatchTransport` behind either, and a
-/// disabled control is a promise someone has to keep, then delete. There is no
-/// Settings row either: the settings that exist are the ones a solo match is
-/// played under, and they are on the way into that match rather than parked in
-/// a screen of their own.
+/// On a portrait phone it is one column: the mute control top-right, the
+/// wordmark near the top sized from the available width, a flexible gap,
+/// then the PLAY actions anchored to the bottom. On a landscape phone or an
+/// iPad it stays the existing two-column layout — the mark on the left, the
+/// actions on the right — with the same six slots.
 ///
-/// The rules are a mark in the corner rather than a second full-width button.
-/// One action reads as one action; two equally loud buttons read as a choice,
-/// and the rules are not one — they are the thing you glance at on the way.
+/// There is no Join row: Join a Friend is reached from the Play a Friend
+/// screen, not from Home. There is no Settings row either: the settings that
+/// exist are the ones a solo match is played under, and they are on the way
+/// into that match rather than parked in a screen of their own.
 ///
-/// The view makes no routing decision: the action calls a ``ShellModel``
+/// The view makes no routing decision: each action calls a ``ShellModel``
 /// transition and the route it produces is asserted in `ShellModelTests`.
-///
-/// Laid out in two columns because the app is landscape-only: the mark and what
-/// the game is on the left, the two things you can do on the right. A centred
-/// stack in a 4:3 landscape frame leaves the width unused and pushes the
-/// actions below the optical centre.
 struct MenuView: View {
 
     let shell: ShellModel
@@ -30,7 +26,6 @@ struct MenuView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let widths = WidthLayout(width: proxy.size.width)
             let layout = MenuLayout(size: proxy.size)
 
             // The compact grid and the smaller wordmark/spacing are the
@@ -38,16 +33,26 @@ struct MenuView: View {
             // phone. `ViewThatFits` stays only as the fallback for the
             // largest accessibility Dynamic Type sizes, where scrolling
             // beats clipping.
-            ViewThatFits(in: .vertical) {
-                columns(widths, layout)
-                ScrollView { columns(widths, layout) }
+            if layout.isPortrait {
+                ViewThatFits(in: .vertical) {
+                    portraitColumn(layout)
+                    ScrollView { portraitColumn(layout) }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .screenPadding()
+            } else {
+                let widths = WidthLayout(width: proxy.size.width)
+                ViewThatFits(in: .vertical) {
+                    columns(widths, layout)
+                    ScrollView { columns(widths, layout) }
+                }
+                // Capped and centred rather than pinned to the screen edges.
+                // Past the cap a wider device gets margin, not a wider dead
+                // band between the two columns.
+                .frame(maxWidth: widths.contentWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .screenPadding()
             }
-            // Capped and centred rather than pinned to the screen edges. Past
-            // the cap a wider device gets margin, not a wider dead band between
-            // the two columns.
-            .frame(maxWidth: widths.contentWidth)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .screenPadding()
         }
         .background {
             LinearGradient(
@@ -84,8 +89,6 @@ struct MenuView: View {
             min(max((contentWidth * 0.34).rounded(), 260), 420)
         }
 
-        var taglineWidth: CGFloat { identityColumnWidth }
-
         var actionColumnWidth: CGFloat {
             min(max((contentWidth * 0.30).rounded(), 220), 340)
         }
@@ -120,15 +123,9 @@ struct MenuView: View {
             WordmarkTiles(cell: layout.wordmarkHeight / 5)
                 #if DEBUG
                 // Quiet way in to the style gallery. No visible control, so it
-                // adds nothing to the menu's two actions.
+                // adds nothing to the menu's actions.
                 .onLongPressGesture { showingStyleGallery = true }
                 #endif
-
-            Text(Self.tagline)
-                .font(DesignTokens.Typography.body)
-                .foregroundStyle(DesignTokens.Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: widths.taglineWidth, alignment: .leading)
 
             Spacer(minLength: 0)
         }
@@ -139,80 +136,135 @@ struct MenuView: View {
             Spacer(minLength: 0)
 
             // The mute control rides the section label rather than the button
-            // stack: it is chrome, not a third thing to play. Icon only, at the
-            // label's weight, so it never competes with the PLAY actions.
+            // stack: it is chrome, not a seventh thing to play. Icon only, at
+            // the label's weight, so it never competes with the PLAY actions.
             HStack {
                 Text(Self.actionsLabel)
                     .monoLabel()
 
                 Spacer(minLength: 0)
 
-                Button { shell.toggleMute() } label: {
-                    Image(systemName: shell.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .imageScale(.medium)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(DesignTokens.Palette.textSecondary)
-                .accessibilityLabel(shell.isMuted ? Self.soundOffLabel : Self.soundOnLabel)
+                muteButton
             }
 
-            // Into the setup screen, not into a match: what the far end plays
-            // like and what the rules are get chosen before the deal, because
-            // afterwards is too late to change either.
-            Button { shell.showSoloSetup() } label: {
-                Text(SoloSetup.title).menuActionLabel()
-            }
-            .buttonStyle(.brandPrimary)
-
-            // Online play, off until the anonymous sign-in lands. Disabled with
-            // a reason underneath rather than absent: the row is a promise the
-            // app keeps as soon as it can, and a control that vanishes and
-            // reappears is worse than one that says why it is waiting.
-            Button { shell.playAFriend() } label: {
-                Text(HostLobbyModel.title).menuActionLabel()
-            }
-            .buttonStyle(.brandPrimary)
-            .disabled(!shell.canPlayOnline)
-
-            // The four quiet actions, in a grid: two columns on a landscape
-            // phone so they read as two rows instead of four, one column on
-            // an iPad where height was never the constraint.
+            primaryActions
             quietActions(layout)
+            onlineUnavailableCaption
 
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The single-column portrait Home: mute top-right, wordmark near the
+    /// top sized from the available width, a flexible gap, then the PLAY
+    /// actions anchored to the bottom.
+    private func portraitColumn(_ layout: MenuLayout) -> some View {
+        VStack(alignment: .leading, spacing: layout.spacing) {
+            HStack {
+                Spacer(minLength: 0)
+                muteButton
+            }
+
+            HStack {
+                Spacer(minLength: 0)
+                WordmarkTiles(cell: layout.wordmarkHeight / 5)
+                    #if DEBUG
+                    .onLongPressGesture { showingStyleGallery = true }
+                    #endif
+                Spacer(minLength: 0)
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: layout.spacing) {
+                Text(Self.actionsLabel).monoLabel()
+                primaryActions
+                quietActions(layout)
+                onlineUnavailableCaption
+            }
+        }
+    }
+
+    private var muteButton: some View {
+        Button { shell.toggleMute() } label: {
+            Image(systemName: shell.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .imageScale(.medium)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(DesignTokens.Palette.textSecondary)
+        .accessibilityLabel(shell.isMuted ? Self.soundOffLabel : Self.soundOnLabel)
+    }
+
+    /// The two loud actions, in ``MenuLayout/actions``' order: Multiplayer —
+    /// disabled until the feature ships, with its "Coming soon" caption
+    /// underneath — then Play a Friend, off until the anonymous sign-in
+    /// lands.
+    @ViewBuilder
+    private var primaryActions: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
+            Button {} label: {
+                Text(Self.multiplayerTitle).menuActionLabel()
+            }
+            .buttonStyle(.brandPrimary)
+            .disabled(true)
+
+            Text(Self.multiplayerComingSoon)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+        }
+        .padding(.bottom, DesignTokens.Space.s)
+
+        Button { shell.playAFriend() } label: {
+            Text(HostLobbyModel.title).menuActionLabel()
+        }
+        .buttonStyle(.brandPrimary)
+        .disabled(!shell.canPlayOnline)
+    }
+
+    private var onlineUnavailableCaption: some View {
+        Group {
             if let reason = shell.onlineUnavailableReason {
                 Text(reason)
                     .font(DesignTokens.Typography.caption)
                     .foregroundStyle(DesignTokens.Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            Spacer(minLength: 0)
         }
     }
 
+    /// The four quiet actions, in a grid: two columns on a phone (portrait
+    /// or landscape) so they read as two rows instead of four, one column on
+    /// an iPad where height was never the constraint.
+    ///
+    /// Two columns means a narrower label than `QuietButtonStyle`'s own
+    /// `verticalSizeClass`-only compact switch accounts for — a portrait
+    /// phone is vertically regular, so without this the style's 20pt font
+    /// wraps "Solo Practice" onto two lines and blows the portrait content
+    /// budget. Setting the font directly on each `Text` (closer to the leaf
+    /// than the style's own `.font()`, which wraps `configuration.label`
+    /// from outside) wins over the style's choice; iPad's single column
+    /// keeps the style's normal font untouched.
     private func quietActions(_ layout: MenuLayout) -> some View {
+        let font: Font? = layout.quietColumns == 2 ? DesignTokens.Typography.buttonCompact : nil
         let columns = Array(
             repeating: GridItem(.flexible(), spacing: DesignTokens.Space.m, alignment: .top),
             count: layout.quietColumns
         )
         return LazyVGrid(columns: columns, alignment: .leading, spacing: layout.spacing) {
-            // The other end of the same handoff: one side shows a code, the
-            // other types it. Two actions rather than one screen with both,
-            // because a host and a guest are doing different things and a
-            // screen that offered both would ask the player which they are.
-            Button { shell.showJoin() } label: {
-                Text(JoinModel.title).menuActionLabel()
+            // Into the setup screen, not into a match: what the far end plays
+            // like and what the rules are get chosen before the deal, because
+            // afterwards is too late to change either.
+            Button { shell.showSoloSetup() } label: {
+                Text(SoloSetup.title).menuActionLabel(font: font)
             }
             .buttonStyle(.brandQuiet)
-            .disabled(!shell.canPlayOnline)
 
             // Your own row: a name to change and the code a friend needs. Off
-            // on the same terms as the two above — there is no profile to show
-            // until sign-in lands.
+            // until sign-in lands — there is no profile to show yet.
             Button { shell.showProfile() } label: {
-                Text(ProfileModel.title).menuActionLabel()
+                Text(ProfileModel.title).menuActionLabel(font: font)
             }
             .buttonStyle(.brandQuiet)
             .disabled(shell.currentProfile == nil)
@@ -221,21 +273,20 @@ struct MenuView: View {
             // same signed-in row the profile is: `friendships()` is read as
             // somebody.
             Button { shell.showFriends() } label: {
-                Text(FriendsModel.title).menuActionLabel()
+                Text(FriendsModel.title).menuActionLabel(font: font)
             }
             .buttonStyle(.brandQuiet)
             .disabled(shell.currentProfile == nil)
 
             Button { shell.showHowToPlay() } label: {
-                Text(HowToPlay.title).menuActionLabel()
+                Text(HowToPlay.title).menuActionLabel(font: font)
             }
             .buttonStyle(.brandQuiet)
         }
     }
 
     /// Not `Terminology`: that file is the frozen IP fence and names game
-    /// concepts, not screens. The two action labels are the screens' own
-    /// chrome — `SoloSetup.title` and `HowToPlay.title`.
+    /// concepts, not screens.
     private static let actionsLabel = "PLAY"
 
     /// The mute control's two states, read aloud. Chrome, so local constants
@@ -244,10 +295,11 @@ struct MenuView: View {
     private static let soundOnLabel = "Sound on"
     private static let soundOffLabel = "Sound off"
 
-    /// The one sentence that says what the game is. The game concepts in it come
-    /// through `Terminology`, so the fence holds here too.
-    private static let tagline =
-        "One shared \(Terminology.pool). One connected grid. First empty rack wins."
+    /// The disabled primary action's title and its reason caption. Chrome,
+    /// so a local constant and not `Terminology` — there is no game concept
+    /// named "Multiplayer" for the fence to guard.
+    private static let multiplayerTitle = "Multiplayer"
+    private static let multiplayerComingSoon = "Coming soon"
 
     /// The width the design comp was drawn at. Nothing is pinned to it — it is
     /// the ceiling the content stops growing at, so a wider screen adds margin
@@ -260,7 +312,18 @@ private extension View {
     /// The action column's buttons span it and stand at the comp's control
     /// height. The height is on the label because the button style owns the
     /// padding around it: 36 plus two `Space.s` insets is the 52pt control.
-    func menuActionLabel() -> some View {
-        frame(maxWidth: .infinity, minHeight: 36)
+    ///
+    /// `font`, when given, overrides the button style's own choice — see the
+    /// note on `quietActions` for why a two-column grid needs this. Applying
+    /// `.font(nil)` unconditionally would still plant an environment override
+    /// that shadows the button style's font even when no override is wanted,
+    /// so the modifier is only attached when `font` is non-nil.
+    @ViewBuilder
+    func menuActionLabel(font: Font? = nil) -> some View {
+        if let font {
+            self.font(font).frame(maxWidth: .infinity, minHeight: 36)
+        } else {
+            self.frame(maxWidth: .infinity, minHeight: 36)
+        }
     }
 }

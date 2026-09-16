@@ -42,4 +42,53 @@ struct MenuLayoutTests {
         #expect(layout.isCompact)
         #expect(layout.wordmarkHeight >= size.height * 0.4)
     }
+
+    /// iPhone with a notch and a home indicator, portrait: ~47pt top inset,
+    /// ~34pt bottom inset.
+    private static let portraitSafeAreaInset: CGFloat = 81
+
+    @Test("The menu's action list is exactly six slots, in order, with no Join entry")
+    func actionListIsExactlySixSlotsNoJoin() {
+        let titles = MenuLayout.actions.map(\.title)
+
+        #expect(titles == [
+            "Multiplayer",
+            "Play a Friend",
+            "Solo Practice",
+            "Profile",
+            "Friends",
+            "How to Play",
+        ])
+        #expect(!titles.contains("Join a Friend"))
+    }
+
+    @Test("Multiplayer is the disabled slot; every other slot starts enabled")
+    func multiplayerSlotIsDisabled() {
+        let multiplayer = MenuLayout.actions.first { $0.title == "Multiplayer" }
+        #expect(multiplayer?.isEnabled == false)
+
+        let others = MenuLayout.actions.filter { $0.title != "Multiplayer" }
+        #expect(others.allSatisfy { $0.isEnabled })
+    }
+
+    @Test("A portrait phone reports portrait mode, at construction, with content that fits")
+    func portraitPhoneFitsWithSafeArea() {
+        let layout = MenuLayout(size: CGSize(width: 375, height: 812))
+
+        #expect(layout.isPortrait)
+        #expect(layout.quietColumns == 2)
+
+        let budget: CGFloat = 812 - Self.portraitSafeAreaInset
+        #expect(layout.estimatedContentHeight <= budget)
+    }
+
+    @Test("Portrait content also fits the shorter iPhone SE, which has no top notch inset")
+    func portraitPhoneFitsShortestSupportedPhone() {
+        let layout = MenuLayout(size: CGSize(width: 375, height: 667))
+
+        #expect(layout.isPortrait)
+
+        let budget: CGFloat = 667 - 20 // status bar only, no notch, no home indicator
+        #expect(layout.estimatedContentHeight <= budget)
+    }
 }
