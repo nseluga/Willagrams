@@ -147,7 +147,8 @@ Frozen contracts — build and test against these; they will not move:
   done when:
     - After a successful join the guest sees a waiting state naming the host, and during the attempt sees a progress state
     - A test pins that the view reads `join.phase` and renders each phase's published line
-    - ShellTests green at or above 263; `xcodebuild` BUILD SUCCEEDED
+    - `JoinTests.swift:139` is made non-vacuous while you are in this file: it holds today only because the registration happens to never fire before `returnToMenu()`, so pin `#expect(model.phase == .waiting)` and prove the guard breaks
+    - ShellTests green at or above 270 with 0 issues; `xcodebuild` BUILD SUCCEEDED
   ui: true
   status: not started
 
