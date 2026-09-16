@@ -494,6 +494,49 @@ struct JoinTests {
         )
         #expect(manifest.contains("\"TwoPlayerView.swift\""))
     }
+
+    /// `swift test` never compiles `TwoPlayerView.swift` — `Shell`'s target
+    /// excludes every SwiftUI file. So the criterion "the view reads
+    /// `join.phase` and renders each phase's published line" is pinned the way
+    /// `OrientationTests.rootViewWiring()` pins un-compilable view wiring: read
+    /// the source, slice `joinStatus`, and match contiguous substrings —
+    /// comments stripped so a comment mentioning these names cannot pass this.
+    @Test("TwoPlayerView renders join.phase, not just the code field")
+    func joinStatusRendersEachPhase() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Cases
+            .deletingLastPathComponent()  // ShellTests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // repo root
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Willagrams/Shell/TwoPlayerView.swift"),
+            encoding: .utf8
+        )
+
+        // The field's container calls into the switch this test pins — proof
+        // the view actually reads the phase rather than owning a copy no one
+        // calls.
+        #expect(source.contains("joinField(join).id(Self.codeFieldID)"))
+        #expect(source.contains("joinStatus(join)"))
+
+        let start = try #require(source.range(of: "@ViewBuilder private func joinStatus"))
+        let end = try #require(source.range(of: "/// Copy/Share, then the roster"))
+        #expect(start.upperBound < end.lowerBound)
+        let body = source[start.upperBound..<end.lowerBound]
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.hasPrefix("//") }
+            .joined(separator: "\n")
+
+        #expect(body.contains("switch join.phase"))
+        #expect(body.contains("case .joining:"))
+        #expect(body.contains("ProgressView()"), "no progress state during the attempt")
+        #expect(body.contains("case .waiting:"))
+        // The copy is read, not restated: the model's own line, not a literal
+        // pasted here.
+        #expect(body.contains("Text(join.waitingLine)"))
+        #expect(!body.contains("JoinModel.waitingTitle"), "the view must read waitingLine, not rebuild the title itself")
+    }
 }
 
 /// A `FakeBackend` that refuses `joinMatch` with one chosen error and forwards

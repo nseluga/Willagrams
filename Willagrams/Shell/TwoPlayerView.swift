@@ -63,6 +63,7 @@ struct TwoPlayerView: View {
 
                         if case .join(let join) = mode {
                             joinField(join).id(Self.codeFieldID)
+                            joinStatus(join)
                         }
 
                         if isHost {
@@ -286,6 +287,24 @@ struct TwoPlayerView: View {
             }
             .focused($codeFieldFocused)
             .onSubmit { join.join() }
+    }
+
+    /// Tells the guest what `join.phase` already knows: in flight, or in — the
+    /// model decides the words, this only picks which of its published states
+    /// to draw.
+    @ViewBuilder private func joinStatus(_ join: JoinModel) -> some View {
+        switch join.phase {
+        case .entering:
+            EmptyView()
+        case .joining:
+            ProgressView()
+                .frame(maxWidth: .infinity, alignment: .center)
+        case .waiting:
+            Text(join.waitingLine)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// Copy/Share, then the roster: a seated player "Ready", an open seat
