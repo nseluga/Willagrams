@@ -423,6 +423,19 @@ public final class MatchSession: AppActivityListener {
     /// nothing could possibly have happened.
     @ObservationIgnored private var isAway = false
 
+    /// ``leave()`` has run. A `Bool` beside ``isAway``, for the same toolchain
+    /// reason — see the note on ``owesTerminalMessage``.
+    ///
+    /// ponytail: defence-in-depth, not load-bearing — every reachable path is
+    /// already covered by `peerDropped`'s `.present` guard and `peerReturned`'s
+    /// `.reconnecting` guard, so deleting this flag alone changes no behaviour
+    /// and no single mutation kills it. `PresenceHandoffTests`'
+    /// "A state forwarded after leave() cannot bring a left match back" is the
+    /// real pin. Delete the flag if either absorbing guard is ever made
+    /// unconditional — at that point this one stops being redundant, or the
+    /// test stops passing, and you want to notice which.
+    @ObservationIgnored private var hasLeft = false
+
     /// - Parameters:
     ///   - transport: the wire. This session becomes the sole consumer of its
     ///     inbound stream immediately.
@@ -549,7 +562,16 @@ public final class MatchSession: AppActivityListener {
     /// not subscribe learns about drops and returns only through here. Applied
     /// by exactly the same code a self-subscribed session runs, so the two
     /// ownership arrangements cannot drift.
+    ///
+    /// Refused after ``leave()``. A self-subscribed session stops hearing when
+    /// its own pump is cancelled; a forwarded one is fed by somebody else's
+    /// pump, which keeps running until that owner is torn down too — one line
+    /// later in `OnlineOpponent.leave()`, but not zero. This is what makes
+    /// "a left session takes no more presence" true by construction rather than
+    /// by the two absorbing guards in `peerDropped` and `peerReturned` that
+    /// happen to cover it today.
     public func receive(peerConnection: PeerConnectionState) {
+        guard !hasLeft else { return }
         apply(peerConnection)
     }
 
@@ -838,9 +860,14 @@ public final class MatchSession: AppActivityListener {
         // The whole roster, not just this device: leaving ends the match here,
         // and every banner, lock and end screen reads presence to find that out.
         for player in roster { peerPresences[player] = .gone }
-        // A `.connected` already buffered when the pump is cancelled can still
-        // be delivered, and the flush would put a message on the wire from a
-        // device that has left.
+        // Shuts ``receive(peerConnection:)``, which is the only way presence
+        // still reaches a session fed by a façade's pump: `presencePump` below
+        // is nil on every session built with `observesPeerConnections: false`,
+        // so cancelling it stops nothing on the path that ships.
+        hasLeft = true
+        // A `.connected` already buffered when a self-subscribed session's pump
+        // is cancelled can still be delivered, and the flush would put a message
+        // on the wire from a device that has left.
         owesTerminalMessage = false
         pump?.cancel()
         presencePump?.cancel()

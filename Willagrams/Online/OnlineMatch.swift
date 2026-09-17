@@ -129,9 +129,27 @@ public final class OnlineMatch {
     /// The other end of the single-subscription rule: ``watchLobby()`` is the
     /// one consumer of `peerConnectionStates`, so every state the session needs
     /// is forwarded through here rather than read a second time off the stream.
-    /// Weak — the screen owns the session, and a façade that kept it alive would
-    /// outlive the match it handed over.
+    ///
+    /// `weak` only to avoid a *second* owner, not to avoid keeping the session
+    /// alive: ``attachRecorder(to:)`` stores the recorder strongly and
+    /// `MatchOutcomeRecorder` holds its session by a strong `let`, so this
+    /// façade already retains the session for its own life on both paths.
     @ObservationIgnored private weak var session: MatchSession?
+
+    /// Peers this façade has *observed* leaving and not seen return.
+    ///
+    /// The session is assigned inside ``makeSession(roster:)``, but the pump
+    /// has been forwarding since `init` — and `awaitStart()` awaits
+    /// `backend.players` before it gets there. A `.disconnected` landing in
+    /// that window would reach `session?` == nil and be dropped, and a real
+    /// transport dedupes presence, so it is never re-yielded: the guest would
+    /// build a session against a host that had already gone and wait for a
+    /// `.start` nobody was left to send. Replayed at handover instead.
+    ///
+    /// Only an observed leave is recorded, never an absence. A peer whose
+    /// presence has not synced yet is not "gone", and declaring it so would end
+    /// a match that had not started.
+    @ObservationIgnored private var departedPeers: Set<PlayerID> = []
 
     /// Whether a `MatchSession` was handed out. What separates "a lobby nobody
     /// played" from "a match that ran": ``leave()`` abandons the row only in the
@@ -375,8 +393,14 @@ public final class OnlineMatch {
 
     // MARK: - The lobby
 
-    /// Consumes the transport's presence stream for the life of this façade,
-    /// and forwards every state to the session once there is one.
+    /// Consumes the transport's presence stream and forwards every state to the
+    /// session once there is one.
+    ///
+    /// Runs until the stream finishes or ``leave()`` cancels it. A `leave()` on
+    /// a façade whose session is still live would kill presence silently, and
+    /// nothing stops that but call order: `OnlineOpponent.leave()` leaves the
+    /// session first and this façade second, so by the time the pump stops the
+    /// session it feeds has already ended.
     ///
     /// `MatchTransport` allows exactly one consumer per stream per endpoint,
     /// and this pump is it. It is deliberately **not** cancelled when a
@@ -398,10 +422,12 @@ public final class OnlineMatch {
                 session?.receive(peerConnection: state)
                 switch state {
                 case let .connected(player):
+                    departedPeers.remove(player)
                     guard player != localPlayer, !lobby.contains(player) else { continue }
                     lobby.append(player)
                 case let .disconnected(player):
                     guard player != localPlayer else { continue }
+                    departedPeers.insert(player)
                     lobby.removeAll { $0 == player }
                 }
             }
@@ -498,6 +524,13 @@ public final class OnlineMatch {
             observesPeerConnections: false
         )
         self.session = session
+        // Anything the pump saw leave before there was a session to tell is
+        // handed over here, or it is lost for good — see ``departedPeers``.
+        // A leave observed for somebody off this roster is not this match's
+        // business, and the session would ignore it anyway.
+        for player in roster where departedPeers.contains(player) {
+            session.receive(peerConnection: .disconnected(player))
+        }
         // After the transport, never before — see the note in `init`.
         activity?.add(session)
         return session

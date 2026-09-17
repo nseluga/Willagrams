@@ -1174,6 +1174,15 @@ public final class ShellModel {
     ) -> Bool {
         // `startMatch` only moves from `.menu`, so this is the assertion that
         // the route really did advance rather than silently no-op.
+        //
+        // ponytail: this returns before `build` runs, so on an online start it
+        // would release the `OnlineMatch` with `transport.leave()` never called
+        // — both lobby models have already nil'd their own reference by here —
+        // and since that façade now owns the only presence pump, the channel
+        // would go with it. Unreachable today: `startMatch(_:)` always advances
+        // the route first, and every online start is gated on that. Build the
+        // opponent before this guard and tear it down on the refusal if a
+        // second caller ever reaches `install` without moving the route.
         guard case .countdown(let setup) = route else { return false }
 
         seed = setup.seed

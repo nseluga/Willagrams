@@ -87,6 +87,100 @@ struct PresenceHandoffTests {
         #expect(session.presence(of: f.guestPlayer) == .present)
     }
 
+    // MARK: - The join path's own window
+
+    /// The guest's handover is not instantaneous: `awaitStart()` awaits
+    /// `backend.players` before `makeSession` assigns the session, and the pump
+    /// has been forwarding since `init`. A host that leaves in that window is
+    /// seen by the pump and has nowhere to land, and a real transport dedupes
+    /// presence, so it is never announced again.
+    ///
+    /// Fail-OPEN, and permanent when it hits: the guest would sit on a match
+    /// against a host that had already gone, waiting for a `.start` nobody was
+    /// left to send, with `presence(of:)` reading absent as present for ever.
+    /// The host path cannot reach this — `start()` refuses a lobby that is not
+    /// two — so it needs its own case.
+    @Test("A host that leaves before the guest's session exists is still reported gone")
+    func aLeaveObservedBeforeTheSessionExistsIsNotLost() async throws {
+        let f = try await Self.fixture()
+
+        f.guestWire.announce(.connected(f.creatorPlayer))
+        await Self.until("the guest sees the host") { f.guest.lobby.count == 2 }
+        f.guestWire.announce(.disconnected(f.creatorPlayer))
+        await Self.until("the guest sees the host go") { f.guest.lobby.count == 1 }
+
+        // Only now does the session exist. The leave happened before it did.
+        let session = try await f.guest.awaitStart()
+        await Self.until("the session is told what the pump already saw") {
+            session.presence(of: f.creatorPlayer) == .gone
+        }
+        #expect(session.presence(of: f.creatorPlayer) == .gone)
+    }
+
+    /// The other side of that replay, and the reason it records only an
+    /// observed leave: a peer whose presence has not synced yet is absent, not
+    /// gone. Declaring it gone at handover would end every match that opened
+    /// before presence caught up.
+    @Test("A peer never seen leaving is not declared gone at the handover")
+    func anUnseenPeerIsNotDeclaredGone() async throws {
+        let f = try await Self.fixture()
+
+        let session = try await f.guest.awaitStart()
+        for _ in 0 ..< 200 { await Task.yield() }
+        #expect(session.presence(of: f.creatorPlayer) == .present)
+    }
+
+    /// A peer that left and came back before the session existed is not gone
+    /// either: the replay tracks the latest observed state, not every edge.
+    @Test("A peer that returned before the handover is not replayed as gone")
+    func aReturnBeforeTheHandoverClearsTheReplay() async throws {
+        let f = try await Self.fixture()
+
+        f.guestWire.announce(.connected(f.creatorPlayer))
+        await Self.until("the guest sees the host") { f.guest.lobby.count == 2 }
+        f.guestWire.announce(.disconnected(f.creatorPlayer))
+        await Self.until("the guest sees the host go") { f.guest.lobby.count == 1 }
+        f.guestWire.announce(.connected(f.creatorPlayer))
+        await Self.until("the guest sees the host again") { f.guest.lobby.count == 2 }
+
+        let session = try await f.guest.awaitStart()
+        for _ in 0 ..< 200 { await Task.yield() }
+        #expect(session.presence(of: f.creatorPlayer) == .present)
+    }
+
+    // MARK: - A session that has left takes no more presence
+
+    /// `leave()` ends the match here, and a state forwarded afterwards must not
+    /// move it. A self-subscribed session stops hearing when its own pump is
+    /// cancelled; a forwarded one is fed by the façade's pump, which is still
+    /// running for the one line between `session.leave()` and `match.leave()`
+    /// in `OnlineOpponent.leave()`.
+    ///
+    /// Pinned as a property rather than left to the absorbing guards in
+    /// `peerDropped` and `peerReturned` that also cover it: three independent
+    /// things have to stay true for a left match not to come back to life, and
+    /// none of them said so out loud before this case.
+    @Test("A state forwarded after leave() cannot bring a left match back")
+    func aLeftSessionIgnoresForwardedPresence() async throws {
+        let f = try await Self.fixture()
+        let session = try await Self.startedSession(f)
+
+        f.creatorWire.announce(.disconnected(f.guestPlayer))
+        await Self.until("the peer is gone") {
+            session.presence(of: f.guestPlayer) == .gone
+        }
+
+        session.leave()
+        #expect(session.presence(of: f.guestPlayer) == .gone)
+
+        // Straight in, the way the still-live façade pump would deliver it.
+        session.receive(peerConnection: .connected(f.guestPlayer))
+        for _ in 0 ..< 200 { await Task.yield() }
+        #expect(
+            session.presence(of: f.guestPlayer) == .gone,
+            "a left match was revived by a forwarded state")
+    }
+
     // MARK: - The lobby keeps working across the same handoff
 
     @Test("The lobby roster still adds and removes players across the handoff")
