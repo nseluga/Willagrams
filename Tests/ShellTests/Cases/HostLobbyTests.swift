@@ -449,6 +449,60 @@ struct HostLobbyTests {
         #expect(weakMatch == nil, "the OnlineMatch was stranded by an armed observer")
     }
 
+    /// The retention this lane's presence-ownership fix made load-bearing.
+    ///
+    /// The façade's lobby pump is the *single* consumer of
+    /// `peerConnectionStates` — the session is fed by forwarding — so the
+    /// `OnlineMatch` must outlive the handover or no peer is ever reported
+    /// gone. `HostLobbyModel.start()` sets its own `match` to nil at handover
+    /// and the shell clears the lobby, which leaves `OnlineOpponent.match` as
+    /// the only strong reference for the life of the match. Weaken or drop it
+    /// and the façade deallocates, `deinit` cancels the pump, cancelling the
+    /// task iterating the stream finishes the stream, and a genuinely gone peer
+    /// is held `.present` for ever.
+    ///
+    /// Fail-OPEN, which is why it is asserted by value rather than inferred: a
+    /// dead match that hangs looks exactly like a clean run to every other case
+    /// in this suite. Driven through the real buttons — `playAFriend()` then
+    /// `HostLobbyModel.start()` — because the retention only exists on the path
+    /// the app actually takes.
+    @Test("After the handover the opponent alone keeps the façade alive, and a peer still goes")
+    func theOpponentsRetentionIsWhatKeepsPresenceAlive() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+        weak var weakMatch = try #require(lobby.match)
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+        lobby.start()
+        await Self.until("the run is installed") { f.shell.run != nil }
+
+        let run = try #require(f.shell.run)
+        #expect(run.opponent is OnlineOpponent)
+        // Every other reference is gone: the lobby released it at handover and
+        // the shell left the screen. Whatever is still holding it is the
+        // opponent.
+        #expect(lobby.match === nil)
+        #expect(f.shell.hostLobby == nil)
+
+        // A collection point. Anything the handover's own `Task` still captured
+        // is released here, so the assertion below is about the opponent's
+        // retention and not about a closure that had not finished yet.
+        for _ in 0..<50 { await Task.yield() }
+        #expect(weakMatch != nil, "nothing kept the façade alive past the handover")
+
+        // The consequence, stated as behaviour: the presence pump the façade
+        // owns is still running, so a drop reaches the session it forwards to.
+        f.wire.announce(.disconnected(f.guest.playerID))
+        await Self.until("the session reports the peer gone") {
+            run.session.presence(of: f.guest.playerID) == .gone
+        }
+        #expect(run.session.presence(of: f.guest.playerID) == .gone)
+    }
+
     // MARK: - The error copy
 
     @Test("Every lobby failure is one line of copy, never an error and never a silent exit")
