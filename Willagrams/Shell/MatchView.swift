@@ -86,8 +86,8 @@ struct MatchView: View {
             )
             .overlay { MatchHUD(hud: hud) }
             .overlay {
-                if case .reconnecting(let peer) = matchBoard.overlay {
-                    ReconnectingOverlay(peer: peer)
+                if case .reconnecting = matchBoard.overlay {
+                    ReconnectingOverlay()
                 }
             }
             // The measured size, handed over as-is. In `.onChange`, never in
@@ -106,13 +106,14 @@ struct MatchView: View {
 }
 
 
-/// The dim over a board nobody can play, naming who it is waiting for.
+/// The dim over a board nobody can play, saying that the match is being held
+/// and that it is being held on the opponent.
 ///
 /// Decides nothing: whether it is on screen at all is `MatchBoard.overlay`,
-/// and the lock that makes it honest is `MatchBoard.inputLocked`.
+/// and the lock that makes it honest is `MatchBoard.inputLocked`. It takes no
+/// peer, because there is nothing readable to say about one — see
+/// ``MatchBoard/reconnectingLine``.
 struct ReconnectingOverlay: View {
-
-    let peer: String
 
     var body: some View {
         ZStack {
@@ -124,11 +125,15 @@ struct ReconnectingOverlay: View {
                 Text(MatchBoard.reconnectingTitle)
                     .monoLabel()
                     .textCase(.uppercase)
-                Text(peer)
-                    .font(DesignTokens.Typography.display)
+                // A sentence, so it wraps rather than truncating, and clamped
+                // narrow enough that it wraps on a phone instead of spanning
+                // the whole landscape board.
+                Text(MatchBoard.reconnectingLine)
+                    .font(DesignTokens.Typography.body)
                     .foregroundStyle(DesignTokens.Palette.textPrimary)
-                    .lineLimit(1)
-                    .allowsTightening(true)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: Self.lineWidth)
             }
             .padding(DesignTokens.Space.xl)
             .brandCard()
@@ -137,4 +142,5 @@ struct ReconnectingOverlay: View {
     }
 
     private static let dimOpacity: Double = 0.35
+    private static let lineWidth: CGFloat = 320
 }

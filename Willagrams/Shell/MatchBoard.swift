@@ -137,8 +137,21 @@ public final class MatchBoard {
     public var inputLocked: Bool { overlay != nil }
 
     /// Local chrome, not `Terminology`: waiting for a peer is a statement about
-    /// the connection, not a game concept.
+    /// the connection, not a game concept. ``reconnectingLine`` follows the same
+    /// decision for the same reason — it says what the connection is doing, and
+    /// `Terminology` fences the words the *game* is played with.
     public static let reconnectingTitle = "Reconnecting"
+
+    /// What the cover actually tells the player: the match is being held, and it
+    /// is being held on the opponent.
+    ///
+    /// This is what the board shows instead of the peer's `PlayerID`. That id is
+    /// a UUID string in a real online match — it named nobody, in display type,
+    /// on the one screen a player stares at while they wait. The overlay still
+    /// carries the peer so ``MatchOverlay`` says *who* the match is waiting on;
+    /// nothing renders it until there is a readable name to render.
+    public static let reconnectingLine =
+        "Your opponent lost connection. The match is held until they reconnect."
 
 
     /// Tiles already laid on the board by this type. Not a rack and not a

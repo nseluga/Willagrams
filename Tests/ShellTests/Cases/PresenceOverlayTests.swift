@@ -336,10 +336,16 @@ struct PresenceOverlayTests {
 
         #expect(code.contains { $0.contains("inputLocked: matchBoard.inputLocked") })
         #expect(code.contains { $0.contains("= matchBoard.overlay") })
-        #expect(code.contains { $0.contains("ReconnectingOverlay(peer: peer)") })
+        #expect(code.contains { $0.contains("ReconnectingOverlay()") })
         // The copy is the model's, so the fence over player-facing strings has
-        // one place to look.
+        // one place to look. Both lines, not just the title: the peer's raw
+        // `PlayerID` used to be the second one, and in a real online match that
+        // is a UUID string.
         #expect(code.contains { $0.contains("Text(MatchBoard.reconnectingTitle)") })
+        #expect(code.contains { $0.contains("Text(MatchBoard.reconnectingLine)") })
+        #expect(
+            !code.contains { $0 == "Text(peer)" },
+            "the overlay shows the peer's raw id to the player")
     }
 
     /// `ResultsView` is SwiftUI and cannot be constructed on macOS, so the
