@@ -1326,4 +1326,130 @@ final class BoardSourceTests: XCTestCase {
         let read = sound.replacingOccurrences(of: "began()", with: "began(begun.has(value.startLocation))")
         XCTAssertEqual(tally(read), 5)
     }
+
+    // MARK: - Guardrail: the deal animation is not keyed on the culled draw list
+
+    /// `cells` is viewport-culled, so `Set(cells.compactMap { $0.tile?.id })`
+    /// changed on every pan, pinch, recenter and the opening framing, and each
+    /// change restarted a `dealDuration` ease over every tile's offset — the
+    /// letters trailing the grid. `BoardRenderTests` shows by value that the
+    /// drawn id set moves under a pan alone; this pins that it is not what the
+    /// animation is keyed on, and that what is keyed on comes from the owner's
+    /// delivery token and nothing else.
+    ///
+    /// One contiguous literal per link on the path: the animation call, the
+    /// declaration of the value it reads, and the argument that feeds it.
+    func testDealAnimationIsKeyedOnTheDeliveryTokenNotTheDrawnTiles() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
+
+        XCTAssertTrue(
+            text.contains(".animation(.easeOut(duration: DesignTokens.Motion.dealDuration), value: dealToken)"),
+            "the deal animation is no longer keyed on the delivery token"
+        )
+        XCTAssertFalse(
+            text.contains("value: Set(cells"),
+            "the deal animation is keyed on the culled draw list again"
+        )
+        XCTAssertFalse(
+            text.contains("cells.compactMap"),
+            "BoardView derives an animation trigger from the culled cells again"
+        )
+        XCTAssertTrue(text.contains("let dealToken: Int"), "BoardSurface no longer takes the delivery token")
+        XCTAssertTrue(
+            text.contains("dealToken: arrivalToken,"),
+            "the surface's deal token is no longer fed from the owner's arrivalToken"
+        )
+        // The whole draw path stays O(viewport): the tile ids themselves would
+        // mean reading the board's placements every body evaluation, which
+        // `testNeitherFileIteratesPlacements` refuses.
+        XCTAssertEqual(
+            BoardSource.matches(#"(\.animation\()"#, in: text).count, 1,
+            "a second animation was attached to the surface — the guardrail above only covers the one"
+        )
+    }
+
+    // MARK: - Guardrail: a freshly built board does not re-fly a delivered hand
+
+    /// The countdown and the board sit in separate `switch` arms of the root,
+    /// so the board's `BoardView` is built fresh with the owner's token already
+    /// at 1 — and an `Int` `@State` starting at 0 read that as a brand-new
+    /// delivery and re-flew the entire opening hand from the bag corner. The
+    /// seeding decision now lives in `BoardRender.ArrivalGate`, which
+    /// `BoardRenderTests` proves by value; this pins that the view holds one,
+    /// asks it, and makes no arrival decision of its own.
+    func testArrivalGateOwnsTheSeedingDecision() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
+
+        XCTAssertTrue(
+            text.contains("@State private var arrival = BoardRender.ArrivalGate()"),
+            "BoardView no longer holds an ArrivalGate"
+        )
+        XCTAssertFalse(text.contains("arrivedToken"), "the hand-rolled arrived token is back")
+        XCTAssertTrue(
+            text.contains("arrival.active(arriving, token: arrivalToken)"),
+            "what the surface is told is arriving no longer comes from the gate"
+        )
+        XCTAssertTrue(
+            text.contains("guard arrival.begin(token: arrivalToken, arriving: arriving) else { return }"),
+            "the flight no longer asks the gate whether this delivery is a real one"
+        )
+        XCTAssertTrue(text.contains("arrival.finish(token: arrivalToken)"), "the batch is never expired")
+        // The decision must not be re-made in the view: no comparison of the
+        // owner's token against anything here.
+        XCTAssertTrue(
+            BoardSource.matches(#"arrivalToken\s*([<>])"#, in: text).isEmpty,
+            "BoardView compares the arrival token itself again instead of asking the gate"
+        )
+    }
+
+    // MARK: - Guardrail: the unread arrival drawing state stays deleted
+
+    /// `arrivalProgress` was written by the flight task and plumbed into
+    /// `BoardSurface`, and `arrivalCorner` and `arrivalScale` were declared
+    /// beside it — none of the three was ever read. The flight is the insertion
+    /// transition, and a second set of arrival numbers can only ever disagree
+    /// with it.
+    func testNoUnreadArrivalStateIsReintroduced() throws {
+        for name in ["BoardView.swift", "BoardRender.swift"] {
+            let text = BoardSource.strippingComments(try BoardSource.text(name))
+            for dead in ["arrivalProgress", "arrivalCorner", "arrivalScale"] {
+                XCTAssertFalse(text.contains(dead), "\(name) reintroduces unread arrival state: \(dead)")
+            }
+        }
+        // The flight itself must stay: this item stops tiles already on the
+        // table re-flying, it does not remove the arrival animation.
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
+        XCTAssertTrue(
+            text.contains("BoardRender.arrivalTransition(for: tile.id, arriving: arriving) == .fromBag"),
+            "a genuine draw or swap no longer flies in from the bag"
+        )
+        XCTAssertTrue(text.contains("active: FromBag(") && text.contains("identity: FromBag("),
+                      "the bag flight modifier is no longer attached")
+    }
+
+    func testArrivalAndDealChecksHaveTeeth() {
+        // Teeth on fixed samples, never on the file under test.
+        let keyedOnCells = ".animation(\n.easeOut(duration: DesignTokens.Motion.dealDuration),\nvalue: Set(cells.compactMap { $0.tile?.id })\n)"
+        XCTAssertTrue(keyedOnCells.contains("value: Set(cells"))
+        XCTAssertFalse(keyedOnCells.contains("value: dealToken)"))
+
+        let keyedOnToken = ".animation(.easeOut(duration: DesignTokens.Motion.dealDuration), value: dealToken)"
+        XCTAssertFalse(keyedOnToken.contains("value: Set(cells"))
+        XCTAssertTrue(keyedOnToken.contains("value: dealToken)"))
+        XCTAssertEqual(BoardSource.matches(#"(\.animation\()"#, in: keyedOnToken + "\n" + keyedOnCells).count, 2)
+
+        // And the arrival gate: the regression is the view deciding for itself.
+        let handRolled = "@State private var arrivedToken = 0\nprivate var activeArriving: Set<UUID> { arrivalToken > arrivedToken ? arriving : [] }"
+        XCTAssertTrue(handRolled.contains("arrivedToken"))
+        XCTAssertFalse(BoardSource.matches(#"arrivalToken\s*([<>])"#, in: handRolled).isEmpty)
+
+        let gated = "@State private var arrival = BoardRender.ArrivalGate()\nprivate var activeArriving: Set<UUID> { arrival.active(arriving, token: arrivalToken) }"
+        XCTAssertFalse(gated.contains("arrivedToken"))
+        XCTAssertTrue(BoardSource.matches(#"arrivalToken\s*([<>])"#, in: gated).isEmpty)
+
+        // A guard that flies on any non-zero token is the exact bug: it passes
+        // a plain "mentions arrivalToken" check and fails the literal.
+        let reArming = "guard arrivalToken > 0, !arriving.isEmpty else { return }"
+        XCTAssertFalse(reArming.contains("guard arrival.begin(token: arrivalToken, arriving: arriving) else { return }"))
+    }
 }

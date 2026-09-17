@@ -102,7 +102,7 @@ public struct BoardView: View {
     /// The tiles that just arrived, and a token that changes with each delivery.
     ///
     /// Both come straight from the owner. This view decides nothing about them:
-    /// it flies exactly the ids it is given in from ``arrivalCorner``, and the
+    /// it flies exactly the ids it is given in from the bag corner, and the
     /// token is what restarts the flight — two deliveries of the same tiles
     /// would compare equal and restart nothing.
     private let arriving: Set<UUID>
@@ -117,29 +117,23 @@ public struct BoardView: View {
     /// owner reads it to land arrivals where the player is looking.
     private let onCameraSettled: ((BoardCamera) -> Void)?
 
-    /// How far along the flight is: 0 at the bag, 1 in the cell. Held here
-    /// because it is drawing, not state — nothing outside this view can see it
-    /// and no decision turns on it.
-    @State private var arrivalProgress: CGFloat = 1
-
-    /// The last `arrivalToken` whose flight has finished playing. Cleared
-    /// per-token, not per-id: once this catches up to `arrivalToken`, none of
-    /// `arriving`'s ids fly in again, even an id that was off-screen for the
-    /// whole flight and only scrolls into view afterward. Sticky-by-id would
-    /// keep flying that one in forever; this expires the whole batch at once,
-    /// which is exactly how it arrived.
-    @State private var arrivedToken = 0
+    /// Which deliveries still owe a flight. Every decision lives in
+    /// `BoardRender.ArrivalGate`, including the seeding one: this used to be a
+    /// plain `Int` starting at 0, and because the root builds the play screen's
+    /// `BoardView` fresh — the countdown and the board live in separate
+    /// `switch` arms — an owner already at token 1 read as a brand-new
+    /// delivery and the whole opening hand re-flew from the bag corner.
+    @State private var arrival = BoardRender.ArrivalGate()
 
     /// The WILLA sparkle: 0 just fired, 1 spent. Rests at 1, so a tile
     /// re-inserted by a pan draws it fully faded — nothing replays.
     @State private var sparkle: CGFloat = 1
 
-    /// What `BoardSurface` is actually told is "arriving" this frame: `arriving`
-    /// itself for as long as its token hasn't finished playing, empty once it
-    /// has. A pan after that point re-inserts a culled tile's view with this
+    /// What `BoardSurface` is actually told is "arriving" this frame. A pan
+    /// after the batch has expired re-inserts a culled tile's view with this
     /// empty, so `BoardRender.arrivalTransition` answers `.none` for it.
     private var activeArriving: Set<UUID> {
-        arrivalToken > arrivedToken ? arriving : []
+        arrival.active(arriving, token: arrivalToken)
     }
 
     public init(
@@ -185,7 +179,7 @@ public struct BoardView: View {
                 invalid: model.flashedInvalid,
                 offsets: model.tileOffsets,
                 arriving: activeArriving,
-                arrivalProgress: arrivalProgress,
+                dealToken: arrivalToken,
                 willa: Set(model.willaRuns.joined()),
                 sparkle: sparkle
             )
@@ -326,21 +320,22 @@ public struct BoardView: View {
                 // reason: a second delivery landing mid-flight cancels the
                 // first and starts over rather than leaving tiles stranded.
                 //
-                // The frame between the two writes is not optional — set to 0
-                // and animated to 1 in one turn, SwiftUI sees only the final
-                // value and there is no flight to interpolate.
+                // This branches on nothing itself. `begin` owns both answers —
+                // is this a real delivery, and is this gate seeing its first
+                // token — so the seeding cannot drift out of step with the
+                // expiry. `.task(id:)` rather than `.onAppear` so there is no
+                // ordering race between the two: the same call that seeds is
+                // the call that would have flown.
                 .task(id: arrivalToken) {
-                    guard arrivalToken > 0, !arriving.isEmpty else { return }
-                    arrivalProgress = 0
-                    try? await Task.sleep(for: .seconds(Self.flightPause))
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
-                        arrivalProgress = 1
-                    }
-                    // The flight has been told to run; once it has had time to
-                    // finish, this token is spent. A pan after this point must
-                    // not fly these ids in again — see `arrivedToken`.
-                    try? await Task.sleep(for: .seconds(DesignTokens.Motion.dealDuration))
-                    arrivedToken = arrivalToken
+                    guard arrival.begin(token: arrivalToken, arriving: arriving) else { return }
+                    // The flight is run by the insertion transition at
+                    // `BoardSurface`; all this owes it is long enough with the
+                    // batch still live to play, then the batch expires as a
+                    // whole so a later pan cannot replay it.
+                    try? await Task.sleep(
+                        for: .seconds(Self.flightPause + DesignTokens.Motion.dealDuration)
+                    )
+                    arrival.finish(token: arrivalToken)
                 }
         }
     }
@@ -597,26 +592,16 @@ private struct BoardSurface: View, Animatable {
     /// session and read straight through to `BoardRender` — this view decides
     /// no position of its own.
     let offsets: [UUID: CGSize]
-    /// The tiles still flying in from the bag, and how far along they are.
-    /// Untouched by `animatableData` below: the flight is animated by the
-    /// owner writing `arrivalProgress`, not by interpolating this view.
+    /// The tiles still flying in from the bag. The flight itself is the
+    /// insertion transition below, so there is no progress number here: one was
+    /// plumbed through and never read.
     let arriving: Set<UUID>
-    let arrivalProgress: CGFloat
+    /// The owner's delivery counter, handed straight through as the value the
+    /// deal animation below is keyed on. Nothing here reads it as a number.
+    let dealToken: Int
     /// Tiles in a WILLA run, and how far the one-shot sparkle has faded.
     let willa: Set<Coord>
     let sparkle: CGFloat
-
-    /// Where an arrival comes from, in the surface's own coordinates: the
-    /// corner the HUD draws the bag in. One constant rather than a plumbed
-    /// point — the bag is pinned to that corner, so a second answer here could
-    /// only ever disagree with it.
-    static let arrivalCorner = CGPoint(
-        x: DesignTokens.Space.m,
-        y: DesignTokens.Space.m
-    )
-
-    /// How small a tile is at the mouth of the bag.
-    static let arrivalScale: CGFloat = 0.3
 
     /// Pan width, pan height, zoom — the whole of what an animation between
     /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
@@ -728,15 +713,25 @@ private struct BoardSurface: View, Animatable {
                 }
             }
         }
-        // Keyed on which tiles are on the table, never on where they are. A
-        // drag changes coords and must not run this: the released tile already
-        // slides to its cell under `onEnded`'s own animation, and a second one
-        // over the top of it would fight. Only a draw, a swap or the opening
-        // deal changes this set.
-        .animation(
-            .easeOut(duration: DesignTokens.Motion.dealDuration),
-            value: Set(cells.compactMap { $0.tile?.id })
-        )
+        // Keyed on the owner's delivery token, never on which tiles happen to
+        // be DRAWN. This used to read `Set(cells.compactMap { $0.tile?.id })`,
+        // and `cells` is viewport-culled: the set changed every time any tile
+        // crossed the viewport edge, so every pan, pinch, recenter and the
+        // opening framing restarted a `dealDuration` ease over every tile's
+        // offset — which is why the letters trailed the grid.
+        //
+        // The token moves on exactly a draw, a swap or the opening deal, which
+        // is the set of events this was always meant to key on, and it moves on
+        // nothing else: not a pan, not a pinch, and not a drag, which must not
+        // run this at all — the released tile already slides to its cell under
+        // `onEnded`'s own animation and a second one over the top would fight.
+        //
+        // Deliberately the token and not the board's own tile ids: the ids
+        // would mean reading `Board.placements` on the draw path, which is
+        // O(board) per body evaluation and is what `BoardSourceTests`'
+        // iterate-placements guardrail exists to refuse. The token is the same
+        // answer at O(1), published by the same owner that publishes the tiles.
+        .animation(.easeOut(duration: DesignTokens.Motion.dealDuration), value: dealToken)
         .clipped()
     }
 

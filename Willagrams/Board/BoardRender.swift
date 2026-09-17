@@ -137,10 +137,55 @@ public enum BoardRender {
     }
 
     /// `arriving` is the caller's current, already-expired-if-played set (see
-    /// `BoardView`'s `arrivedToken`) — this function makes no clearing decision
+    /// `ArrivalGate`) — this function makes no clearing decision
     /// of its own, only the membership test.
     public static func arrivalTransition(for tileID: UUID, arriving: Set<UUID>) -> ArrivalTransition {
         arriving.contains(tileID) ? .fromBag : .none
+    }
+
+    /// Whether a delivery still has a flight owed to it.
+    ///
+    /// Lifted out of `BoardView` because the bug was in the seeding: an `Int`
+    /// `@State` starting at 0 against an owner token already at 1 made every
+    /// freshly built view re-fly a hand that had been on the table for
+    /// minutes. `settled` is OPTIONAL, and nil means "this view has not seen a
+    /// delivery yet" rather than "the owner has delivered nothing" — the two
+    /// are indistinguishable at 0, which is the whole fault. The first
+    /// `begin(token:arriving:)` seeds from whatever the owner is already at and
+    /// flies nothing; only a token beyond that is a real arrival.
+    public struct ArrivalGate: Equatable, Sendable {
+
+        /// The last token whose flight is spent, or nil before the first
+        /// `begin`. Not settable from outside: seeding is a decision, and it is
+        /// made here rather than by an `if` in a view body.
+        public private(set) var settled: Int?
+
+        public init() {}
+
+        /// The ids `BoardSurface` should treat as arriving this frame. Empty
+        /// before the gate has been seeded, so the first frame of a fresh view
+        /// never flies anything — including the opening hand a board screen
+        /// inherits from a countdown that owned the previous view.
+        public func active(_ arriving: Set<UUID>, token: Int) -> Set<UUID> {
+            guard let settled else { return [] }
+            return token > settled ? arriving : []
+        }
+
+        /// Answers whether `token`'s flight should run, seeding on the first
+        /// call. True only for a delivery that landed while this gate was
+        /// already watching and that actually names tiles.
+        public mutating func begin(token: Int, arriving: Set<UUID>) -> Bool {
+            guard let seen = settled else { settled = token; return false }
+            guard token > seen, !arriving.isEmpty else { settled = max(seen, token); return false }
+            return true
+        }
+
+        /// The flight has had its time; the batch expires as a whole, so a tile
+        /// that was culled for the entire animation does not fly in later when
+        /// a pan re-inserts it.
+        public mutating func finish(token: Int) {
+            settled = max(settled ?? token, token)
+        }
     }
 
     /// `.placed` when the tile at `coord` has any orthogonal neighbor — one
