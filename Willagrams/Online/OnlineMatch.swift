@@ -132,8 +132,12 @@ public final class OnlineMatch {
     ///
     /// `weak` only to avoid a *second* owner, not to avoid keeping the session
     /// alive: ``attachRecorder(to:)`` stores the recorder strongly and
-    /// `MatchOutcomeRecorder` holds its session by a strong `let`, so this
-    /// façade already retains the session for its own life on both paths.
+    /// `MatchOutcomeRecorder` holds its session by a strong `let`, so wherever
+    /// there is an outcome store this façade already retains the session for
+    /// its own life. Not a guarantee: `attachRecorder(to:)` bails when
+    /// `outcomeStore` is nil, and a store is only defaulted for a
+    /// `SupabaseBackend`, so on a fake-backed façade this `weak` really is the
+    /// only reference and the session lives exactly as long as its owner.
     @ObservationIgnored private weak var session: MatchSession?
 
     /// Peers this façade has *observed* leaving and not seen return.

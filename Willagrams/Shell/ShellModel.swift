@@ -1177,9 +1177,11 @@ public final class ShellModel {
         //
         // ponytail: this returns before `build` runs, so on an online start it
         // would release the `OnlineMatch` with `transport.leave()` never called
-        // — both lobby models have already nil'd their own reference by here —
-        // and since that façade now owns the only presence pump, the channel
-        // would go with it. Unreachable today: `startMatch(_:)` always advances
+        // — both lobby models have already nil'd their own reference by here.
+        // The channel does come down, but only via `RealtimeMatchTransport`'s
+        // own `deinit`, at whatever moment the last reference drops; what is
+        // lost is the abandon, which only `OnlineMatch.leave()` starts, so the
+        // `matches` row is left open. Unreachable today: `startMatch(_:)` always advances
         // the route first, and every online start is gated on that. Build the
         // opponent before this guard and tear it down on the refusal if a
         // second caller ever reaches `install` without moving the route.
