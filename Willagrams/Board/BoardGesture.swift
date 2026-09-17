@@ -176,8 +176,13 @@ public enum BoardGesture {
         /// defers until the finger has cleared `tileHoldThreshold`, which is
         /// what makes a tap on a letter write nothing.
         public func shouldBegin(firstFrame: Bool, begun: Bool, after translation: CGSize) -> Bool {
-            guard !begun else { return false }
+            // `begun` gates the TILE arm only. Pan and paint begin on the frame
+            // their `Drag` was built and never again, so `firstFrame` is already
+            // the whole answer for them — and asking `begun` first would let a
+            // hold disowned at one point silently swallow a LATER pan or paint
+            // that happened to start at the same point.
             guard case .tile = grab else { return firstFrame }
+            guard !begun else { return false }
             let distance = (translation.width * translation.width
                             + translation.height * translation.height).squareRoot()
             return distance >= Self.tileHoldThreshold
@@ -197,6 +202,55 @@ public enum BoardGesture {
             var moved = camera
             moved.pan = startPan
             return moved.panned(by: translation)
+        }
+    }
+
+    /// Which gesture has already begun — and equally, which one has been
+    /// DISOWNED, because from `shouldBegin`'s side those are one fact.
+    ///
+    /// The fact is the gesture's `startLocation`, so it identifies the touch it
+    /// belongs to rather than being a bare flag a later touch could inherit.
+    ///
+    /// It lives here rather than as bookkeeping inside `BoardView` because a
+    /// pinch arriving is the one thing that makes the rule subtle, and the
+    /// gesture graph it arrives through cannot be reached from a test. `Drag`
+    /// decides whether a frame begins; this decides whether there is anything
+    /// left to begin. Both are ordinary values, so both can be replayed.
+    public struct Begun: Equatable, Sendable {
+
+        private var startLocation: CGPoint?
+
+        public init() {}
+
+        /// This gesture has begun — or has been taken away from the finger and
+        /// must never begin, which is recorded the same way.
+        ///
+        /// A pinch owns the touches outright: its frames are dropped, and the
+        /// finger under them is disowned, or it begins the instant the pinch
+        /// ends — with the whole of the pinch's travel arriving in one frame,
+        /// which teleports the tile and commits it there. Disowning is
+        /// unconditional on a dropped frame: the pinch may already have been
+        /// live when the drag's FIRST frame arrived, so there is no drag in
+        /// flight to recognise, and the frame's own `startLocation` is the only
+        /// thing that identifies the finger.
+        ///
+        /// `nil` is "there is no gesture to disown" — the pinch ending with
+        /// nothing in flight — and does nothing.
+        public mutating func mark(_ startLocation: CGPoint?) {
+            guard let startLocation else { return }
+            self.startLocation = startLocation
+        }
+
+        /// The gesture ended. The next touch is owed a fresh decision, whatever
+        /// point it happens to start from.
+        public mutating func clear() {
+            startLocation = nil
+        }
+
+        /// Whether the gesture starting at this point has begun or been
+        /// disowned.
+        public func has(_ startLocation: CGPoint) -> Bool {
+            self.startLocation == startLocation
         }
     }
 

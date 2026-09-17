@@ -37,15 +37,11 @@ public struct BoardView: View {
 
     @State private var drag: BoardGesture.Drag?
 
-    /// The `startLocation` of the gesture `BoardModel.began` has already been
-    /// called for, or nil when no gesture has begun.
-    ///
-    /// The plain fact "this gesture has begun", kept rather than inferred: the
-    /// model dropping its hold is NOT the same fact, since a second finger or a
-    /// lock landing mid-gesture cancels the hold while the finger is still
-    /// down, and a pickup must not fire twice for one touch. Cleared wherever
-    /// `drag` is — a released gesture and a cancelled one both end it.
-    @State private var begunAt: CGPoint?
+    /// Which gesture `BoardModel.began` has already run for, or been disowned
+    /// by a pinch. The rule itself is `BoardGesture.Begun`; this is only where
+    /// the value is kept, and it is cleared wherever `drag` is — a released
+    /// gesture and a cancelled one both end it.
+    @State private var begun = BoardGesture.Begun()
 
     /// The pinch midpoint at touch-down and the camera as it stood there.
     /// `MagnifyGesture` reports a magnification cumulative from that moment, so
@@ -216,7 +212,7 @@ public struct BoardView: View {
                 // `drag` is cleared too, or a later touch with the identical
                 // start point would carry the stale grab and never `began`.
                 .onChange(of: touching) { _, now in
-                    if !now { landInterrupted(); settledIfPanned(); drag = nil; begunAt = nil }
+                    if !now { landInterrupted(); settledIfPanned(); drag = nil; begun.clear() }
                 }
                 // Edge swipes (home indicator, Control Center) need a second
                 // swipe over the board, so they stop stealing tile drags —
@@ -231,7 +227,11 @@ public struct BoardView: View {
                 .overlay(
                     BoardPinchReporter(
                         onChange: { scale, midpoint in pinched(scale: scale, midpoint: midpoint) },
-                        onEnd: { pinch = nil; onCameraSettled?(camera) }
+                        // Disowning again as the pinch ENDS, not only on the
+                        // frames it swallowed: a pinch can begin and end without
+                        // one drag frame arriving in between, and then nothing
+                        // ever marked the finger still down under it.
+                        onEnd: { pinch = nil; begun.mark(drag?.startLocation); onCameraSettled?(camera) }
                     )
                 )
                 // Attached AFTER the camera gestures on purpose: the later
@@ -398,16 +398,12 @@ public struct BoardView: View {
                 // recognizer failing.
                 guard pinch == nil else {
                     // Dropping the frames is not enough now that a tile hold
-                    // waits for travel: a finger still under the threshold when
-                    // the second one landed would begin AFTER the pinch ended,
-                    // firing a pickup on a hold `pinched()` had already
-                    // cancelled and applying every point of the pinch's travel
-                    // in one frame — the tile would teleport and commit there.
-                    // Marking it begun disowns it instead, which is the inert
-                    // finger the note below describes. Only this gesture is
-                    // marked: a frame from some earlier, already-forgotten drag
-                    // must not stamp the fact for the next touch.
-                    if drag?.startLocation == value.startLocation { begunAt = value.startLocation }
+                    // waits for travel: the finger under them is disowned too,
+                    // or it begins the moment the pinch ends. Unconditionally —
+                    // the pinch may already have been live when this, the
+                    // drag's first frame, arrived, and then there is no `drag`
+                    // in flight to recognise the finger by.
+                    begun.mark(value.startLocation)
                     return
                 }
                 // ponytail: a lock landing mid-gesture leaves the carried grab
@@ -444,11 +440,11 @@ public struct BoardView: View {
                 // taken once, at touch-down.
                 if inFlight.shouldBegin(
                     firstFrame: carried == nil,
-                    begun: begunAt == value.startLocation,
+                    begun: begun.has(value.startLocation),
                     after: value.translation
                 ) {
                     model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics)
-                    begunAt = value.startLocation
+                    begun.mark(value.startLocation)
                 }
                 drag = inFlight
                 model.moved(to: value.translation)
@@ -495,7 +491,7 @@ public struct BoardView: View {
                 }
                 settledIfPanned()
                 drag = nil
-                begunAt = nil
+                begun.clear()
             }
     }
 

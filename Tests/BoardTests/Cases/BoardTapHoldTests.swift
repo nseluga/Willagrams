@@ -38,7 +38,7 @@ private final class RecordedHaptics: BoardHaptics, @unchecked Sendable {
 /// than inspected: `BoardGesture` and `BoardModel` are symlinked into this
 /// package, so the files the app compiles are the ones under test. The SwiftUI
 /// gesture graph is unreachable headlessly, so each case below REPLAYS what
-/// `BoardView.dragGesture` does frame by frame — including the `begunAt`
+/// `BoardView.dragGesture` does frame by frame — including the `begun`
 /// bookkeeping — and one structural check pins that the view really routes
 /// through the predicate.
 final class BoardTapHoldTests: XCTestCase {
@@ -91,7 +91,7 @@ final class BoardTapHoldTests: XCTestCase {
     ///
     /// `onChanged` per translation in `translations` (the first is the
     /// touch-down frame, where `carried` is nil), then `onEnded` with the last
-    /// of them. `begunAt` is the view's own `@State`, kept here the same way —
+    /// of them. `begun` is the view's own `@State`, kept here the same way —
     /// the fact that this gesture has begun, not an inference from what the
     /// model is holding. `perFrame` runs after each frame, standing in for what
     /// the rest of the view can do to the model mid-gesture.
@@ -105,19 +105,25 @@ final class BoardTapHoldTests: XCTestCase {
         camera: BoardCamera? = nil,
         haptics: RecordedHaptics,
         pinching: Set<Int> = [],
+        pinchEnded: Set<Int> = [],
         perFrame: ((Int, inout BoardModel) -> Void)? = nil
     ) -> BoardGesture.Drag {
         let camera = camera ?? Self.camera
         var drag: BoardGesture.Drag?
-        var begunAt: CGPoint?
+        // The view's own state, and the view's own rule — called, not copied.
+        var begun = BoardGesture.Begun()
         for (index, translation) in translations.enumerated() {
+            // `BoardPinchReporter.onEnd`, which can fire between two drag frames
+            // without either of them ever seeing `pinch != nil`.
+            if pinchEnded.contains(index) { begun.mark(drag?.startLocation) }
             // The frames `guard pinch == nil` swallows. Everything the view does
             // on one of them and nothing else: run whatever the pinch itself did
-            // to the model, mark the gesture the pinch took away as begun so it
-            // cannot begin later, and drop the frame.
+            // to the model, disown the finger the pinch took away, drop the
+            // frame. Unconditional, exactly as the view is: a pinch already live
+            // when the first frame arrives has no `drag` to be recognised by.
             if pinching.contains(index) {
                 perFrame?(index, &model)
-                if drag?.startLocation == start { begunAt = start }
+                begun.mark(start)
                 continue
             }
             let carried = drag.flatMap { $0.startLocation == start ? $0 : nil }
@@ -125,14 +131,16 @@ final class BoardTapHoldTests: XCTestCase {
                 at: start, in: board, selection: selection, camera: camera,
                 inputLocked: model.inputLocked, offsets: model.tileOffsets
             )
-            XCTAssertEqual(index == 0, carried == nil, "the replay lost the carried drag")
+            // Not "index == 0" any more: a pinch can swallow the opening frames,
+            // so the first frame that gets this far need not be the first one.
+            XCTAssertEqual(drag == nil, carried == nil, "the replay lost the carried drag")
             if inFlight.shouldBegin(
                 firstFrame: carried == nil,
-                begun: begunAt == start,
+                begun: begun.has(start),
                 after: translation
             ) {
                 model.began(inFlight.grab, on: board, against: Self.dictionary, haptics: haptics)
-                begunAt = start
+                begun.mark(start)
             }
             drag = inFlight
             model.moved(to: translation)
@@ -407,6 +415,73 @@ final class BoardTapHoldTests: XCTestCase {
         XCTAssertEqual(board, before, "the disowned finger committed the tile somewhere")
     }
 
+    /// Route A: the pinch is ALREADY live when the drag's first frame arrives.
+    ///
+    /// Both fingers landing in the same tick is an ordinary two-finger zoom
+    /// begun with one finger resting on a letter. The swallowed frame is then
+    /// the first one, so there is no `drag` in flight to recognise the finger
+    /// by — a disown conditional on one leaves this finger owned, and it begins
+    /// the moment the pinch ends, with the whole pinch travel in one frame.
+    func testAPinchAlreadyLiveOnTheFirstDragFrameLeavesTheFingerInert() throws {
+        let fixture = self.fixture()
+        var board = fixture.board
+        let before = board
+        var model = BoardModel(board: board, against: Self.dictionary)
+        let resting = model.tileOffsets
+        let feel = RecordedHaptics()
+
+        replay(
+            from: Self.touch,
+            translations: [
+                .zero,                          // first frame, pinch already live
+                CGSize(width: 90, height: 60),  // still pinching
+                CGSize(width: 120, height: 80), // pinch over, finger still down
+                CGSize(width: 180, height: 120) // and far past the threshold
+            ],
+            board: &board, model: &model, haptics: feel,
+            pinching: [0, 1], pinchEnded: [2],
+            perFrame: { index, model in if index == 0 { model.cancel() } }
+        )
+
+        XCTAssertEqual(feel.events, [], "a finger the pinch owned from its first frame buzzed: \(feel.events)")
+        XCTAssertTrue(model.dragging.isEmpty, "that finger picked tiles up once the pinch ended")
+        XCTAssertEqual(model.tileOffsets, resting, "the tile moved under a finger the pinch had disowned")
+        XCTAssertEqual(board, before, "the disowned finger committed the tile somewhere")
+    }
+
+    /// Route B: the pinch begins AND ends without one drag frame in between.
+    ///
+    /// Nothing is ever swallowed, so the guard branch never runs at all, and a
+    /// disown written only there cannot see this. The finger is still down,
+    /// `pinched()` has already cancelled its hold, and its next frame carries
+    /// every point the pinch travelled.
+    func testAPinchThatSwallowsNoDragFrameStillDisownsTheFingerUnderIt() throws {
+        let fixture = self.fixture()
+        var board = fixture.board
+        let before = board
+        var model = BoardModel(board: board, against: Self.dictionary)
+        let resting = model.tileOffsets
+        let feel = RecordedHaptics()
+
+        replay(
+            from: Self.touch,
+            translations: [
+                .zero,                          // down on the letter
+                CGSize(width: 4, height: 0),    // sub-threshold: nothing begun
+                CGSize(width: 150, height: 90), // the pinch came and went between these
+                CGSize(width: 180, height: 120)
+            ],
+            board: &board, model: &model, haptics: feel,
+            pinchEnded: [2],
+            perFrame: { index, model in if index == 1 { model.cancel() } }
+        )
+
+        XCTAssertEqual(feel.events, [], "a finger a frameless pinch took away buzzed: \(feel.events)")
+        XCTAssertTrue(model.dragging.isEmpty, "that finger picked tiles up after the pinch")
+        XCTAssertEqual(model.tileOffsets, resting, "the tile moved under a finger the pinch had disowned")
+        XCTAssertEqual(board, before, "the disowned finger committed the tile somewhere")
+    }
+
     // MARK: - Pan and paint are untouched
 
     func testPanAndPaintStillBeginAtTouchDownAndOnlyThere() throws {
@@ -431,7 +506,13 @@ final class BoardTapHoldTests: XCTestCase {
             XCTAssertTrue(drag.shouldBegin(firstFrame: true, begun: false, after: .zero))
             XCTAssertFalse(drag.shouldBegin(firstFrame: false, begun: false, after: .zero))
             XCTAssertFalse(drag.shouldBegin(firstFrame: false, begun: false, after: CGSize(width: 200, height: 200)))
-            XCTAssertFalse(drag.shouldBegin(firstFrame: true, begun: true, after: .zero), "began twice in one gesture")
+            // `begun` does NOT speak for pan and paint: `firstFrame` is a `Drag`
+            // built this very frame, which already says "once per gesture" for
+            // them. It has to be that way — the disown a pinch writes is a point,
+            // and a pan or a sweep starting later at that same point must still
+            // begin. Beginning twice is prevented by `firstFrame` alone here, and
+            // the tile arm below is where `begun` does the work.
+            XCTAssertTrue(drag.shouldBegin(firstFrame: true, begun: true, after: .zero))
         }
         // And a tile grab past the threshold is refused once it has begun, which
         // is the only thing standing between a held tile and a pickup per frame.
@@ -481,14 +562,14 @@ final class BoardTapHoldTests: XCTestCase {
             .joined(separator: " ")
         XCTAssertTrue(
             normalized.contains(
-                "if inFlight.shouldBegin( firstFrame: carried == nil, begun: begunAt == value.startLocation, after: value.translation ) { model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics) begunAt = value.startLocation }"
+                "if inFlight.shouldBegin( firstFrame: carried == nil, begun: begun.has(value.startLocation), after: value.translation ) { model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics) begun.mark(value.startLocation) }"
             ),
             "BoardView no longer gates the tile hold on the travel threshold"
         )
         // The fact it keeps must be put down again on BOTH ends of a gesture,
         // or the next touch at the same point never begins at all.
         XCTAssertTrue(
-            normalized.contains("if !now { landInterrupted(); settledIfPanned(); drag = nil; begunAt = nil }"),
+            normalized.contains("if !now { landInterrupted(); settledIfPanned(); drag = nil; begun.clear() }"),
             "BoardView does not forget the begun gesture when one is cancelled"
         )
         // The release end. `onEnded`'s whole body would drag the commit block
@@ -498,7 +579,7 @@ final class BoardTapHoldTests: XCTestCase {
         // `BoardSourceTests` is what covers everything outside it.
         XCTAssertTrue(
             normalized.contains(
-                "model.endedPainting() } settledIfPanned() drag = nil begunAt = nil } }"
+                "model.endedPainting() } settledIfPanned() drag = nil begun.clear() } }"
             ),
             "BoardView does not forget the begun gesture when one is released"
         )

@@ -281,8 +281,8 @@ final class BoardSourceTests: XCTestCase {
             "BoardView is back on an exclusive chain, which starves the drag of every single-finger touch"
         )
         // The guard as one contiguous whole statement. Dropping the frames is
-        // only half of it now that a tile hold waits for travel: the gesture the
-        // pinch took away must also be marked begun, or a finger still under the
+        // only half of it now that a tile hold waits for travel: the finger the
+        // pinch took away must also be disowned, or one still under the
         // threshold when the second one landed begins AFTER the pinch ends —
         // firing a pickup on a hold `pinched()` already cancelled and applying
         // every point of the pinch's travel in one frame, which teleports the
@@ -293,7 +293,7 @@ final class BoardSourceTests: XCTestCase {
             .joined(separator: " ")
         XCTAssertTrue(
             normalized.contains(
-                "guard pinch == nil else { if drag?.startLocation == value.startLocation { begunAt = value.startLocation } return }"
+                "guard pinch == nil else { begun.mark(value.startLocation) return }"
             ),
             "BoardView either keeps handling drag frames while a pinch is live, or lets a finger the pinch took away begin a hold once the pinch ends"
         )
@@ -1266,50 +1266,64 @@ final class BoardSourceTests: XCTestCase {
     // MARK: - The view's "this gesture has begun" fact is written nowhere else
 
     /// A literal starting at `if inFlight.shouldBegin(` proves the gate's own
-    /// text and nothing around it. Inserting one unconditional `begunAt = nil`
+    /// text and nothing around it. Inserting one unconditional `begun.clear()`
     /// just ABOVE that gate leaves it matching word for word while `begun` is
     /// false on every frame — which is the original bug in full, a pickup
     /// haptic per frame for the whole drag. So the fact is pinned by its WRITE
-    /// COUNT: set in one place, put down in exactly the two places a gesture
-    /// can end, read in one. Any extra write anywhere in the file fails here,
-    /// wherever it is and whatever it looks like.
+    /// COUNT: marked where the hold begins and where a pinch disowns a gesture,
+    /// put down in exactly the two places a gesture can end. Any extra write
+    /// anywhere in the file fails here, wherever it is and whatever it is.
     func testBoardViewWritesTheBegunGestureFactInExactlyThePlacesThatEndAGesture() throws {
         let text = try view()
         func count(_ needle: String) -> Int { text.components(separatedBy: needle).count - 1 }
 
+        // Three marks: the hold beginning, a swallowed pinch frame disowning the
+        // finger under it, and the pinch ENDING — that third one is not
+        // redundant, since a pinch can begin and end without a single drag frame
+        // arriving in between, and then nothing else ever marks that finger.
         XCTAssertEqual(
-            count("begunAt = value.startLocation"), 2,
-            "BoardView records the begun gesture somewhere other than the began call and the pinch's disowning"
+            count("begun.mark("), 3,
+            "BoardView marks the begun fact \(count("begun.mark(")) times, not once per way a gesture begins or is taken away"
         )
         XCTAssertEqual(
-            count("begunAt = nil"), 2,
-            "BoardView clears the begun gesture \(count("begunAt = nil")) times, not once per way a gesture ends"
+            count("begun.mark(drag?.startLocation)"), 1,
+            "BoardView does not disown the finger left under a pinch that began and ended between two drag frames"
         )
         XCTAssertEqual(
-            count("begun: begunAt == value.startLocation"), 1,
+            count("begun.clear()"), 2,
+            "BoardView clears the begun gesture \(count("begun.clear()")) times, not once per way a gesture ends"
+        )
+        XCTAssertEqual(
+            count("begun.has(value.startLocation)"), 1,
             "BoardView reads the begun fact somewhere other than the hold gate"
         )
-        // Four writes and no fifth: the gate's own record, the pinch disowning
-        // a gesture it took away, and one clear per way a gesture ends. Counted
-        // as WRITES rather than as total mentions, so a new read of the fact is
-        // free while a new write anywhere in the file fails here.
+        // Five writes and no sixth. Counted as WRITES rather than as mentions,
+        // so a new read of the fact is free while a new write anywhere in the
+        // file fails here.
         XCTAssertEqual(
-            count("begunAt = "), 4,
-            "BoardView writes begunAt \(count("begunAt = ")) times — something sets or clears it outside those four places"
+            count("begun.mark(") + count("begun.clear()"), 5,
+            "BoardView writes the begun fact somewhere outside those five places"
         )
 
-        // Teeth: the same file with one more `begunAt = nil` inserted above the
-        // gate — the exact mutation this is here to catch — counts six, not
-        // five, and three clears, not two.
-        // A fixed sample rather than `text` itself, so the teeth still read the
-        // same numbers when the file under test is the mutated one.
-        let sound = "guard pinch == nil else { begunAt = value.startLocation \nreturn }\nif !now { drag = nil; begunAt = nil }\nif d.shouldBegin(begun: begunAt == value.startLocation) { began() \nbegunAt = value.startLocation }\ndrag = nil\nbegunAt = nil"
-        XCTAssertEqual(sound.components(separatedBy: "begunAt = ").count - 1, 4)
-        let regressed = sound.replacingOccurrences(of: "if d.shouldBegin(", with: "begunAt = nil\nif d.shouldBegin(")
-        XCTAssertEqual(regressed.components(separatedBy: "begunAt = ").count - 1, 5)
-        XCTAssertEqual(regressed.components(separatedBy: "begunAt = nil").count - 1, 3)
+        // Teeth: a fixed sample rather than `text` itself, so the teeth still
+        // read the same numbers when the file under test is the mutated one.
+        let sound = "guard pinch == nil else { begun.mark(value.startLocation) \nreturn }\nonEnd: { begun.mark(drag?.startLocation) }\nif !now { drag = nil; begun.clear() }\nif d.shouldBegin(begun: begun.has(value.startLocation)) { began() \nbegun.mark(value.startLocation) }\ndrag = nil\nbegun.clear()"
+        func tally(_ s: String) -> Int {
+            s.components(separatedBy: "begun.mark(").count - 1
+                + s.components(separatedBy: "begun.clear()").count - 1
+        }
+        XCTAssertEqual(tally(sound), 5)
+        // The mutation this exists to catch: one unconditional clear above the
+        // gate, which the gate's own literal cannot see.
+        let regressed = sound.replacingOccurrences(of: "if d.shouldBegin(", with: "begun.clear()\nif d.shouldBegin(")
+        XCTAssertEqual(tally(regressed), 6)
+        XCTAssertEqual(regressed.components(separatedBy: "begun.clear()").count - 1, 3)
+        // And the one that drops the pinch-end disowning, leaving the mark count
+        // right in total but wrong per site.
+        let routeB = sound.replacingOccurrences(of: "onEnd: { begun.mark(drag?.startLocation) }\n", with: "onEnd: { }\n")
+        XCTAssertEqual(routeB.components(separatedBy: "begun.mark(drag?.startLocation)").count - 1, 0)
         // A read added is not a write: the write count must not move for one.
-        let read = sound.replacingOccurrences(of: "began()", with: "began(begunAt)")
-        XCTAssertEqual(read.components(separatedBy: "begunAt = ").count - 1, 4)
+        let read = sound.replacingOccurrences(of: "began()", with: "began(begun.has(value.startLocation))")
+        XCTAssertEqual(tally(read), 5)
     }
 }
