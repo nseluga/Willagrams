@@ -106,12 +106,16 @@ final class BoardTapHoldTests: XCTestCase {
         haptics: RecordedHaptics,
         pinching: Set<Int> = [],
         pinchEnded: Set<Int> = [],
+        carrying: BoardGesture.Begun = BoardGesture.Begun(),
         perFrame: ((Int, inout BoardModel) -> Void)? = nil
-    ) -> BoardGesture.Drag {
+    ) -> (drag: BoardGesture.Drag, begun: BoardGesture.Begun) {
         let camera = camera ?? Self.camera
         var drag: BoardGesture.Drag?
         // The view's own state, and the view's own rule — called, not copied.
-        var begun = BoardGesture.Begun()
+        // Taken as a parameter and handed back, because in the view it is
+        // `@State`: it OUTLIVES the gesture, and a test that only ever replays
+        // one gesture cannot see what it carries into the next.
+        var begun = carrying
         for (index, translation) in translations.enumerated() {
             // `BoardPinchReporter.onEnd`, which can fire between two drag frames
             // without either of them ever seeing `pinch != nil`.
@@ -133,6 +137,12 @@ final class BoardTapHoldTests: XCTestCase {
             )
             // Not "index == 0" any more: a pinch can swallow the opening frames,
             // so the first frame that gets this far need not be the first one.
+            // KNOWN LIMIT: every frame here shares one `start`, so this is the
+            // weaker half of the view's test. The view's other route to
+            // `carried == nil` — a `drag` left by a DIFFERENT finger — is not
+            // modelled, and a same-point/different-finger mix-up would pass
+            // here. Giving `replay` per-frame start points is the fix, and it
+            // reshapes every case in this file, so it waits for a reason.
             XCTAssertEqual(drag == nil, carried == nil, "the replay lost the carried drag")
             if inFlight.shouldBegin(
                 firstFrame: carried == nil,
@@ -160,7 +170,9 @@ final class BoardTapHoldTests: XCTestCase {
         } else if case .some(.paint) = drag?.grab {
             model.endedPainting()
         }
-        return drag!
+        // Both ends of a gesture put the fact down, as the view does.
+        begun.clear()
+        return (drag!, begun)
     }
 
     /// The two cameras every threshold case runs at. The threshold is a
@@ -191,7 +203,7 @@ final class BoardTapHoldTests: XCTestCase {
 
         // The control: this point really is on the letter, so the assertions
         // below are not passing on a touch that simply missed.
-        let drag = replay(
+        let (drag, _) = replay(
             from: Self.touch,
             // A touch-down frame and a second frame with the hand's own jitter,
             // well inside UIKit's tap slop — a real tap is never exactly zero.
@@ -482,6 +494,67 @@ final class BoardTapHoldTests: XCTestCase {
         XCTAssertEqual(board, before, "the disowned finger committed the tile somewhere")
     }
 
+    /// The fact is gesture-scoped, and `@State` is not.
+    ///
+    /// Every case above replays ONE gesture, so none of them can see what the
+    /// view carries into the NEXT touch. A disown that is never put down is a
+    /// tile that can never be picked up again for as long as the board is on
+    /// screen — silent, permanent, and invisible to a suite of single-gesture
+    /// replays. So: disown a gesture, end it, and touch the same tile again.
+    func testADisownedGestureDoesNotDisownTheNextTouchOnTheSameTile() throws {
+        let fixture = self.fixture()
+        var board = fixture.board
+        var model = BoardModel(board: board, against: Self.dictionary)
+
+        // One pinch-disowned gesture, exactly as Route A leaves it.
+        let first = RecordedHaptics()
+        let (_, carried) = replay(
+            from: Self.touch,
+            translations: [.zero, CGSize(width: 90, height: 60), CGSize(width: 180, height: 120)],
+            board: &board, model: &model, haptics: first,
+            pinching: [0, 1], pinchEnded: [2],
+            perFrame: { index, model in if index == 0 { model.cancel() } }
+        )
+        XCTAssertEqual(first.events, [], "the disowned gesture was not inert to begin with")
+
+        // The finger lifts, and comes back down on the same tile. This one is
+        // an ordinary drag and must behave like one.
+        let second = RecordedHaptics()
+        replay(
+            from: Self.touch,
+            translations: [.zero, CGSize(width: 20, height: 0), CGSize(width: 48, height: 0)],
+            board: &board, model: &model, haptics: second,
+            carrying: carried
+        )
+        XCTAssertEqual(second.pickups, 1, "the next touch on that tile was dead: \(second.events)")
+        XCTAssertNotEqual(board, fixture.board, "the second gesture moved nothing — the tile is inert")
+        XCTAssertNil(board.placements[Self.home], "the second gesture never left the cell it started in")
+    }
+
+    /// `Begun`'s own claim, which is a POINT and not a flag.
+    ///
+    /// A `startLocation != nil` reading of the same field passes every replay in
+    /// this file, because a replay drives one finger from one point. It is still
+    /// wrong: the fact identifies the touch it belongs to, and a gesture that
+    /// starts somewhere else has inherited nothing.
+    func testTheBegunFactBelongsToOneTouchAndNotToTheNextOne() {
+        var begun = BoardGesture.Begun()
+        let here = Self.touch
+        let elsewhere = CGPoint(x: Self.touch.x + 200, y: Self.touch.y + 96)
+
+        XCTAssertFalse(begun.has(here), "a fresh fact already claims a gesture")
+        begun.mark(here)
+        XCTAssertTrue(begun.has(here), "the marked gesture is not recorded")
+        XCTAssertFalse(begun.has(elsewhere), "a gesture starting elsewhere inherited another one's fact")
+
+        // `nil` is "nothing in flight to disown", not "forget what you knew".
+        begun.mark(nil)
+        XCTAssertTrue(begun.has(here), "disowning nothing threw away the fact")
+
+        begun.clear()
+        XCTAssertFalse(begun.has(here), "the fact outlived the gesture that set it")
+    }
+
     // MARK: - Pan and paint are untouched
 
     func testPanAndPaintStillBeginAtTouchDownAndOnlyThere() throws {
@@ -534,7 +607,7 @@ final class BoardTapHoldTests: XCTestCase {
         model.enterSelection()
         let feel = RecordedHaptics()
 
-        let drag = replay(
+        let (drag, _) = replay(
             from: Self.touch,
             translations: [.zero, CGSize(width: 48 * 6, height: 48 * 4)],
             board: &board, model: &model, selection: model.selection, haptics: feel
