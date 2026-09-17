@@ -1394,6 +1394,14 @@ final class BoardSourceTests: XCTestCase {
             "the flight no longer asks the gate whether this delivery is a real one"
         )
         XCTAssertTrue(text.contains("arrival.finish(token: arrivalToken)"), "the batch is never expired")
+        // The gated answer has to be the one the surface is actually handed.
+        // Feeding it the raw `arriving` instead leaves `activeArriving` and the
+        // whole gate dead code that no other assertion here would miss, and the
+        // fresh board re-flies the delivered hand exactly as before.
+        XCTAssertTrue(
+            text.contains("arriving: activeArriving,"),
+            "BoardSurface is fed the ungated arriving set, so the gate decides nothing"
+        )
         // The decision must not be re-made in the view: no comparison of the
         // owner's token against anything here.
         XCTAssertTrue(
