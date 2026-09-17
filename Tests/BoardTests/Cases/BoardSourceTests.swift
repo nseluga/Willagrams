@@ -280,9 +280,22 @@ final class BoardSourceTests: XCTestCase {
             text.contains("exclusively(before:"),
             "BoardView is back on an exclusive chain, which starves the drag of every single-finger touch"
         )
+        // The guard as one contiguous whole statement. Dropping the frames is
+        // only half of it now that a tile hold waits for travel: the gesture the
+        // pinch took away must also be marked begun, or a finger still under the
+        // threshold when the second one landed begins AFTER the pinch ends —
+        // firing a pickup on a hold `pinched()` already cancelled and applying
+        // every point of the pinch's travel in one frame, which teleports the
+        // tile and commits it there.
+        let normalized = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
         XCTAssertTrue(
-            text.contains("guard pinch == nil else { return }"),
-            "BoardView drops no drag frame while a pinch is live, so pan and zoom fight over the camera"
+            normalized.contains(
+                "guard pinch == nil else { if drag?.startLocation == value.startLocation { begunAt = value.startLocation } return }"
+            ),
+            "BoardView either keeps handling drag frames while a pinch is live, or lets a finger the pinch took away begin a hold once the pinch ends"
         )
     }
 
@@ -1211,9 +1224,9 @@ final class BoardSourceTests: XCTestCase {
         )
         XCTAssertTrue(
             normalized.contains(
-                "func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
+                "func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
             ),
-            "BoardPinch's teardown does not end the pinch and take the recognizer off the window"
+            "BoardPinch's teardown does not end a live pinch BEFORE taking the recognizer off the window"
         )
         // The other half of the same wiring, and the half a literal aimed at
         // `detach` cannot see: if `attach` stops handing the recognizer to the
@@ -1238,9 +1251,13 @@ final class BoardSourceTests: XCTestCase {
         let gone = "struct BoardPinchReporter: UIViewRepresentable { func makeCoordinator() -> Coordinator { Coordinator() } }"
         XCTAssertFalse(gone.contains("static func dismantleUIView(_ uiView: Surface, coordinator: Coordinator) { coordinator.detach() }"))
         let hollow = "func detach() { }"
-        XCTAssertFalse(hollow.contains("func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
+        XCTAssertFalse(hollow.contains("func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
         let silent = "func detach() { if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
-        XCTAssertFalse(silent.contains("func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
+        XCTAssertFalse(silent.contains("func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"), "a teardown that never ends the pinch still matched")
+        // And the ordering the literal exists to hold: ending AFTER the removal
+        // is a pinch the owner never hears the end of.
+        let reordered = "func detach() { if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } recognizer = nil surface = nil }"
+        XCTAssertFalse(reordered.contains("func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"), "a teardown that ends the pinch after removing it still matched")
         let unstored = "func attach(reporting view: UIView) { host.addGestureRecognizer(pinch) surface = view }"
         XCTAssertFalse(unstored.contains("host.addGestureRecognizer(pinch) recognizer = pinch surface = view }"))
         XCTAssertEqual("let pinch = UIPinchGestureRecognizer() surface = view".components(separatedBy: "recognizer = ").count - 1, 0)
@@ -1261,8 +1278,8 @@ final class BoardSourceTests: XCTestCase {
         func count(_ needle: String) -> Int { text.components(separatedBy: needle).count - 1 }
 
         XCTAssertEqual(
-            count("begunAt = value.startLocation"), 1,
-            "BoardView records the begun gesture somewhere other than beside the one began call"
+            count("begunAt = value.startLocation"), 2,
+            "BoardView records the begun gesture somewhere other than the began call and the pinch's disowning"
         )
         XCTAssertEqual(
             count("begunAt = nil"), 2,
@@ -1272,11 +1289,13 @@ final class BoardSourceTests: XCTestCase {
             count("begun: begunAt == value.startLocation"), 1,
             "BoardView reads the begun fact somewhere other than the hold gate"
         )
-        // Declaration, one read, one set, two clears: five mentions and no
-        // sixth. This is the assertion an inserted write trips first.
+        // Four writes and no fifth: the gate's own record, the pinch disowning
+        // a gesture it took away, and one clear per way a gesture ends. Counted
+        // as WRITES rather than as total mentions, so a new read of the fact is
+        // free while a new write anywhere in the file fails here.
         XCTAssertEqual(
-            count("begunAt"), 5,
-            "BoardView mentions begunAt \(count("begunAt")) times — something writes or reads it outside the gesture's two ends"
+            count("begunAt = "), 4,
+            "BoardView writes begunAt \(count("begunAt = ")) times — something sets or clears it outside those four places"
         )
 
         // Teeth: the same file with one more `begunAt = nil` inserted above the
@@ -1284,10 +1303,13 @@ final class BoardSourceTests: XCTestCase {
         // five, and three clears, not two.
         // A fixed sample rather than `text` itself, so the teeth still read the
         // same numbers when the file under test is the mutated one.
-        let sound = "@State private var begunAt: CGPoint?\nif !now { drag = nil; begunAt = nil }\nif d.shouldBegin(begun: begunAt == value.startLocation) { began() \nbegunAt = value.startLocation }\ndrag = nil\nbegunAt = nil"
-        XCTAssertEqual(sound.components(separatedBy: "begunAt").count - 1, 5)
+        let sound = "guard pinch == nil else { begunAt = value.startLocation \nreturn }\nif !now { drag = nil; begunAt = nil }\nif d.shouldBegin(begun: begunAt == value.startLocation) { began() \nbegunAt = value.startLocation }\ndrag = nil\nbegunAt = nil"
+        XCTAssertEqual(sound.components(separatedBy: "begunAt = ").count - 1, 4)
         let regressed = sound.replacingOccurrences(of: "if d.shouldBegin(", with: "begunAt = nil\nif d.shouldBegin(")
-        XCTAssertEqual(regressed.components(separatedBy: "begunAt").count - 1, 6)
+        XCTAssertEqual(regressed.components(separatedBy: "begunAt = ").count - 1, 5)
         XCTAssertEqual(regressed.components(separatedBy: "begunAt = nil").count - 1, 3)
+        // A read added is not a write: the write count must not move for one.
+        let read = sound.replacingOccurrences(of: "began()", with: "began(begunAt)")
+        XCTAssertEqual(read.components(separatedBy: "begunAt = ").count - 1, 4)
     }
 }

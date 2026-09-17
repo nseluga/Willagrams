@@ -396,7 +396,20 @@ public struct BoardView: View {
                 // drag frames a second finger produces are dropped rather than
                 // writing a pan from a stale snapshot. Checked state, not a
                 // recognizer failing.
-                guard pinch == nil else { return }
+                guard pinch == nil else {
+                    // Dropping the frames is not enough now that a tile hold
+                    // waits for travel: a finger still under the threshold when
+                    // the second one landed would begin AFTER the pinch ended,
+                    // firing a pickup on a hold `pinched()` had already
+                    // cancelled and applying every point of the pinch's travel
+                    // in one frame — the tile would teleport and commit there.
+                    // Marking it begun disowns it instead, which is the inert
+                    // finger the note below describes. Only this gesture is
+                    // marked: a frame from some earlier, already-forgotten drag
+                    // must not stamp the fact for the next touch.
+                    if drag?.startLocation == value.startLocation { begunAt = value.startLocation }
+                    return
+                }
                 // ponytail: a lock landing mid-gesture leaves the carried grab
                 // `.tile`, so that finger neither drags nor pans until it lifts
                 // — the next touch down pans normally. Rebuilding the `Drag`

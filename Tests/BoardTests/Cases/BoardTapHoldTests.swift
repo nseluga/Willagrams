@@ -104,12 +104,22 @@ final class BoardTapHoldTests: XCTestCase {
         selection: BoardSelection = BoardSelection(),
         camera: BoardCamera? = nil,
         haptics: RecordedHaptics,
+        pinching: Set<Int> = [],
         perFrame: ((Int, inout BoardModel) -> Void)? = nil
     ) -> BoardGesture.Drag {
         let camera = camera ?? Self.camera
         var drag: BoardGesture.Drag?
         var begunAt: CGPoint?
         for (index, translation) in translations.enumerated() {
+            // The frames `guard pinch == nil` swallows. Everything the view does
+            // on one of them and nothing else: run whatever the pinch itself did
+            // to the model, mark the gesture the pinch took away as begun so it
+            // cannot begin later, and drop the frame.
+            if pinching.contains(index) {
+                perFrame?(index, &model)
+                if drag?.startLocation == start { begunAt = start }
+                continue
+            }
             let carried = drag.flatMap { $0.startLocation == start ? $0 : nil }
             let inFlight = carried ?? BoardGesture.Drag(
                 at: start, in: board, selection: selection, camera: camera,
@@ -328,6 +338,73 @@ final class BoardTapHoldTests: XCTestCase {
             )
             XCTAssertEqual(feel.pickups, 1, "an unlock re-lifted the tile: \(feel.events)")
         }
+
+        // The lock in the PRE-begin order, for the same reason the pinch gets
+        // its own case above: under a threshold there is now a window where the
+        // lock lands and lifts before the hold ever began. Unlike the pinch this
+        // one is benign and stays allowed — `began` refuses while locked, and
+        // once the lock lifts the tile simply starts following a finger that is
+        // still down, landing where that finger is. What must not happen is it
+        // happening TWICE.
+        do {
+            let fixture = self.fixture()
+            var board = fixture.board
+            var model = BoardModel(board: board, against: Self.dictionary)
+            let feel = RecordedHaptics()
+            replay(
+                from: Self.touch,
+                translations: [
+                    .zero, CGSize(width: 4, height: 0),
+                    CGSize(width: 40, height: 0), CGSize(width: 60, height: 8)
+                ],
+                board: &board, model: &model, haptics: feel,
+                perFrame: { index, model in
+                    if index == 1 { model.inputLocked = true; model.inputLocked = false }
+                }
+            )
+            XCTAssertEqual(feel.pickups, 1, "a lock landing before the hold began cost or doubled the pickup: \(feel.events)")
+        }
+    }
+
+    /// The same cancel, arriving BEFORE the hold ever began.
+    ///
+    /// The order above is the easy one: the tile was already lifted, so the
+    /// model carrying tiles and the gesture having begun agree. Under a travel
+    /// threshold there is a window where they do not — finger down on a letter,
+    /// a few points of travel, second finger lands. Dropping the pinch's frames
+    /// is then not enough: the gesture has not begun, so when the pinch ends and
+    /// the finger keeps going, the very next frame is past the threshold and
+    /// begins — a pickup on a hold `pinched()` already cancelled, with the whole
+    /// of the pinch's travel applied in one step, which teleports the tile and
+    /// commits it there. The guard has to disown the gesture, not just mute it.
+    func testAPinchArrivingBeforeTheHoldBeganLeavesTheFingerInert() throws {
+        let fixture = self.fixture()
+        var board = fixture.board
+        let before = board
+        var model = BoardModel(board: board, against: Self.dictionary)
+        let restingOffsets = model.tileOffsets
+        let feel = RecordedHaptics()
+
+        replay(
+            from: Self.touch,
+            translations: [
+                .zero,                             // down on the letter
+                CGSize(width: 4, height: 0),       // sub-threshold: nothing begun
+                CGSize(width: 30, height: 20),     // second finger down, pinch owns it
+                CGSize(width: 90, height: 60),     // still pinching, fingers travel
+                CGSize(width: 120, height: 80),    // pinch over, this finger still down
+                CGSize(width: 180, height: 120)    // and far past the threshold now
+            ],
+            board: &board, model: &model, haptics: feel,
+            pinching: [2, 3],
+            perFrame: { index, model in if index == 2 { model.cancel() } }
+        )
+
+        XCTAssertEqual(feel.pickups, 0, "a pinch-cancelled finger lifted a tile after the pinch: \(feel.events)")
+        XCTAssertEqual(feel.events, [], "a pinch-cancelled finger buzzed: \(feel.events)")
+        XCTAssertTrue(model.dragging.isEmpty, "the finger picked tiles up after the pinch took it away")
+        XCTAssertEqual(model.tileOffsets, restingOffsets, "the tile moved under a finger the pinch had disowned")
+        XCTAssertEqual(board, before, "the disowned finger committed the tile somewhere")
     }
 
     // MARK: - Pan and paint are untouched
