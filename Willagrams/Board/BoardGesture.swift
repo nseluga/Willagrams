@@ -143,6 +143,43 @@ public enum BoardGesture {
             self.grab = hit.map { .tile($0.tile, at: $0.coord) } ?? .pan
         }
 
+        /// How far, in points, a finger that took hold of a TILE must travel
+        /// before the hold is actually taken.
+        ///
+        /// A tap is a drag of zero distance to `DragGesture(minimumDistance: 0)`
+        /// — which is load-bearing, since pan and paint must start at touch-down
+        /// and a competing tap gesture loses every sequence to a zero-distance
+        /// drag. So the double tap that enters selection mode arrives only after
+        /// the first tap has already lifted a tile, buzzed, and dropped it back
+        /// where it was. Deferring just the TILE hold past this distance is what
+        /// makes a tap write nothing, while leaving `.pan` and `.paint` taking
+        /// hold on the very first frame as they always did.
+        ///
+        /// Below UIKit's own ~10pt tap slop, so a finger that UIKit still calls
+        /// a tap never lifts a tile; a sixth of a cell at the default zoom, so a
+        /// finger that means to drag has not perceptibly waited.
+        public static let tileHoldThreshold: CGFloat = 8
+
+        /// Whether `BoardModel.began` should run on THIS frame.
+        ///
+        /// `began` fires a pickup and must run at most once per gesture, so the
+        /// two facts the caller has stand in for "not yet begun": `firstFrame`
+        /// is a `Drag` built this very frame, and `holding` is the model already
+        /// carrying tiles.
+        ///
+        /// `.pan` and `.paint` begin at touch-down and never again — neither
+        /// takes a `TileDrag`, so `holding` would stay false for them all
+        /// gesture and cannot be the gate. A `.tile` grab defers until the
+        /// finger has cleared `tileHoldThreshold`, and `holding` is what stops
+        /// every frame after that firing a second pickup.
+        public func shouldBegin(firstFrame: Bool, holding: Bool, after translation: CGSize) -> Bool {
+            guard case .tile = grab else { return firstFrame }
+            guard !holding else { return false }
+            let distance = (translation.width * translation.width
+                            + translation.height * translation.height).squareRoot()
+            return distance >= Self.tileHoldThreshold
+        }
+
         /// `camera` after a cumulative `translation`: the LIVE camera with its
         /// pan moved one-to-one with the finger, or the live camera untouched
         /// for a tile grab — moving the tile is the next item's job, not the
