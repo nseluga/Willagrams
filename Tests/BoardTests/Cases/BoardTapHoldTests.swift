@@ -461,6 +461,18 @@ final class BoardTapHoldTests: XCTestCase {
         XCTAssertEqual(board, before, "the disowned finger committed the tile somewhere")
     }
 
+    /// KNOWN LIMIT, for whoever reads Routes A and B as the whole ordering
+    /// story: one shape reaches NEITHER disown site. A pinch that begins and
+    /// ends before the drag's first `onChanged` is ever delivered leaves `drag`
+    /// nil at `BoardView.swift:230`, so `mark(drag?.startLocation)` is the
+    /// documented no-op and that finger is never disowned. It is harmless by
+    /// value, which is why there is no fix here: with `minimumDistance: 0` the
+    /// drag's first frame is all but coincident with touch-down, so the
+    /// translation carried across that window is ~0 — nothing to teleport and
+    /// nothing to commit. `replay` cannot model it either: it always delivers
+    /// frame 0. Read the coverage below as every ordering a frame takes part
+    /// in, not as every ordering there is.
+    ///
     /// Route B: the pinch begins AND ends without one drag frame in between.
     ///
     /// Nothing is ever swallowed, so the guard branch never runs at all, and a
