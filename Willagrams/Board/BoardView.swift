@@ -37,6 +37,16 @@ public struct BoardView: View {
 
     @State private var drag: BoardGesture.Drag?
 
+    /// The `startLocation` of the gesture `BoardModel.began` has already been
+    /// called for, or nil when no gesture has begun.
+    ///
+    /// The plain fact "this gesture has begun", kept rather than inferred: the
+    /// model dropping its hold is NOT the same fact, since a second finger or a
+    /// lock landing mid-gesture cancels the hold while the finger is still
+    /// down, and a pickup must not fire twice for one touch. Cleared wherever
+    /// `drag` is — a released gesture and a cancelled one both end it.
+    @State private var begunAt: CGPoint?
+
     /// The pinch midpoint at touch-down and the camera as it stood there.
     /// `MagnifyGesture` reports a magnification cumulative from that moment, so
     /// it has to be applied to that camera rather than to the live one — and
@@ -206,7 +216,7 @@ public struct BoardView: View {
                 // `drag` is cleared too, or a later touch with the identical
                 // start point would carry the stale grab and never `began`.
                 .onChange(of: touching) { _, now in
-                    if !now { landInterrupted(); settledIfPanned(); drag = nil }
+                    if !now { landInterrupted(); settledIfPanned(); drag = nil; begunAt = nil }
                 }
                 // Edge swipes (home indicator, Control Center) need a second
                 // swipe over the board, so they stop stealing tile drags —
@@ -421,10 +431,11 @@ public struct BoardView: View {
                 // taken once, at touch-down.
                 if inFlight.shouldBegin(
                     firstFrame: carried == nil,
-                    holding: !model.dragging.isEmpty,
+                    begun: begunAt == value.startLocation,
                     after: value.translation
                 ) {
                     model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics)
+                    begunAt = value.startLocation
                 }
                 drag = inFlight
                 model.moved(to: value.translation)
@@ -471,6 +482,7 @@ public struct BoardView: View {
                 }
                 settledIfPanned()
                 drag = nil
+                begunAt = nil
             }
     }
 

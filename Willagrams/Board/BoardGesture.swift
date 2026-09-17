@@ -162,19 +162,22 @@ public enum BoardGesture {
 
         /// Whether `BoardModel.began` should run on THIS frame.
         ///
-        /// `began` fires a pickup and must run at most once per gesture, so the
-        /// two facts the caller has stand in for "not yet begun": `firstFrame`
-        /// is a `Drag` built this very frame, and `holding` is the model already
-        /// carrying tiles.
+        /// `began` fires a pickup and must run at most once per gesture.
+        /// `begun` is that fact and nothing else — whether this gesture has
+        /// already begun — and the caller must keep it as a fact rather than
+        /// infer it. Inferring it from the model still CARRYING tiles reads
+        /// false again the moment something cancels the hold mid-gesture: a
+        /// second finger landing (`BoardView.pinched`) and a lock landing both
+        /// call `BoardModel.cancel`, and either would then re-fire a pickup and
+        /// re-lift the tile partway through one touch.
         ///
-        /// `.pan` and `.paint` begin at touch-down and never again — neither
-        /// takes a `TileDrag`, so `holding` would stay false for them all
-        /// gesture and cannot be the gate. A `.tile` grab defers until the
-        /// finger has cleared `tileHoldThreshold`, and `holding` is what stops
-        /// every frame after that firing a second pickup.
-        public func shouldBegin(firstFrame: Bool, holding: Bool, after translation: CGSize) -> Bool {
+        /// `.pan` and `.paint` begin at touch-down and never again —
+        /// `firstFrame` is a `Drag` built this very frame. A `.tile` grab
+        /// defers until the finger has cleared `tileHoldThreshold`, which is
+        /// what makes a tap on a letter write nothing.
+        public func shouldBegin(firstFrame: Bool, begun: Bool, after translation: CGSize) -> Bool {
+            guard !begun else { return false }
             guard case .tile = grab else { return firstFrame }
-            guard !holding else { return false }
             let distance = (translation.width * translation.width
                             + translation.height * translation.height).squareRoot()
             return distance >= Self.tileHoldThreshold

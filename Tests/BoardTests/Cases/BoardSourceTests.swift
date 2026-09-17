@@ -1176,4 +1176,53 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertTrue(sliced.contains("zoom()"))
         XCTAssertFalse(sliced.contains("frame()"))
     }
+
+    // MARK: - The window pinch recognizer is taken back off
+
+    /// `BoardPinch` imports UIKit, so this package cannot compile it, let alone
+    /// run it — a source scan is the honest ceiling for it and this check
+    /// proves TEXT, not reachability.
+    ///
+    /// What it is guarding: the recognizer goes on the WINDOW, which outlives
+    /// every board by a long way, and nothing but this takes it off. Without a
+    /// teardown each board ever shown leaves a live recognizer behind, still
+    /// calling into the model of a board that is gone, and a dead one cancels
+    /// the live board's drag. And the teardown must end the pinch before it
+    /// goes: pulling a live recognizer means no `.ended` ever arrives, so the
+    /// owner keeps believing two fingers are down and drops every one-finger
+    /// drag frame from then on — a board that never moves again.
+    ///
+    /// Two literals, each a WHOLE declaration matched over source with its
+    /// indentation normalized away, rather than a handful of independent
+    /// `contains` fragments that would each go on passing while the declaration
+    /// around them was taken apart.
+    func testThePinchRecognizerIsRemovedWhenTheBoardGoesAndEndsThePinchOnTheWayOut() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardPinch.swift"))
+        let normalized = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        XCTAssertTrue(
+            normalized.contains(
+                "static func dismantleUIView(_ uiView: Surface, coordinator: Coordinator) { coordinator.detach() }"
+            ),
+            "BoardPinch leaves its window recognizer behind when the board goes"
+        )
+        XCTAssertTrue(
+            normalized.contains(
+                "func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
+            ),
+            "BoardPinch's teardown does not end the pinch and take the recognizer off the window"
+        )
+
+        // And the two literals have teeth: each fails on a file that has been
+        // hollowed out in exactly the way this is here to catch.
+        let gone = "struct BoardPinchReporter: UIViewRepresentable { func makeCoordinator() -> Coordinator { Coordinator() } }"
+        XCTAssertFalse(gone.contains("static func dismantleUIView(_ uiView: Surface, coordinator: Coordinator) { coordinator.detach() }"))
+        let hollow = "func detach() { }"
+        XCTAssertFalse(hollow.contains("func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
+        let silent = "func detach() { if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
+        XCTAssertFalse(silent.contains("func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
+    }
 }
