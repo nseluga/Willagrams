@@ -39,6 +39,12 @@ struct MatchViewTests {
         #expect(code.contains { $0.contains("model: $matchBoard.model") })
         // The live camera comes back up, so a delivery follows the player.
         #expect(code.contains { $0.contains("onCameraSettled: matchBoard.cameraSettled") })
+        // Both delivery arguments default in `BoardView.init`, so dropping
+        // either one still compiles: the token freezes at 0, the deal
+        // animation never fires and nothing ever flies out of the bag, with
+        // no type error to say so. Pinned by name because the compiler won't.
+        #expect(code.contains { $0.contains("arriving: matchBoard.arrivingTileIDs") })
+        #expect(code.contains { $0.contains("arrivalToken: matchBoard.arrivalToken") })
     }
 
     @Test("It composes both halves of the screen")
