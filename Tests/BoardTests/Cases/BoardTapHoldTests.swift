@@ -414,8 +414,15 @@ final class BoardTapHoldTests: XCTestCase {
             normalized.contains("if !now { landInterrupted(); settledIfPanned(); drag = nil; begunAt = nil }"),
             "BoardView does not forget the begun gesture when one is cancelled"
         )
+        // The release end. `onEnded`'s whole body would drag the commit block
+        // and its tokens into this literal, so this is its last WHOLE clause
+        // through the closing brace of the closure rather than the whole
+        // declaration — the honest ceiling here. The write COUNT in
+        // `BoardSourceTests` is what covers everything outside it.
         XCTAssertTrue(
-            normalized.contains("settledIfPanned() drag = nil begunAt = nil }"),
+            normalized.contains(
+                "model.endedPainting() } settledIfPanned() drag = nil begunAt = nil } }"
+            ),
             "BoardView does not forget the begun gesture when one is released"
         )
     }

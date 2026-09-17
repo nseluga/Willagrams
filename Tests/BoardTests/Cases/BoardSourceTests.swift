@@ -1215,6 +1215,23 @@ final class BoardSourceTests: XCTestCase {
             ),
             "BoardPinch's teardown does not end the pinch and take the recognizer off the window"
         )
+        // The other half of the same wiring, and the half a literal aimed at
+        // `detach` cannot see: if `attach` stops handing the recognizer to the
+        // coordinator, `detach` removes nothing and the whole teardown is a
+        // silent no-op while both literals above still match word for word.
+        XCTAssertTrue(
+            normalized.contains(
+                "func attach(reporting view: UIView) { guard let host = view.window, surface == nil else { return } let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handle(_:))) pinch.delegate = self pinch.cancelsTouchesInView = false pinch.delaysTouchesBegan = false pinch.delaysTouchesEnded = false host.addGestureRecognizer(pinch) recognizer = pinch surface = view }"
+            ),
+            "BoardPinch never hands the recognizer it created to the coordinator, so nothing can take it off again"
+        )
+        // `recognizer` is written in exactly those two places — set on attach,
+        // dropped on detach — so a third write anywhere in the file, which
+        // either literal would happily ignore, fails here.
+        XCTAssertEqual(
+            text.components(separatedBy: "recognizer = ").count - 1, 2,
+            "BoardPinch writes its recognizer somewhere other than attach and detach"
+        )
 
         // And the two literals have teeth: each fails on a file that has been
         // hollowed out in exactly the way this is here to catch.
@@ -1224,5 +1241,53 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertFalse(hollow.contains("func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
         let silent = "func detach() { if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
         XCTAssertFalse(silent.contains("func detach() { onEnd() if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
+        let unstored = "func attach(reporting view: UIView) { host.addGestureRecognizer(pinch) surface = view }"
+        XCTAssertFalse(unstored.contains("host.addGestureRecognizer(pinch) recognizer = pinch surface = view }"))
+        XCTAssertEqual("let pinch = UIPinchGestureRecognizer() surface = view".components(separatedBy: "recognizer = ").count - 1, 0)
+    }
+
+    // MARK: - The view's "this gesture has begun" fact is written nowhere else
+
+    /// A literal starting at `if inFlight.shouldBegin(` proves the gate's own
+    /// text and nothing around it. Inserting one unconditional `begunAt = nil`
+    /// just ABOVE that gate leaves it matching word for word while `begun` is
+    /// false on every frame — which is the original bug in full, a pickup
+    /// haptic per frame for the whole drag. So the fact is pinned by its WRITE
+    /// COUNT: set in one place, put down in exactly the two places a gesture
+    /// can end, read in one. Any extra write anywhere in the file fails here,
+    /// wherever it is and whatever it looks like.
+    func testBoardViewWritesTheBegunGestureFactInExactlyThePlacesThatEndAGesture() throws {
+        let text = try view()
+        func count(_ needle: String) -> Int { text.components(separatedBy: needle).count - 1 }
+
+        XCTAssertEqual(
+            count("begunAt = value.startLocation"), 1,
+            "BoardView records the begun gesture somewhere other than beside the one began call"
+        )
+        XCTAssertEqual(
+            count("begunAt = nil"), 2,
+            "BoardView clears the begun gesture \(count("begunAt = nil")) times, not once per way a gesture ends"
+        )
+        XCTAssertEqual(
+            count("begun: begunAt == value.startLocation"), 1,
+            "BoardView reads the begun fact somewhere other than the hold gate"
+        )
+        // Declaration, one read, one set, two clears: five mentions and no
+        // sixth. This is the assertion an inserted write trips first.
+        XCTAssertEqual(
+            count("begunAt"), 5,
+            "BoardView mentions begunAt \(count("begunAt")) times — something writes or reads it outside the gesture's two ends"
+        )
+
+        // Teeth: the same file with one more `begunAt = nil` inserted above the
+        // gate — the exact mutation this is here to catch — counts six, not
+        // five, and three clears, not two.
+        // A fixed sample rather than `text` itself, so the teeth still read the
+        // same numbers when the file under test is the mutated one.
+        let sound = "@State private var begunAt: CGPoint?\nif !now { drag = nil; begunAt = nil }\nif d.shouldBegin(begun: begunAt == value.startLocation) { began() \nbegunAt = value.startLocation }\ndrag = nil\nbegunAt = nil"
+        XCTAssertEqual(sound.components(separatedBy: "begunAt").count - 1, 5)
+        let regressed = sound.replacingOccurrences(of: "if d.shouldBegin(", with: "begunAt = nil\nif d.shouldBegin(")
+        XCTAssertEqual(regressed.components(separatedBy: "begunAt").count - 1, 6)
+        XCTAssertEqual(regressed.components(separatedBy: "begunAt = nil").count - 1, 3)
     }
 }
