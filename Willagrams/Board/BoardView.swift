@@ -253,7 +253,17 @@ public struct BoardView: View {
                 // the double-tap timeout, which is ~0.3s of dead time on every
                 // single pickup. Removing that dead time is the whole reason
                 // `minimumDistance: 0` is there.
-                .simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })
+                //
+                // `SpatialTapGesture` rather than `TapGesture` purely for the
+                // location: the tap has to name the letter it landed on so the
+                // selection can be seeded with it, and `TapGesture` carries no
+                // point. Same `.local` space the drag reports in, so the hit
+                // test below asks the same question as the one at touch-down.
+                .simultaneousGesture(
+                    SpatialTapGesture(count: 2).onEnded { tap in
+                        model.enterSelection(at: tap.location, on: board, camera: camera)
+                    }
+                )
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
                 // The lock is a plain assignment: `BoardModel` cancels an
                 // in-flight hold on its own when it lands, so there is no

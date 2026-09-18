@@ -128,7 +128,14 @@ public enum BoardGesture {
             // downstream deciding it again. Two fingers are untouched, so the
             // pinch stays live and the player can see what they are sweeping.
             guard !selection.isActive else {
-                if let hit, selection.contains(hit.coord) {
+                // Selection SIZE decides sweep or move, not membership alone.
+                // A double tap seeds the set with the one letter it landed on,
+                // and the player's next move from that letter is overwhelmingly
+                // "select more" — so a set of one always sweeps, and carrying
+                // the group only becomes possible once there is a group. Past
+                // one, a finger starting on a selected letter moves the whole
+                // set; starting anywhere else still sweeps and adds.
+                if let hit, selection.coords.count > 1, selection.contains(hit.coord) {
                     self.grab = .tile(hit.tile, at: hit.coord)
                 } else {
                     // The bare cell, since there is no tile to name one. A
@@ -155,10 +162,20 @@ public enum BoardGesture {
         /// makes a tap write nothing, while leaving `.pan` and `.paint` taking
         /// hold on the very first frame as they always did.
         ///
-        /// Below UIKit's own ~10pt tap slop, so a finger that UIKit still calls
-        /// a tap never lifts a tile; a sixth of a cell at the default zoom, so a
-        /// finger that means to drag has not perceptibly waited.
-        public static let tileHoldThreshold: CGFloat = 8
+        /// ABOVE UIKit's own ~10pt tap slop, which is the whole point. At 8 it
+        /// sat INSIDE the slop: a thumb tap that drifted 8-10pt was still a tap
+        /// to `TapGesture`, but already a hold here — so the first tap lifted
+        /// the letter, and the commit on its release rewrote `tileOffsets`,
+        /// `flashedInvalid` and `validation` on the owner's observed binding.
+        /// That churn tore down the view between the two taps and the pair
+        /// never completed, which is why double-tapping a LETTER did nothing
+        /// while double-tapping a bare cell — nothing to lift, nothing to
+        /// commit — worked every time.
+        ///
+        /// A quarter of a cell at the default zoom. A finger that means to drag
+        /// has not perceptibly waited; a finger that means to tap no longer
+        /// lifts anything.
+        public static let tileHoldThreshold: CGFloat = 12
 
         /// Whether `BoardModel.began` should run on THIS frame.
         ///

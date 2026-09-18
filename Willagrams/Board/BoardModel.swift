@@ -346,6 +346,39 @@ public struct BoardModel: Sendable {
         selection.enter()
     }
 
+    /// Enters selection mode at a POINT, seeding the set with the letter drawn
+    /// under it — the double tap's own landing spot.
+    ///
+    /// The seed is what makes the mode visible. Entering with an empty set put
+    /// the surface in a state that draws identically to being out of it
+    /// (`selected` is empty either way), so a player who double-tapped had no
+    /// way to tell whether it took, and the only feedback was whether the NEXT
+    /// drag happened to paint. One selected letter says the mode is live and
+    /// names where the sweep starts.
+    ///
+    /// A double tap on bare surface falls through to the plain `enter` above,
+    /// keeping the entry that already worked rather than making empty space a
+    /// second way to fail.
+    ///
+    /// Takes the point and the camera rather than a coord for the same reason
+    /// `painting` does: the tile the finger is ON is the tile it is DRAWN over,
+    /// which with `tileOffsets` in play is not the tile in the cell the point
+    /// indexes to.
+    public mutating func enterSelection(
+        at point: CGPoint,
+        on board: Board,
+        camera: BoardCamera
+    ) {
+        guard !inputLocked else { return }
+        guard let hit = BoardHit.tile(
+            under: point, on: board, offsets: tileOffsets, camera: camera
+        ) else {
+            selection.enter()
+            return
+        }
+        selection.seed(hit.coord)
+    }
+
     /// Sweeps the tiles between the last reported position and this one into
     /// the selection. `board` is read, never written — a painted selection is a
     /// drawing decision, and the board does not change until a group drag

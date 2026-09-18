@@ -228,6 +228,24 @@ final class BoardTapHoldTests: XCTestCase {
     /// EXACT boundary magnitude, not only a tenth of a point either side of it —
     /// `>=` quietly becoming `>` moves only that one value, and a pair of ±0.1
     /// probes never visits it.
+    /// The threshold's ONE external constraint, which the boundary test above
+    /// cannot see because it derives every probe from the constant itself.
+    ///
+    /// UIKit calls a touch that drifts up to ~10pt a tap. A threshold at or
+    /// below that leaves a band where the same finger is a tap to
+    /// `SpatialTapGesture` and a hold here — so the first tap of a pair lifts
+    /// the letter, its release commits, and the commit's rewrite of the
+    /// observed board state tears the view down before the second tap lands.
+    /// That is exactly why double-tapping a LETTER did nothing at 8pt while
+    /// double-tapping bare surface always worked.
+    func testTheHoldThresholdClearsUIKitsTapSlopSoATapNeverLiftsALetter() {
+        XCTAssertGreaterThan(
+            BoardGesture.Drag.tileHoldThreshold, 10,
+            "the tile hold threshold sits inside UIKit's ~10pt tap slop, so a tap on a letter lifts it "
+            + "and the commit kills the double tap"
+        )
+    }
+
     func testTheHoldIsTakenAtExactlyTheThresholdAndJustOverItButNotJustUnderIt() throws {
         let threshold = BoardGesture.Drag.tileHoldThreshold
         let under = threshold - 0.1

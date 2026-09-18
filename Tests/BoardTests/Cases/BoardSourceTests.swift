@@ -827,8 +827,20 @@ final class BoardSourceTests: XCTestCase {
         // with `enterSelection` unreachable the selection set could never become
         // non-empty, so multi-select was dead too.
         XCTAssertTrue(
-            text.contains(".simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })"),
+            text.contains("SpatialTapGesture(count: 2).onEnded { tap in"),
             "BoardView has no double tap into selection mode"
+        )
+        // SPATIAL, not plain. The tap has to name the letter it landed on or
+        // the selection cannot be seeded with it, and an unseeded selection
+        // draws exactly like being out of the mode — which is how a player
+        // ended up unable to tell whether the double tap took.
+        XCTAssertTrue(
+            text.contains("model.enterSelection(at: tap.location, on: board, camera: camera)"),
+            "BoardView enters selection without the tap's location, so nothing seeds the set"
+        )
+        XCTAssertFalse(
+            text.contains("TapGesture(count: 2).onEnded { model.enterSelection() }"),
+            "BoardView enters selection through a locationless tap, so the tapped letter is lost"
         )
         // The regression itself: the competing form must not come back.
         XCTAssertFalse(
@@ -913,10 +925,17 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertFalse("model.moved(to: value.translation)".contains("model.painting("))
 
         // A simultaneous double tap versus the competing one that never fired.
-        let wired = ".simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })"
-        XCTAssertTrue(wired.contains(".simultaneousGesture(TapGesture(count: 2)"))
+        let wired = "SpatialTapGesture(count: 2).onEnded { tap in"
+        XCTAssertTrue(wired.contains("SpatialTapGesture(count: 2)"))
         XCTAssertFalse(wired.contains(".onTapGesture(count: 2)"))
         XCTAssertTrue(".onTapGesture(count: 2) { model.enterSelection() }".contains(".onTapGesture(count: 2)"))
+
+        // A tap that names where it landed versus one that does not. The
+        // locationless form still READS like it enters the mode, which is what
+        // made the missing seed invisible.
+        let seeded = "model.enterSelection(at: tap.location, on: board, camera: camera)"
+        XCTAssertTrue(seeded.contains("enterSelection(at:"))
+        XCTAssertFalse("model.enterSelection()".contains("enterSelection(at:"))
 
         // A paint that could write to the caller's board versus one that cannot.
         XCTAssertTrue("func paint(from: CGPoint, to: CGPoint, on board: inout Board)".contains("inout Board"))
