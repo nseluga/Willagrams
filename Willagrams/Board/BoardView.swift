@@ -456,11 +456,11 @@ public struct BoardView: View {
                     // geometric form.
                     offsets: model.tileOffsets
                 )
-                // Not simply "the first frame" any more. A tile hold waits out
-                // `tileHoldThreshold` so a TAP on a letter lifts nothing, buzzes
-                // nothing and commits nothing — which is what leaves the double
-                // tap's two halves undisturbed, and with them `enterSelection`
-                // reachable over a letter rather than only over a bare cell.
+                // Not simply "the first frame" any more. A tile or pan hold
+                // waits out `holdThreshold` so a TAP lifts nothing, buzzes
+                // nothing, pans nothing and commits nothing — which is what
+                // leaves the double tap's two halves undisturbed, and with them
+                // `enterSelection` reachable anywhere on the board.
                 // The decision itself is untouched: `inFlight.grab` was still
                 // taken once, at touch-down.
                 if inFlight.shouldBegin(

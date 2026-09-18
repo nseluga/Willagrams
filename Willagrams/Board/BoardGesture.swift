@@ -150,17 +150,18 @@ public enum BoardGesture {
             self.grab = hit.map { .tile($0.tile, at: $0.coord) } ?? .pan
         }
 
-        /// How far, in points, a finger that took hold of a TILE must travel
-        /// before the hold is actually taken.
+        /// How far, in points, a finger must travel before a hold that defers
+        /// — a TILE or a PAN — is actually taken.
         ///
         /// A tap is a drag of zero distance to `DragGesture(minimumDistance: 0)`
-        /// — which is load-bearing, since pan and paint must start at touch-down
+        /// — which is load-bearing, since paint must start at touch-down
         /// and a competing tap gesture loses every sequence to a zero-distance
         /// drag. So the double tap that enters selection mode arrives only after
         /// the first tap has already lifted a tile, buzzed, and dropped it back
-        /// where it was. Deferring just the TILE hold past this distance is what
-        /// makes a tap write nothing, while leaving `.pan` and `.paint` taking
-        /// hold on the very first frame as they always did.
+        /// where it was. Deferring the TILE and PAN holds past this distance is
+        /// what makes a tap write nothing at all. `.paint` still takes hold on
+        /// the very first frame, because a sweep must paint from the frame the
+        /// finger lands on.
         ///
         /// ABOVE UIKit's own ~10pt tap slop, which is the whole point. At 8 it
         /// sat INSIDE the slop: a thumb tap that drifted 8-10pt was still a tap
@@ -172,10 +173,17 @@ public enum BoardGesture {
         /// while double-tapping a bare cell — nothing to lift, nothing to
         /// commit — worked every time.
         ///
+        /// The same distance defers `.pan`, and for the same reason one device
+        /// away: a tap on bare board took the camera on its first frame, wrote
+        /// `camera` while the finger drifted, and rebuilt the board between the
+        /// double tap's two halves. That is why selection mode armed over a
+        /// letter but not over bare board on iPad, on the very build where the
+        /// letter case had just been fixed.
+        ///
         /// A quarter of a cell at the default zoom. A finger that means to drag
         /// has not perceptibly waited; a finger that means to tap no longer
-        /// lifts anything.
-        public static let tileHoldThreshold: CGFloat = 12
+        /// lifts anything or moves the board.
+        public static let holdThreshold: CGFloat = 12
 
         /// Whether `BoardModel.began` should run on THIS frame.
         ///
@@ -188,21 +196,29 @@ public enum BoardGesture {
         /// call `BoardModel.cancel`, and either would then re-fire a pickup and
         /// re-lift the tile partway through one touch.
         ///
-        /// `.pan` and `.paint` begin at touch-down and never again —
-        /// `firstFrame` is a `Drag` built this very frame. A `.tile` grab
-        /// defers until the finger has cleared `tileHoldThreshold`, which is
-        /// what makes a tap on a letter write nothing.
+        /// `.paint` begins at touch-down and never again — `firstFrame` is a
+        /// `Drag` built this very frame. `.tile` and `.pan` both defer until the
+        /// finger has cleared `holdThreshold`, which is what makes a tap write
+        /// nothing, over a letter and over bare board alike.
         public func shouldBegin(firstFrame: Bool, begun: Bool, after translation: CGSize) -> Bool {
-            // `begun` gates the TILE arm only. Pan and paint begin on the frame
-            // their `Drag` was built and never again, so `firstFrame` is already
-            // the whole answer for them — and asking `begun` first would let a
-            // hold disowned at one point silently swallow a LATER pan or paint
-            // that happened to start at the same point.
-            guard case .tile = grab else { return firstFrame }
+            // `begun` gates the DEFERRED arms only. Paint begins on the frame
+            // its `Drag` was built and never again, so `firstFrame` is already
+            // the whole answer for it — and asking `begun` first would let a
+            // hold disowned at one point silently swallow a LATER paint that
+            // happened to start at the same point.
+            if case .paint = grab { return firstFrame }
             guard !begun else { return false }
+            return Self.clears(translation)
+        }
+
+        /// Whether a cumulative `translation` has carried the finger past
+        /// ``holdThreshold``. Asked per frame and never remembered: it is
+        /// monotone in the distance travelled, so an arm that has taken hold
+        /// cannot un-take it later in the same gesture.
+        public static func clears(_ translation: CGSize) -> Bool {
             let distance = (translation.width * translation.width
                             + translation.height * translation.height).squareRoot()
-            return distance >= Self.tileHoldThreshold
+            return distance >= holdThreshold
         }
 
         /// `camera` after a cumulative `translation`: the LIVE camera with its
@@ -215,7 +231,19 @@ public enum BoardGesture {
         /// ever written, and it is written through `BoardCamera.panned(by:)`
         /// so the one non-finite guard covers this path too.
         public func camera(_ camera: BoardCamera, translatedBy translation: CGSize) -> BoardCamera {
-            guard grab == .pan else { return camera }
+            // The threshold again, because `shouldBegin` does not gate this
+            // call: `BoardView` writes `camera` on every frame a drag reports,
+            // begun or not. A tap on bare board that wrote even a clamped pan
+            // was enough churn to tear the view down between the double tap's
+            // two halves.
+            //
+            // ponytail: the pan therefore opens with a `holdThreshold` hop,
+            // since `translation` is cumulative from touch-down and nothing
+            // here discounts the travel already spent. A quarter of a cell,
+            // once, at the start of a pan. Upgrade if it reads wrong in play:
+            // give `Drag` the translation at which the arm took hold, and
+            // subtract it here.
+            guard grab == .pan, Self.clears(translation) else { return camera }
             var moved = camera
             moved.pan = startPan
             return moved.panned(by: translation)

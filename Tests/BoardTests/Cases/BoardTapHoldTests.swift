@@ -240,14 +240,14 @@ final class BoardTapHoldTests: XCTestCase {
     /// double-tapping bare surface always worked.
     func testTheHoldThresholdClearsUIKitsTapSlopSoATapNeverLiftsALetter() {
         XCTAssertGreaterThan(
-            BoardGesture.Drag.tileHoldThreshold, 10,
-            "the tile hold threshold sits inside UIKit's ~10pt tap slop, so a tap on a letter lifts it "
-            + "and the commit kills the double tap"
+            BoardGesture.Drag.holdThreshold, 10,
+            "the hold threshold sits inside UIKit's ~10pt tap slop, so a tap lifts a letter or pans the "
+            + "board, and that churn kills the double tap"
         )
     }
 
     func testTheHoldIsTakenAtExactlyTheThresholdAndJustOverItButNotJustUnderIt() throws {
-        let threshold = BoardGesture.Drag.tileHoldThreshold
+        let threshold = BoardGesture.Drag.holdThreshold
         let under = threshold - 0.1
         let over = threshold + 0.1
 
@@ -585,15 +585,12 @@ final class BoardTapHoldTests: XCTestCase {
         XCTAssertFalse(begun.has(here), "the fact outlived the gesture that set it")
     }
 
-    // MARK: - Pan and paint are untouched
+    // MARK: - Paint is untouched; pan defers like a tile
 
-    func testPanAndPaintStillBeginAtTouchDownAndOnlyThere() throws {
+    func testPaintStillBeginsAtTouchDownAndOnlyThere() throws {
         let fixture = self.fixture()
         // Far from any tile, so this is a bare cell either way.
         let empty = CGPoint(x: 24 + 48 * 8, y: 24 + 48 * 8)
-
-        let pan = BoardGesture.Drag(at: empty, in: fixture.board, camera: Self.camera)
-        XCTAssertEqual(pan.grab, .pan)
 
         var selection = BoardSelection()
         selection.enter()
@@ -602,27 +599,82 @@ final class BoardTapHoldTests: XCTestCase {
         )
         guard case .paint = paint.grab else { return XCTFail("a bare cell in selection mode is not a sweep") }
 
-        // Neither takes a `TileDrag`, so neither may be gated on travel: they
-        // begin on the first frame and never again — for a sweep, beginning
-        // twice would reset the paint cursor mid-stroke.
-        for drag in [pan, paint] {
-            XCTAssertTrue(drag.shouldBegin(firstFrame: true, begun: false, after: .zero))
-            XCTAssertFalse(drag.shouldBegin(firstFrame: false, begun: false, after: .zero))
-            XCTAssertFalse(drag.shouldBegin(firstFrame: false, begun: false, after: CGSize(width: 200, height: 200)))
-            // `begun` does NOT speak for pan and paint: `firstFrame` is a `Drag`
-            // built this very frame, which already says "once per gesture" for
-            // them. It has to be that way — the disown a pinch writes is a point,
-            // and a pan or a sweep starting later at that same point must still
-            // begin. Beginning twice is prevented by `firstFrame` alone here, and
-            // the tile arm below is where `begun` does the work.
-            XCTAssertTrue(drag.shouldBegin(firstFrame: true, begun: true, after: .zero))
-        }
+        // A sweep takes no `TileDrag` and must paint from the frame the finger
+        // lands, so it may not be gated on travel: it begins on the first frame
+        // and never again — beginning twice would reset the paint cursor
+        // mid-stroke.
+        XCTAssertTrue(paint.shouldBegin(firstFrame: true, begun: false, after: .zero))
+        XCTAssertFalse(paint.shouldBegin(firstFrame: false, begun: false, after: .zero))
+        XCTAssertFalse(paint.shouldBegin(firstFrame: false, begun: false, after: CGSize(width: 200, height: 200)))
+        // `begun` does NOT speak for paint: `firstFrame` is a `Drag` built this
+        // very frame, which already says "once per gesture" for it. It has to be
+        // that way — the disown a pinch writes is a point, and a sweep starting
+        // later at that same point must still begin.
+        XCTAssertTrue(paint.shouldBegin(firstFrame: true, begun: true, after: .zero))
+
         // And a tile grab past the threshold is refused once it has begun, which
         // is the only thing standing between a held tile and a pickup per frame.
         let tile = BoardGesture.Drag(at: Self.touch, in: fixture.board, camera: Self.camera)
         XCTAssertFalse(
             tile.shouldBegin(firstFrame: false, begun: true, after: CGSize(width: 200, height: 200)),
             "a held tile was picked up a second time"
+        )
+    }
+
+    /// The iPad half of the double tap. A tap on a LETTER was fixed by deferring
+    /// the tile hold; a tap on BARE BOARD still took the camera on its first
+    /// frame, and the `camera` write between the two taps tore the view down the
+    /// same way the tile commit used to. So `.pan` defers on the same distance.
+    func testAPanDefersPastTheThresholdJustLikeATile() throws {
+        let fixture = self.fixture()
+        let empty = CGPoint(x: 24 + 48 * 8, y: 24 + 48 * 8)
+        let pan = BoardGesture.Drag(at: empty, in: fixture.board, camera: Self.camera)
+        XCTAssertEqual(pan.grab, .pan)
+
+        let threshold = BoardGesture.Drag.holdThreshold
+        XCTAssertFalse(pan.shouldBegin(firstFrame: true, begun: false, after: .zero), "a tap took the camera")
+        XCTAssertFalse(pan.shouldBegin(
+            firstFrame: true, begun: false, after: CGSize(width: threshold - 0.1, height: 0)
+        ))
+        XCTAssertTrue(pan.shouldBegin(
+            firstFrame: false, begun: false, after: CGSize(width: threshold, height: 0)
+        ))
+        // Once taken, never re-taken — `begun` now does the work for this arm too.
+        XCTAssertFalse(pan.shouldBegin(
+            firstFrame: true, begun: true, after: CGSize(width: 200, height: 200)
+        ))
+    }
+
+    /// `shouldBegin` is not the whole gate. `BoardView` writes `camera` on every
+    /// frame a drag reports, begun or not, so the threshold has to live in
+    /// `camera(_:translatedBy:)` as well — that write is the churn that killed
+    /// the pair over bare board.
+    func testATapOnBareBoardLeavesTheCameraExactlyWhereItWas() throws {
+        let fixture = self.fixture()
+        let empty = CGPoint(x: 24 + 48 * 8, y: 24 + 48 * 8)
+        let pan = BoardGesture.Drag(at: empty, in: fixture.board, camera: Self.camera)
+        XCTAssertEqual(pan.grab, .pan)
+
+        let threshold = BoardGesture.Drag.holdThreshold
+        let drifts = [
+            CGSize.zero,
+            CGSize(width: threshold - 0.1, height: 0),
+            CGSize(width: 0, height: -(threshold - 0.1)),
+            // A diagonal inside the threshold in MAGNITUDE, which a per-axis
+            // comparison would wrongly let through.
+            CGSize(width: 8, height: 8),
+        ]
+        for drift in drifts {
+            XCTAssertEqual(
+                pan.camera(Self.camera, translatedBy: drift).pan, Self.camera.pan,
+                "a drift of \(drift) panned the board"
+            )
+        }
+        // Past the threshold the pan is live, and moves one-to-one with the
+        // finger from the pan the touch started at.
+        XCTAssertEqual(
+            pan.camera(Self.camera, translatedBy: CGSize(width: threshold, height: 0)).pan,
+            CGSize(width: threshold, height: 0)
         )
     }
 
