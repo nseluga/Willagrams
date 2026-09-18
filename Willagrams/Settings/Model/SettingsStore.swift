@@ -26,7 +26,17 @@ public struct SettingsStore {
             let data = defaults.data(forKey: Self.key),
             let stored = try? JSONDecoder().decode(MatchOptions.self, from: data)
         else { return .standard }
-        return stored.validated
+        var options = stored.validated
+        // The hash is derived from the bundled list, not a choice the host
+        // made — and these bytes outlive the build that wrote them. A build
+        // shipping a new list would otherwise replay the old list's hash on
+        // `.start`, and `applyStart` refuses that silently on both devices.
+        // The pinned constant, not `DictionaryCatalogue`: resolving through
+        // the catalogue sorts 172k words on a path the lobby is on.
+        if options.dictionaryID == MatchOptions.standardDictionaryID {
+            options.dictionaryHash = MatchOptions.standardDictionaryHash
+        }
+        return options
     }
 
     /// Writes `options` to the suite, replacing whatever was there.
