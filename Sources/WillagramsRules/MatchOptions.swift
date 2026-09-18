@@ -66,7 +66,7 @@ public struct MatchOptions: Codable, Sendable, Hashable {
     /// honest. Change `dictionary.txt` and that test fails loudly, which is the
     /// point: a silently stale hash would refuse every match.
     public static let standardDictionaryHash =
-        "212ad761133bbe21fa93aefb59e03a5d012bc2f858816fd178b57fcd047832e1"
+        "c3259ca40c625da096b5b153acc5502bfdee91945f62218d1d8893643648e97d"
 
     // MARK: - Trust boundary
 

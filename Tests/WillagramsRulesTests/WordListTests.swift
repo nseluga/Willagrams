@@ -7,7 +7,19 @@ struct WordListTests {
     @Test("The bundled ENABLE list loads with the recorded word count")
     func bundledListLoads() throws {
         let list = try EnableWordList()
-        #expect(list.count == 172_823)
+        #expect(list.count == 172_830)
+    }
+
+    /// The bundled list was an ENABLE snapshot predating the 2006 dictionary
+    /// additions, so `qi` and `za` -- the two every player reaches for -- were
+    /// refused mid-match. Pinned as words rather than as a count: a future
+    /// list swap that keeps the total but drops these is the regression.
+    @Test("The short words added after the 2006 revision are accepted")
+    func modernShortWordsAreAccepted() throws {
+        let list = try EnableWordList()
+        for word in ["fe", "ki", "oi", "qi", "qis", "za", "zas"] {
+            #expect(list.contains(word), "\(word) should be a word")
+        }
     }
 
     @Test("Lookup is case-insensitive and rejects non-words")
