@@ -445,46 +445,55 @@ struct MatchSessionTerminalTests {
     func workEnqueuedBeforeTheDropNeverReachesTheWire() async throws {
         let clock = HandCrankedClock()
         let (guest, wire) = try await Self.playingGuest(clock: clock)
+        let tiles = try await Self.stock(guest, wire)
+        #expect(await wire.count == 0)
 
         // The gate parks the first send *inside* the transport, so the second is
         // still on the session's chain when the peer goes. No sleep, no race.
+        //
+        // A swap leads rather than a draw: `draw()` refuses a second request
+        // while one is unanswered, so two draws can no longer both enqueue. The
+        // draw is the one behind the gate on purpose — it is the request whose
+        // credit has to come back.
         await wire.closeGate()
-        #expect(guest.draw())
-        #expect(guest.draw())
+        #expect(guest.swap(tiles[1]))
         try await Self.waitUntil("the first send to be handed over") { await wire.parkedCount == 1 }
+        #expect(guest.draw())
 
         wire.drop(Self.alice)
         try await Self.waitUntil("the session to freeze") { guest.peerPresence != .present }
         await wire.releaseAll()
         try await Self.settle()
 
-        // The first was already in the transport's hands and lands. The second
-        // was not, and never does — the freeze is re-checked when the enqueued
-        // work runs, not only when it was enqueued.
-        #expect(await wire.drawRequests == 1)
+        // The swap was already in the transport's hands and lands. The draw was
+        // not, and never does — the freeze is re-checked when the enqueued work
+        // runs, not only when it was enqueued.
+        #expect(await wire.drawRequests == 0)
         #expect(await wire.count == 1)
 
-        // The peer comes back to a match exactly where it was.
+        // The peer comes back to a match exactly where it was: the swap was
+        // never granted, so both tiles are still in the rack.
         wire.restore(Self.alice)
         try await Self.waitUntil("the peer to return") { guest.peerPresence == .present }
-        #expect(guest.state.hand.isEmpty)
+        #expect(guest.state.hand.count == 2)
         #expect(guest.pendingDrawTiles.isEmpty)
         #expect(guest.state.status == .playing)
 
-        // One request really left, so the first grant answers it and goes
-        // straight to the rack. The second was never asked for, so it is the
-        // opponent's round and becomes an obligation. A credit left over from
-        // the request that never left would take that one too, and the board
-        // would never freeze again.
+        // No request ever left, so the grant is the opponent's round and becomes
+        // an obligation rather than being swallowed as an answer this device
+        // never earned. Now that only one request may be in flight at a time, a
+        // credit left standing here would latch Draw shut for the rest of the
+        // match rather than merely skipping one freeze.
+        //
+        // Note this no longer isolates the credit's *return*: `peerReturned`
+        // also zeroes the counter, so the reset above would mask a leak. The
+        // return is pinned on its own in "Draw refuses a second request".
         wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "A")]))
-        try await Self.waitUntil("the answer to the request that left") { guest.state.hand.count == 1 }
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "B")]))
         try await Self.waitUntil("the opponent's round") { guest.hasPendingDraw }
 
-        #expect(guest.state.hand.count == 1)
+        #expect(guest.state.hand.count == 2)
         #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand[0].letter == "A")
-        #expect(guest.pendingDrawTiles[0].letter == "B")
+        #expect(guest.pendingDrawTiles[0].letter == "A")
 
         clock.releaseAll()
         try await Self.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

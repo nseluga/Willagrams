@@ -133,11 +133,16 @@ struct MatchSessionOrderingTests {
         // answer on the wire names the request that produced it. Draw answers
         // are indistinguishable from each other, so they ride along as traffic.
         let tagged = (0..<12).map { _ in Tile(letter: "S") }
+        var ownDraws = 0
         for (index, tile) in tagged.enumerated() {
             wire.deliver(.swapRequest(player: bob, returning: tile))
             wire.deliver(.drawRequest(player: bob))
             // The second call site: this device's own presses, racing the pump.
-            if index.isMultiple(of: 3) { host.draw() }
+            // Counted rather than assumed: `draw()` refuses while its own
+            // request is still unanswered, and whether the pump has cleared the
+            // credit by the next press is a race. The subject of this test is
+            // the ORDER answers reach the wire in, not how many presses land.
+            if index.isMultiple(of: 3), host.draw() { ownDraws += 1 }
             await Task.yield()
         }
 
@@ -154,9 +159,11 @@ struct MatchSessionOrderingTests {
         let mostInFlight = await wire.mostInFlight
         #expect(mostInFlight == 1)
 
-        // 12 peer draws plus 4 of this device's own, each answered to the peer.
+        // 12 peer draws plus this device's own that were accepted, each
+        // answered to the peer.
+        #expect(ownDraws > 0)
         try await Self.waitUntil("every draw to be answered") {
-            await wire.grantCount() == 16
+            await wire.grantCount() == 12 + ownDraws
         }
     }
 

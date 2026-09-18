@@ -36,7 +36,7 @@ struct MatchSessionFixTests {
     func leavingStopsChainPredecessorsFromReachingTheWire() async throws {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock)
-        try await Terminal.stock(guest, wire)
+        let tiles = try await Terminal.stock(guest, wire)
         #expect(await wire.count == 0)
 
         await wire.closeGate()
@@ -45,8 +45,11 @@ struct MatchSessionFixTests {
             await wire.parkedCount == 1
         }
         // Behind the parked one: neither has reached the transport yet.
-        #expect(guest.draw())
-        #expect(guest.draw())
+        // // `draw()` now refuses a second request while one is in flight, so two
+        // draws can no longer both enqueue. The subject here is a second message
+        // sitting on the chain, not what kind it is, so the follow-ups are swaps.
+        #expect(guest.swap(tiles[1]))
+        #expect(guest.swap(tiles[2]))
 
         guest.leave()
         await wire.releaseAll()

@@ -791,6 +791,12 @@ public final class MatchSession: AppActivityListener {
         }
         guard case .reconnecting = presence(of: player) else { return }
         peerPresences[player] = .present
+        // Nothing can legitimately be in flight across a freeze — `blockedByLock`
+        // already drops outbound sends — so a credit still standing here is one
+        // the host will never answer. Left at 1 it latches Draw shut for the
+        // rest of the match, and the next grant meant for somebody else is
+        // mistaken for this device's own answer and goes straight into the hand.
+        outstandingDrawRequests = 0
         // Another peer still away keeps the match frozen, and its window keeps
         // running: resuming the countdown now would move game state nobody is
         // playing through.
@@ -916,6 +922,18 @@ public final class MatchSession: AppActivityListener {
             state.hand.append(pendingDrawTiles.removeFirst())
             return true
         }
+        // One request at a time. The board stays complete and the hand stays
+        // empty for the whole round trip, so `canDraw` — the button's own gate
+        // — is still true while a request is in flight. Without this, a player
+        // pressing Draw N times fast sends N `.drawRequest`s: each one drains a
+        // full round from the pool all-or-nothing and hands every opponent
+        // another obligation, and the N grants land together, so nothing
+        // appears and then everything does.
+        //
+        // Below the `pendingDrawTiles` branch on purpose: taking a waiting tile
+        // is local, touches no wire, and must stay unguarded, because accepting
+        // an obligation is how the board reopens.
+        guard outstandingDrawRequests == 0 else { return false }
         // An empty pool can only answer with the same broadcast again, and each
         // one clears a credit on the device that did not ask. Taking a waiting
         // tile above is never suppressed: accepting an obligation is how the

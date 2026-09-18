@@ -144,10 +144,15 @@ struct MatchSessionTerminalAuditTests {
         // No sleep, and no race to lose.
         await wire.closeGate()
         #expect(host.draw())
-        #expect(host.draw())
         try await Terminal.waitUntil("the first submission to reach the pool") {
             await wire.parkedCount == 1
         }
+        // The peer's own request is the second submission, not a second press:
+        // `draw()` refuses a second request while one is unanswered. Either way
+        // it is a pool submission sitting on the same chain, and a round serves
+        // both players, so what must not happen is unchanged.
+        wire.deliver(.drawRequest(player: Self.bob))
+        await Task.yield()
 
         wire.drop(Self.bob)
         try await Terminal.waitUntil("the session to freeze") { host.peerPresence != .present }
@@ -515,10 +520,15 @@ struct MatchSessionTerminalAuditTests {
         let (host, wire) = try await Self.playingHost(clock: clock)
         await wire.closeGate()
         #expect(host.draw())
-        #expect(host.draw())
         try await Terminal.waitUntil("the first submission to reach the pool") {
             await wire.parkedCount == 1
         }
+        // The peer's own request is the second submission, not a second press:
+        // `draw()` refuses a second request while one is unanswered. Either way
+        // it is a pool submission sitting on the same chain, and a round serves
+        // both players, so what must not happen is unchanged.
+        wire.deliver(.drawRequest(player: Self.bob))
+        await Task.yield()
         wire.deliver(.resign(player: Self.bob))
         try await Terminal.waitUntil("the match to end") { host.isMatchOver }
         #expect(host.winner == Self.alice)
