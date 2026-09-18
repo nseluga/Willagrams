@@ -26,10 +26,11 @@ import SwiftUI
 public struct BrandMenu<Label: View, Content: View>: View {
 
     @State private var isOpen = false
-    @State private var anchor: CGRect = .zero
+    @State private var box = BrandMenuAnchorBox()
 
     private let label: Label
     private let content: Content
+
 
     public init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
         self.content = content()
@@ -38,17 +39,9 @@ public struct BrandMenu<Label: View, Content: View>: View {
 
     public var body: some View {
         Button { setOpen(true) } label: { label }
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: BrandMenuAnchorKey.self,
-                        value: proxy.frame(in: .global)
-                    )
-                }
-            }
-            .onPreferenceChange(BrandMenuAnchorKey.self) { anchor = $0 }
+            .background(BrandMenuAnchorReader(box: box))
             .fullScreenCover(isPresented: $isOpen) {
-                BrandMenuPanel(anchor: anchor, close: { setOpen(false) }) { content }
+                BrandMenuPanel(box: box, close: { setOpen(false) }) { content }
                     .environment(\.brandMenuDismiss) { setOpen(false) }
             }
     }
@@ -68,12 +61,12 @@ public struct BrandMenu<Label: View, Content: View>: View {
 /// the trigger rather than in the middle of the screen.
 private struct BrandMenuPanel<Content: View>: View {
 
-    let anchor: CGRect
+    let box: BrandMenuAnchorBox
     let close: () -> Void
     let content: Content
 
-    init(anchor: CGRect, close: @escaping () -> Void, @ViewBuilder content: () -> Content) {
-        self.anchor = anchor
+    init(box: BrandMenuAnchorBox, close: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.box = box
         self.close = close
         self.content = content()
     }
@@ -87,6 +80,10 @@ private struct BrandMenuPanel<Content: View>: View {
             // offset inside a presentation that may sit below the status bar.
             let origin = proxy.frame(in: .global).origin
             let size = proxy.size
+            // Read at render, not at the tap: `fullScreenCover` builds its
+            // content from the body evaluation that preceded the presentation,
+            // so a value written in the same tick as `isOpen` arrives stale.
+            let anchor = box.frame
 
             ZStack(alignment: .topLeading) {
                 DesignTokens.Palette.ink.opacity(Self.dimOpacity)
@@ -100,20 +97,20 @@ private struct BrandMenuPanel<Content: View>: View {
                     .brandCard()
                     .background {
                         GeometryReader { panel in
-                            Color.clear.preference(
-                                key: BrandMenuHeightKey.self,
-                                value: panel.size.height
-                            )
+                            Color.clear
+                                .onAppear { panelHeight = panel.size.height }
+                                .onChange(of: panel.size.height) { _, now in
+                                    panelHeight = now
+                                }
                         }
                     }
-                    .offset(x: x(in: size, origin: origin), y: y(in: size, origin: origin))
+                    .offset(x: x(anchor, in: size, origin: origin), y: y(anchor, in: size, origin: origin))
                     // Hidden for the one frame before the height is known,
                     // which is the frame that would otherwise flash the panel
                     // at the wrong end of the trigger.
                     .opacity(panelHeight > 0 ? 1 : 0)
                     .animation(DesignTokens.Motion.snap, value: panelHeight > 0)
             }
-            .onPreferenceChange(BrandMenuHeightKey.self) { panelHeight = $0 }
         }
         .presentationBackground(.clear)
     }
@@ -122,7 +119,7 @@ private struct BrandMenuPanel<Content: View>: View {
     /// row — then pulled back inside the screen margins if that would hang the
     /// panel off an edge. This is the hand-rolled half of what the system
     /// popover did for free.
-    private func x(in size: CGSize, origin: CGPoint) -> CGFloat {
+    private func x(_ anchor: CGRect, in size: CGSize, origin: CGPoint) -> CGFloat {
         let width = BrandMenuMetrics.panelWidth
         let preferred = anchor.maxX - origin.x - width
         let limit = size.width - width - Self.margin
@@ -131,7 +128,7 @@ private struct BrandMenuPanel<Content: View>: View {
 
     /// Below the trigger when the panel fits there, above it when it does not.
     /// A row near the bottom of a friends list is the case that needs it.
-    private func y(in size: CGSize, origin: CGPoint) -> CGFloat {
+    private func y(_ anchor: CGRect, in size: CGSize, origin: CGPoint) -> CGFloat {
         let below = anchor.maxY - origin.y + Self.gap
         guard below + panelHeight + Self.margin > size.height else { return below }
         let above = anchor.minY - origin.y - panelHeight - Self.gap
@@ -236,12 +233,40 @@ extension EnvironmentValues {
     }
 }
 
-private struct BrandMenuAnchorKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+/// Where the trigger is, in window coordinates, asked whenever the panel draws.
+///
+/// `GeometryProxy.frame(in: .global)` cannot do this job: it reads `.zero`
+/// until the view is in a window, and a view whose geometry never changes
+/// afterwards is never re-evaluated, so an anchor measured at `onAppear` can
+/// stay zero for the life of the screen — which put the panel in the top-left
+/// corner. Nor can the frame be measured at the tap and handed over as a
+/// value: the cover builds its content from the body evaluation *before* the
+/// presentation, so a rect written in the same tick as `isOpen` arrives stale
+/// and lands the panel in that same corner. A reference read at draw time is
+/// immune to both, because a `UIView` knows its window whenever it is asked.
+@MainActor final class BrandMenuAnchorBox {
+
+    fileprivate weak var view: UIView?
+
+    var frame: CGRect {
+        guard let view, let window = view.window else { return .zero }
+        return view.convert(view.bounds, to: window)
+    }
 }
 
-private struct BrandMenuHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+private struct BrandMenuAnchorReader: UIViewRepresentable {
+
+    let box: BrandMenuAnchorBox
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        box.view = view
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        box.view = view
+    }
 }
+
