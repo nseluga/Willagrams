@@ -205,8 +205,14 @@ public struct BoardView: View {
                 // its GestureState — the one signal the drag was interrupted.
                 // `drag` is cleared too, or a later touch with the identical
                 // start point would carry the stale grab and never `began`.
+                //
+                // The selection entry point is dropped here rather than in
+                // `onEnded` for that same reason: a cancelled drag never
+                // reaches `onEnded`, and that is exactly when a stale point
+                // most needs dropping. The reset lands AFTER `onEnded`, which
+                // is where the point still has to be readable.
                 .onChange(of: touching) { _, now in
-                    if !now { landInterrupted(); settledIfPanned(); drag = nil; begun.clear() }
+                    if !now { landInterrupted(); settledIfPanned(); drag = nil; begun.clear(); model.endedSelectionEntryTouch() }
                 }
                 // Edge swipes (home indicator, Control Center) need a second
                 // swipe over the board, so they stop stealing tile drags —
@@ -512,7 +518,7 @@ public struct BoardView: View {
                     // release of the gesture that was decided a sweep, never on
                     // a pan or a hold, so nothing else can clear a selection by
                     // accident.
-                    model.endedPainting()
+                    model.endedPainting(startedAt: value.startLocation)
                 }
                 settledIfPanned()
                 drag = nil

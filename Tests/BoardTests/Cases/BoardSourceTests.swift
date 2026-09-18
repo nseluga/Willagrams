@@ -853,7 +853,7 @@ final class BoardSourceTests: XCTestCase {
         )
         XCTAssertTrue(text.contains("model.painting("), "BoardView never sweeps")
         XCTAssertTrue(
-            text.contains("model.endedPainting()"),
+            text.contains("model.endedPainting(startedAt: value.startLocation)"),
             "BoardView never releases a sweep, so a tap on empty space cannot get the player out"
         )
         XCTAssertTrue(

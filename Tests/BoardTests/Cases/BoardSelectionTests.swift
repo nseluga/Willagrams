@@ -640,6 +640,60 @@ final class BoardSelectionTests: XCTestCase {
         }
     }
 
+    // MARK: - The entry touch is not its own exit
+
+    /// The iPad bug. The double tap and the drag under it are ONE touch, and on
+    /// iPad the tap recognizer fires first — so the drag is built with the mode
+    /// already active, takes the `.paint` arm, and its release, having crossed
+    /// nothing, runs the tap-on-empty-space exit. The border appeared and
+    /// vanished inside one gesture.
+    func testTheTouchThatEnteredTheModeDoesNotAlsoLeaveIt() throws {
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel(board: board, against: Self.dictionary)
+        let bare = centre(Coord(row: 8, col: 8))
+
+        model.enterSelection(at: bare, on: board, camera: Self.camera)
+        XCTAssertTrue(model.selection.isActive, "the double tap did not enter the mode")
+
+        // The same touch's drag, which crossed no tile because it never moved.
+        model.endedPainting(startedAt: bare)
+
+        XCTAssertTrue(
+            model.selection.isActive,
+            "the touch that entered selection mode immediately left it again"
+        )
+    }
+
+    /// And the way out still works: a LATER tap on empty space is a different
+    /// touch, so it clears — which is the only way a player leaves the mode.
+    func testAnExitTapAfterTheEntryTouchStillLeavesTheMode() throws {
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel(board: board, against: Self.dictionary)
+        let bare = centre(Coord(row: 8, col: 8))
+
+        model.enterSelection(at: bare, on: board, camera: Self.camera)
+        // The entry touch ends, exactly as `BoardView` reports it.
+        model.endedPainting(startedAt: bare)
+        model.endedSelectionEntryTouch()
+
+        // A second tap, on that very same spot.
+        model.endedPainting(startedAt: bare)
+
+        XCTAssertFalse(model.selection.isActive, "a tap on empty space no longer leaves the mode")
+    }
+
+    /// A tap somewhere else is a different touch on its face, so it leaves the
+    /// mode even while the entry point is still held.
+    func testATapAwayFromTheEntryPointLeavesTheModeAtOnce() throws {
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel(board: board, against: Self.dictionary)
+
+        model.enterSelection(at: centre(Coord(row: 8, col: 8)), on: board, camera: Self.camera)
+        model.endedPainting(startedAt: centre(Coord(row: 2, col: 2)))
+
+        XCTAssertFalse(model.selection.isActive, "a tap elsewhere did not leave the mode")
+    }
+
     func testALockedSurfaceRefusesASeededEntryToo() throws {
         // The spatial entry is a second door into the mode, so it needs the
         // same lock the plain one has.

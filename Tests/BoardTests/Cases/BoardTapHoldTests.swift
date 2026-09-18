@@ -724,7 +724,10 @@ final class BoardTapHoldTests: XCTestCase {
         // The fact it keeps must be put down again on BOTH ends of a gesture,
         // or the next touch at the same point never begins at all.
         XCTAssertTrue(
-            normalized.contains("if !now { landInterrupted(); settledIfPanned(); drag = nil; begun.clear() }"),
+            normalized.contains(
+                "if !now { landInterrupted(); settledIfPanned(); drag = nil; begun.clear();"
+                + " model.endedSelectionEntryTouch() }"
+            ),
             "BoardView does not forget the begun gesture when one is cancelled"
         )
         // The release end. `onEnded`'s whole body would drag the commit block
@@ -734,7 +737,7 @@ final class BoardTapHoldTests: XCTestCase {
         // `BoardSourceTests` is what covers everything outside it.
         XCTAssertTrue(
             normalized.contains(
-                "model.endedPainting() } settledIfPanned() drag = nil begun.clear() } }"
+                "model.endedPainting(startedAt: value.startLocation) } settledIfPanned() drag = nil begun.clear() } }"
             ),
             "BoardView does not forget the begun gesture when one is released"
         )

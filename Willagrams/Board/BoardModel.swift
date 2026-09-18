@@ -85,6 +85,23 @@ public struct BoardModel: Sendable {
     /// is a tap on empty space, which is the way out of selection mode.
     private var paintedAny = false
 
+    /// Where the double tap that ENTERED selection mode landed, until the touch
+    /// carrying it is over.
+    ///
+    /// The tap and the drag beneath it are one touch, and their order is not
+    /// ours to choose. On iPad the tap recognizer fires first, so the drag is
+    /// built with the mode already active, takes the `.paint` arm, and its
+    /// release — having crossed nothing — reads as the tap on empty space that
+    /// LEAVES the mode. The border appeared and vanished in the same gesture.
+    /// An entry may not be its own exit, and the point is what tells that touch
+    /// from the next one.
+    private var selectionEntryPoint: CGPoint?
+
+    /// How far apart two points may be and still be the same touch. UIKit calls
+    /// a drift this size a tap, so a tap's own drag cannot start further away
+    /// than this from where the tap was reported.
+    private static let selectionEntrySlop: CGFloat = 12
+
     /// What the frozen checker said about the board after the last committed
     /// move. Published state, never recomputed by a reader: `BoardRender` and
     /// the view read `invalidCoords` and `canDraw` off this, so nothing on the
@@ -354,6 +371,14 @@ public struct BoardModel: Sendable {
         selection.enter()
     }
 
+    /// Forgets the entry point, because the touch that carried it has ended.
+    ///
+    /// Called at the end of EVERY touch, so a stale point cannot swallow a
+    /// later, deliberate tap on empty space — the one real way out of the mode.
+    public mutating func endedSelectionEntryTouch() {
+        selectionEntryPoint = nil
+    }
+
     /// Enters selection mode at a POINT, seeding the set with the letter drawn
     /// under it — the double tap's own landing spot.
     ///
@@ -378,6 +403,7 @@ public struct BoardModel: Sendable {
         camera: BoardCamera
     ) {
         guard !inputLocked else { return }
+        selectionEntryPoint = point
         guard let hit = BoardHit.tile(
             under: point, on: board, offsets: tileOffsets, camera: camera
         ) else {
@@ -417,10 +443,18 @@ public struct BoardModel: Sendable {
     /// Crossed, not newly selected: sweeping back over tiles already swept up
     /// must not read as a tap. This is the way out, and it costs no tile move,
     /// which is why it is answered here rather than by any board state.
-    public mutating func endedPainting() {
-        if !paintedAny { selection.clear() }
+    public mutating func endedPainting(startedAt start: CGPoint? = nil) {
+        if !paintedAny && !isEntryTouch(start) { selection.clear() }
         paintCursor = nil
         paintedAny = false
+    }
+
+    /// Whether a sweep starting at `start` is the very touch that entered the
+    /// mode. `nil` is never the entry touch: a caller with no start point to
+    /// offer cannot be the double tap, which always has one.
+    private func isEntryTouch(_ start: CGPoint?) -> Bool {
+        guard let start, let entry = selectionEntryPoint else { return false }
+        return hypot(entry.x - start.x, entry.y - start.y) <= Self.selectionEntrySlop
     }
 
     /// A no-op when nothing is held, so a finger that took hold of the camera
