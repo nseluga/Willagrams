@@ -563,6 +563,21 @@ final class BoardSelectionTests: XCTestCase {
         XCTAssertTrue(model.selection.isEmpty, "a double tap on bare surface selected \(model.selection.coords)")
     }
 
+    func testTheModeIsVisibleEvenWhenItHoldsNothing() throws {
+        // `selected` is empty both when the mode is off and when it was entered
+        // on bare surface, so the surface drew those two states identically and
+        // a double tap on empty space read as "nothing happened". `isSelecting`
+        // is the difference the border renders.
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel()
+        XCTAssertFalse(model.isSelecting, "a fresh model is already in selection mode")
+
+        model.enterSelection(at: centre(Coord(row: 6, col: 6)), on: board, camera: Self.camera)
+
+        XCTAssertTrue(model.isSelecting, "bare-surface entry left the mode invisible")
+        XCTAssertTrue(model.selected.isEmpty, "bare-surface entry selected \(model.selected)")
+    }
+
     func testADoubleTapReplacesWhateverWasAlreadySweptUp() throws {
         // A double tap is how a player starts over, which doubles as the way
         // back from a sweep that took too much.

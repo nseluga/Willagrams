@@ -106,6 +106,10 @@ public enum DesignTokens {
         public static let bevel: CGFloat = 3
         /// The selected-tile ring.
         public static let selectedRing: CGFloat = 2.5
+        /// The board-edge ring that marks selection mode. Its own token rather
+        /// than `selectedRing`: that one is tile art, which the board surface
+        /// is forbidden to re-implement.
+        public static let selectionBorder: CGFloat = 2
     }
 
     public enum Radius {

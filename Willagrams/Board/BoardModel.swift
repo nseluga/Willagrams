@@ -69,6 +69,14 @@ public struct BoardModel: Sendable {
     /// dragging sits still.
     public var selected: Set<Coord> { tileDrag?.origins ?? selection.coords }
 
+    /// Whether selection mode is armed, regardless of what is in the set.
+    ///
+    /// ``selected`` cannot answer this: it is empty both when the mode is off
+    /// and when it was entered on bare surface, and those two states drew
+    /// identically. The surface needs the difference to show the player the
+    /// double tap took.
+    public var isSelecting: Bool { selection.isActive }
+
     /// Where the last painted sample was, so a sweep paints the line between
     /// two reported positions rather than the two positions themselves.
     private var paintCursor: CGPoint?

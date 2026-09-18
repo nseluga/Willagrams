@@ -264,6 +264,26 @@ public struct BoardView: View {
                         model.enterSelection(at: tap.location, on: board, camera: camera)
                     }
                 )
+                // Selection mode entered on BARE surface has nothing to seed,
+                // so `selected` stays empty and the board drew exactly as it
+                // does out of the mode: the double tap read as "nothing
+                // happened". The seed at `enterSelection(at:)` marks the mode
+                // only when the tap landed on a letter; this marks it the rest
+                // of the time, and keeps marking it after a sweep so the player
+                // can see the mode is still live and has to be tapped away.
+                // Its own stroke token: the tile-art tokens are off-limits to
+                // the surface. No `.allowsHitTesting(false)` either — the
+                // surface must never spend the lock, and a stroke this thin
+                // sits on the board edge where `recenterControl` already
+                // overlays.
+                .overlay {
+                    if model.isSelecting {
+                        Rectangle().strokeBorder(
+                            DesignTokens.Palette.accent,
+                            lineWidth: DesignTokens.Stroke.selectionBorder
+                        )
+                    }
+                }
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
                 // The lock is a plain assignment: `BoardModel` cancels an
                 // in-flight hold on its own when it lands, so there is no
