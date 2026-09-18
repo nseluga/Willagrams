@@ -136,6 +136,10 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
 private let hostID = PlayerID(rawValue: "host")
 private let guestID = PlayerID(rawValue: "guest")
 
+/// A stand-in payload for the tests below, which care about delivery and never
+/// about what the message says. Named once so the requester stays out of them.
+private let carrier = MatchMessage.poolExhausted(requester: hostID)
+
 /// Every offline case runs with a zero grace window, so the last peer leaving
 /// finishes the streams inline — no added latency, and criterion 3 still proves
 /// finish-on-last-peer-leave exactly as written.
@@ -232,9 +236,9 @@ struct RealtimeMatchTransportTests {
         let second = host.inboundMessages
 
         let guest = try await connect(guestID, channel: bus.channel())
-        try await guest.send(.poolExhausted, delivery: .reliable)
+        try await guest.send(carrier, delivery: .reliable)
 
-        #expect(await first.next() == .poolExhausted)
+        #expect(await first.next() == carrier)
         // The element went to the first iterator, so the second access sees the
         // rest of that same stream — not a replay.
         guest.leave()
@@ -276,13 +280,13 @@ struct RealtimeMatchTransportTests {
         let guest = try await connect(guestID, channel: bus.channel())
 
         for message in script(5) { try await host.send(message, delivery: .reliable) }
-        try await guest.send(.poolExhausted, delivery: .reliable)
+        try await guest.send(carrier, delivery: .reliable)
         guest.leave()
 
         // Exactly the peer's one message: none of the host's five echoes, and
         // the peer's message once rather than twice.
         let received = try await drain(host.inboundMessages)
-        #expect(received == [.poolExhausted])
+        #expect(received == [carrier])
     }
 
     // MARK: - Criterion 3: termination
@@ -293,14 +297,14 @@ struct RealtimeMatchTransportTests {
         let host = try await connect(hostID, channel: bus.channel())
         let guest = try await connect(guestID, channel: bus.channel())
 
-        try await guest.send(.poolExhausted, delivery: .reliable)
+        try await guest.send(carrier, delivery: .reliable)
         guest.leave()
 
         let states = try await drain(host.peerConnectionStates)
         #expect(states == [.connected(guestID), .disconnected(guestID)])
         // Buffered before the leave, still delivered after it.
         let received = try await drain(host.inboundMessages)
-        #expect(received == [.poolExhausted])
+        #expect(received == [carrier])
     }
 
     @Test("The caller's own two streams finish on leave()")
@@ -318,7 +322,7 @@ struct RealtimeMatchTransportTests {
         let states = try await drain(host.peerConnectionStates)
         #expect(states == [.connected(guestID)])
         await #expect(throws: MatchTransportError.peerDisconnected) {
-            try await host.send(.poolExhausted, delivery: .reliable)
+            try await host.send(carrier, delivery: .reliable)
         }
     }
 
@@ -331,8 +335,8 @@ struct RealtimeMatchTransportTests {
         let host = try await connect(hostID, channel: channel)
 
         // Nobody else is on the channel yet. Both of these return.
-        try await host.send(.poolExhausted, delivery: .reliable)
-        try await host.send(.poolExhausted, delivery: .lossy)
+        try await host.send(carrier, delivery: .reliable)
+        try await host.send(carrier, delivery: .lossy)
         #expect(channel.sent.count == 2)
         #expect(channel.subscribes == 1)
 
@@ -373,11 +377,11 @@ struct RealtimeMatchTransportTests {
         bus.join(guestChannel, as: guestID)
 
         // The match is still live: sending still works rather than throwing.
-        try await host.send(.poolExhausted, delivery: .reliable)
+        try await host.send(carrier, delivery: .reliable)
 
         // Past the window. A timer that ignored the re-join has fired by now.
         try await Task.sleep(for: .milliseconds(300))
-        try await host.send(.poolExhausted, delivery: .reliable)
+        try await host.send(carrier, delivery: .reliable)
         #expect(hostChannel.sent.count == 2)
 
         // And the host was told about the round trip rather than silence.
@@ -441,12 +445,12 @@ struct RealtimeMatchTransportTests {
         // Past the *first* leave's deadline but inside the second's. A stale
         // timer has fired by now, and the match would already be over.
         try await Task.sleep(for: .milliseconds(150))
-        try await host.send(.poolExhausted, delivery: .reliable)
+        try await host.send(carrier, delivery: .reliable)
 
         // And the second window still closes the match on its own schedule.
         try await Task.sleep(for: .milliseconds(200))
         await #expect(throws: MatchTransportError.self) {
-            try await host.send(.poolExhausted, delivery: .reliable)
+            try await host.send(carrier, delivery: .reliable)
         }
         let states = try await drain(host.peerConnectionStates)
         #expect(
@@ -625,7 +629,7 @@ struct RealtimeMatchTransportTests {
         let bus = StubBus()
         let channel = bus.channel()
         let host = try await connect(hostID, channel: channel, gap: .zero)
-        let message = MatchMessage.poolExhausted
+        let message = carrier
         let envelope = WireEnvelope(
             sender: guestID, sequence: 9, payload: try MatchCodec.encode(message))
 
@@ -676,7 +680,7 @@ struct RealtimeMatchTransportTests {
         let channel = bus.channel()
         let host = try await connect(hostID, channel: channel)
         let fromGuest = script(2)
-        let fromThird = [MatchMessage.poolExhausted, .resign(player: hostID)]
+        let fromThird = [carrier, .resign(player: hostID)]
         let third = PlayerID(rawValue: "third")
 
         let guestWire = try Self.envelopes(fromGuest, from: guestID)

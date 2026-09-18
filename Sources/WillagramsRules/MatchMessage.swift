@@ -3,7 +3,7 @@ import Foundation
 /// The wire format this build speaks. Bump only when `MatchMessage` changes
 /// shape, and add a golden fixture for the new version in the same commit.
 public enum WireFormat {
-    public static let current = 4
+    public static let current = 5
 }
 
 /// How many players one match may hold.
@@ -68,8 +68,22 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     /// "I have placed everything" — a request for everyone to take one.
     case drawRequest(player: PlayerID)
 
-    /// Host's answer to a draw: these tiles, to this player.
+    /// Host's answer to THIS player's own draw request, and the opening deal.
+    /// Goes straight to the rack.
+    ///
+    /// A draw gives every player a tile, so a device receives tiles for two
+    /// different reasons; ``obligation`` is the other one. They were one case,
+    /// and the receiver told them apart by guessing from its own count of
+    /// unanswered requests. The guess is wrong whenever the two cross on the
+    /// wire — both players drawing at once, which is most of a late match — and
+    /// the cost of being wrong is a spent credit, a tile that silently skips the
+    /// obligation, and a Draw gate that reopens while a request is still in
+    /// flight. The host has always known which is which. Now it says so.
     case grant(player: PlayerID, tiles: [Tile])
+
+    /// A tile this player owes because somebody ELSE drew. Held behind the
+    /// obligation until they press Draw, which is what reopens their board.
+    case obligation(player: PlayerID, tiles: [Tile])
 
     /// "Take this back, give me three."
     case swapRequest(player: PlayerID, returning: Tile)
@@ -77,7 +91,11 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     case swapGrant(player: PlayerID, tiles: [Tile], returned: Tile)
 
     /// No tiles left. The next completed board ends the match.
-    case poolExhausted
+    ///
+    /// Reaches every player — both boards need the latch — but names who asked,
+    /// for the same reason ``grant`` does: it is an answer to exactly one
+    /// request, and only that player may spend a credit on it.
+    case poolExhausted(requester: PlayerID)
 
     /// A win, with the board behind it so the end screen can show both.
     ///

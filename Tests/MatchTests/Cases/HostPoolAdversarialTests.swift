@@ -60,9 +60,9 @@ struct HostPoolAdversarialTests {
         let produced = rounds.flatMap { $0 }
         let granted = grants(in: produced)
         #expect(granted.count == 4, "expected two grants per round for two rounds, got \(produced)")
-        #expect(produced.last == .poolExhausted, "the third round should have been refused: \(produced)")
-        #expect(produced.filter { $0 == .poolExhausted }.count == 1)
-        #expect(messages.last == .poolExhausted, "the peer was not told the pool had run out: \(messages)")
+        #expect(produced.last == .poolExhausted(requester: guestID), "the third round should have been refused: \(produced)")
+        #expect(produced.filter { $0 == .poolExhausted(requester: guestID) }.count == 1)
+        #expect(messages.last == .poolExhausted(requester: guestID), "the peer was not told the pool had run out: \(messages)")
 
         let grantedIDs = granted.flatMap { $0.tiles.map(\.id) }
         #expect(Set(grantedIDs).count == 4, "a tile was granted more than once across requests")
@@ -110,14 +110,14 @@ struct HostPoolAdversarialTests {
 
         let granted = grants(in: produced)
         #expect(granted.count == 2, "three tiles cannot serve two rounds: \(produced)")
-        #expect(produced.filter { $0 == .poolExhausted }.count == 1, "the losing request was not refused: \(produced)")
+        #expect(produced.filter { $0 == .poolExhausted(requester: guestID) }.count == 1, "the losing request was not refused: \(produced)")
         #expect(Set(granted.map(\.player)) == [hostID, guestID], "both players should have been served once")
         #expect(Set(granted.flatMap { $0.tiles.map(\.id) }).count == 2, "the same tile went to both players")
 
         // The peer sees its own grant (with the count after it) and the refusal.
         #expect(messages.count == 3, "expected the peer's grant, the count and the refusal, got \(messages)")
         #expect(grants(in: messages).allSatisfy { $0.player == guestID }, "the host's tile reached the peer")
-        #expect(messages.contains(.poolExhausted), "the peer was never told the pool had run out")
+        #expect(messages.contains(.poolExhausted(requester: guestID)), "the peer was never told the pool had run out")
 
         let after = await authority.pool
         #expect(after.count == 1, "the pool should have moved exactly once")
@@ -138,10 +138,10 @@ struct HostPoolAdversarialTests {
 
         let messages = try #require(await drain(host, guest), "no reply reached the peer")
         #expect(grants(in: produced).count == 2, "two tiles, two players, one round: \(produced)")
-        #expect(produced.last == .poolExhausted, "the second round had nothing to give: \(produced)")
+        #expect(produced.last == .poolExhausted(requester: hostID), "the second round had nothing to give: \(produced)")
         // The host asked, so only the peer's own grant and the refusal go out.
         #expect(grants(in: messages).count == 1, "the wire should carry one grant: \(messages)")
-        #expect(messages.last == .poolExhausted, "the peer was not told the pool had run out: \(messages)")
+        #expect(messages.last == .poolExhausted(requester: hostID), "the peer was not told the pool had run out: \(messages)")
         #expect(await authority.pool.isEmpty)
     }
 
@@ -260,7 +260,7 @@ struct HostPoolAdversarialTests {
             .start(version: 1, seed: 9, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [hostID, guestID].sorted { $0.rawValue < $1.rawValue }),
             .grant(player: guestID, tiles: tiles(1)),
             .swapGrant(player: guestID, tiles: tiles(3), returned: Tile(letter: "Q")),
-            .poolExhausted,
+            .poolExhausted(requester: guestID),
             .rejected(reason: .notYourTurn),
             .resign(player: guestID),
         ]

@@ -1,7 +1,7 @@
 [
   {
     "start": {
-      "version": 4,
+      "version": 5,
       "seed": 3735928559,
       "startingHandSize": 21,
       "countdownSeconds": 3,
@@ -82,7 +82,11 @@
     }
   },
   {
-    "poolExhausted": {}
+    "poolExhausted": {
+      "requester": {
+        "rawValue": "G:1234567890"
+      }
+    }
   },
   {
     "win": {
@@ -158,6 +162,19 @@
   {
     "poolCount": {
       "remaining": 98
+    }
+  },
+  {
+    "obligation": {
+      "player": {
+        "rawValue": "G:9876543210"
+      },
+      "tiles": [
+        {
+          "id": "88888888-8888-4888-8888-888888888888",
+          "letter": "N"
+        }
+      ]
     }
   }
 ]

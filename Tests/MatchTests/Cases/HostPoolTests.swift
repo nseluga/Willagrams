@@ -41,12 +41,19 @@ func drain(_ host: FakeTransport, _ guest: FakeTransport) async -> [MatchMessage
     }
 }
 
-/// Grants as pairs, not a dictionary keyed by player: two grants to the same
-/// player must stay two entries, since collapsing them is exactly the bug.
+/// Every tile a draw round handed out, as pairs — not a dictionary keyed by
+/// player: two grants to the same player must stay two entries, since
+/// collapsing them is exactly the bug.
+///
+/// Both kinds count. A round gives the asker a `.grant` and everybody else an
+/// `.obligation`; they differ in what the receiver does with the tile, not in
+/// whether the pool handed it out.
 func grants(in messages: [MatchMessage]) -> [(player: PlayerID, tiles: [Tile])] {
     messages.compactMap { message in
-        if case let .grant(player, tiles) = message { return (player, tiles) }
-        return nil
+        switch message {
+        case let .grant(player, tiles), let .obligation(player, tiles): return (player, tiles)
+        default: return nil
+        }
     }
 }
 
@@ -56,7 +63,7 @@ func tileIDs(in messages: [MatchMessage]) -> Set<UUID> {
     var ids: Set<UUID> = []
     for message in messages {
         switch message {
-        case let .grant(_, tiles):
+        case let .grant(_, tiles), let .obligation(_, tiles):
             ids.formUnion(tiles.map(\.id))
         case let .swapGrant(_, tiles, returned):
             ids.formUnion(tiles.map(\.id))
@@ -136,10 +143,18 @@ struct HostPoolTests {
 
             // The peer is told what it got and nothing more: the host's tile is
             // the host's business, whoever asked for the round.
+            //
+            // Which kind it got says who asked. Its own request comes back as a
+            // `grant` — take it, the rack is yours. The host's request reaches
+            // it as an `obligation`, a tile it must press Draw for. The peer is
+            // never left to work that out from the tile.
             let guestTiles = try #require(granted.first { $0.player == self.guestID }?.tiles)
+            let expected: MatchMessage = requester == self.guestID
+                ? .grant(player: self.guestID, tiles: guestTiles)
+                : .obligation(player: self.guestID, tiles: guestTiles)
             #expect(
-                received == [.grant(player: guestID, tiles: guestTiles), .poolCount(remaining: after.count)],
-                "the wire should carry the peer's own grant and the pool count, got \(received)"
+                received == [expected, .poolCount(remaining: after.count)],
+                "the wire should carry the peer's own half of the round and the pool count, got \(received)"
             )
         }
     }
@@ -193,9 +208,9 @@ struct HostPoolTests {
             .drawRequest(player: guestID), with: authority, host: host, guest: guest
         )
 
-        #expect(produced == [.poolExhausted], "expected only poolExhausted, got \(produced)")
+        #expect(produced == [.poolExhausted(requester: guestID)], "expected only poolExhausted, got \(produced)")
         // Criterion: no grant reached the peer, asserted on the drained stream.
-        #expect(received == [.poolExhausted], "expected only poolExhausted on the wire, got \(received)")
+        #expect(received == [.poolExhausted(requester: guestID)], "expected only poolExhausted on the wire, got \(received)")
         #expect(grants(in: received).isEmpty, "an exhausted pool still granted tiles")
         #expect(await authority.pool == start, "a refused request moved the pool")
     }

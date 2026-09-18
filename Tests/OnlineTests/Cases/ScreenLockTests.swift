@@ -31,6 +31,10 @@ struct ScreenLockTests {
     private static let hostID = PlayerID(rawValue: "lock-host")
     private static let guestID = PlayerID(rawValue: "lock-guest")
 
+    /// A stand-in payload: these cases assert whether a send reaches the wire
+    /// at all, never what it carried.
+    private static let carrier = MatchMessage.poolExhausted(requester: guestID)
+
     /// Short enough that a window left running really fires inside the case.
     private static let grace: Duration = .milliseconds(200)
 
@@ -267,7 +271,7 @@ struct ScreenLockTests {
 
         // A finished stream is what kills the pump, and `send` throwing
         // `peerDisconnected` is the same latch seen from the other side.
-        try await table.guestTransport.send(.poolExhausted, delivery: .reliable)
+        try await table.guestTransport.send(Self.carrier, delivery: .reliable)
         #expect(!table.guestChannel.sent.isEmpty)
     }
 
@@ -401,7 +405,7 @@ struct ScreenLockTests {
         // The banked window resumes on resume and runs out on its own.
         try await Task.sleep(for: Self.grace + .milliseconds(200))
         await #expect(throws: MatchTransportError.peerDisconnected) {
-            try await table.guestTransport.send(.poolExhausted, delivery: .reliable)
+            try await table.guestTransport.send(Self.carrier, delivery: .reliable)
         }
     }
 

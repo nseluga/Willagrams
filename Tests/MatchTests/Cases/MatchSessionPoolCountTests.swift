@@ -60,9 +60,12 @@ struct MatchSessionPoolCountTests {
 
         // Each bad count is followed by a sentinel the guest does observe, so
         // "nothing changed" is read after the count was processed, not before.
+        // The tile sentinels are obligations rather than grants: a grant goes
+        // straight to the rack, and `pendingDrawTiles` is the queue that is
+        // easiest to count from outside.
         // Above the pool, onto a nil count, so `min` cannot hide it.
         try await first.send(.poolCount(remaining: MatchLimits.poolSize + 1), delivery: .reliable)
-        try await first.send(.poolExhausted, delivery: .reliable)
+        try await first.send(.poolExhausted(requester: bob), delivery: .reliable)
         try await T.waitUntil("sentinel: exhaustion latch") { guest.poolIsExhausted }
         #expect(guest.poolRemaining == nil, "145 was shown")
 
@@ -70,13 +73,13 @@ struct MatchSessionPoolCountTests {
         try await T.waitUntil("90 lands") { guest.poolRemaining == 90 }
 
         try await first.send(.poolCount(remaining: 95), delivery: .reliable)
-        try await first.send(.grant(player: bob, tiles: [Tile(letter: "A")]), delivery: .reliable)
-        try await T.waitUntil("sentinel grant 1") { guest.pendingDrawTiles.count == 1 }
+        try await first.send(.obligation(player: bob, tiles: [Tile(letter: "A")]), delivery: .reliable)
+        try await T.waitUntil("sentinel obligation 1") { guest.pendingDrawTiles.count == 1 }
         #expect(guest.poolRemaining == 90, "a late 95 grew the pool")
 
         try await first.send(.poolCount(remaining: -1), delivery: .reliable)
-        try await first.send(.grant(player: bob, tiles: [Tile(letter: "B")]), delivery: .reliable)
-        try await T.waitUntil("sentinel grant 2") { guest.pendingDrawTiles.count == 2 }
+        try await first.send(.obligation(player: bob, tiles: [Tile(letter: "B")]), delivery: .reliable)
+        try await T.waitUntil("sentinel obligation 2") { guest.pendingDrawTiles.count == 2 }
         #expect(guest.poolRemaining == 90, "-1 was shown")
 
         // Host side: `bob` is raw, `alice` runs the pool.

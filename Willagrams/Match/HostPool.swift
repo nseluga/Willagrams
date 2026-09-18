@@ -122,11 +122,17 @@ public actor HostPool {
             // or none at all, so a pool too small to go round is refused with
             // the pool untouched rather than half dealt.
             guard let drawn = pool.draw(players.count) else {
-                return await answer([.poolExhausted], to: player)
+                return await answer([.poolExhausted(requester: player)], to: player)
             }
+            // The asker gets `grant` — the answer it is waiting for. Everybody
+            // else gets `obligation`, a tile they must press Draw to take. The
+            // host is the only side that knows which is which; saying it here
+            // is what stops the receiver guessing.
             return await answer(
-                zip(players, drawn).map { player, tile in
-                    MatchMessage.grant(player: player, tiles: [tile])
+                zip(players, drawn).map { recipient, tile in
+                    recipient == player
+                        ? MatchMessage.grant(player: recipient, tiles: [tile])
+                        : MatchMessage.obligation(player: recipient, tiles: [tile])
                 },
                 to: player,
                 broadcastingCount: true
@@ -229,7 +235,7 @@ public actor HostPool {
     /// side of the wire can stop it reading what we chose to send.
     private func isForPeer(_ message: MatchMessage, requestedBy requester: PlayerID) -> Bool {
         switch message {
-        case let .grant(player, _), let .swapGrant(player, _, _):
+        case let .grant(player, _), let .obligation(player, _), let .swapGrant(player, _, _):
             return player != transport.localPlayerID
         case .poolExhausted:
             // The one real broadcast: it ends the match for both players.

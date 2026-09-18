@@ -17,7 +17,7 @@ struct MatchMessageTests {
             .grant(player: player, tiles: tiles),
             .swapRequest(player: player, returning: tiles[0]),
             .swapGrant(player: player, tiles: tiles, returned: tiles[0]),
-            .poolExhausted,
+            .poolExhausted(requester: player),
             .win(player: player, placements: Self.placements(21)),
             .resign(player: player),
             .rejected(reason: .poolEmpty),
@@ -25,6 +25,7 @@ struct MatchMessageTests {
             .rejected(reason: .notYourTurn),
             .rejected(reason: .unknownPlayer),
             .poolCount(remaining: 98),
+            .obligation(player: peer, tiles: tiles),
         ]
     }
 
@@ -46,12 +47,12 @@ struct MatchMessageTests {
     /// The round trip above only proves this build agrees with itself. This one
     /// decodes bytes written by hand and checked in, so renaming a case or an
     /// associated value fails here instead of in a shipped match.
-    @Test("Every v4 case still decodes from the checked-in golden payload")
+    @Test("Every v5 case still decodes from the checked-in golden payload")
     func goldenPayloadStillDecodes() throws {
-        let url = try #require(Bundle.module.url(forResource: "wire-v4", withExtension: "json"))
+        let url = try #require(Bundle.module.url(forResource: "wire-v5", withExtension: "json"))
         let decoded = try JSONDecoder().decode([MatchMessage].self, from: Data(contentsOf: url))
 
-        #expect(decoded.count == 14, "the golden file must cover every case")
+        #expect(decoded.count == 15, "the golden file must cover every case")
 
         guard case let .start(version, _, handSize, countdown, options, roster) = decoded[0] else {
             Issue.record("first golden message should be .start, got \(decoded[0])")
@@ -217,6 +218,6 @@ struct MatchMessageTests {
 
     @Test("Anything that is not a start validates to nil")
     func nonStartValidatesToNil() {
-        #expect(MatchMessage.poolExhausted.validatedStart(for: Self.player) == nil)
+        #expect(MatchMessage.poolExhausted(requester: Self.player).validatedStart(for: Self.player) == nil)
     }
 }

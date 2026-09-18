@@ -177,19 +177,17 @@ struct MatchSessionOpeningDealAuditTests {
 
     // MARK: - Probes of the receipt heuristic's second trigger
 
-    /// The `tiles.count == startingHandSize` trigger, probed on a legitimate
-    /// playing-phase peer draw whose count happens to match.
+    /// The hand-size collision that the old count heuristic could not survive.
     ///
-    /// A round grants exactly one tile, so the collision needs
-    /// `startingHandSize == 1`. The opening deal is dropped in flight, which
-    /// leaves `awaitingOpeningDeal` armed on the guest with no deal coming.
+    /// A round grants exactly one tile, so a `startingHandSize` of one made a
+    /// peer's round indistinguishable from an opening deal by size. The deal is
+    /// dropped in flight here, which used to leave the guest armed for a deal
+    /// that was never coming and swallow the next round into the rack.
     ///
-    /// Characterisation, not a wish: this pins the *known ceiling* named in
-    /// `takeOpeningDeal`'s `ponytail:` comment. The peer's round is misread as
-    /// the deal and skips the obligation. If the wire v2 `deal` case lands, this
-    /// test should flip to expecting `hasPendingDraw`.
-    @Test("KNOWN CEILING: with a hand size of one, a peer's draw is misread as the deal")
-    func theCountTriggerMisfiresAtHandSizeOne() async throws {
+    /// The wire settles it now: a peer's round arrives as `.obligation`, which
+    /// has nothing to do with a deal at any hand size.
+    @Test("A peer's round is an obligation even when it is the size of the whole opening hand")
+    func aPeersRoundIsNeverTakenForTheDeal() async throws {
         let handSize = 1
         let (first, second) = FakeTransport.pair(Self.alice, Self.bob)
         let host = MatchSession(
@@ -208,31 +206,30 @@ struct MatchSessionOpeningDealAuditTests {
 
         // A legitimate playing-phase round: one tile each.
         #expect(host.draw())
-        try await Self.waitUntil("the round to reach the guest") { !guest.state.hand.isEmpty }
+        try await Self.waitUntil("the round to reach the guest") { guest.hasPendingDraw }
 
-        // The misfire: it went to the hand, and no obligation was raised.
-        #expect(guest.state.hand.count == 1)
-        #expect(guest.pendingDrawTiles.isEmpty)
-        #expect(guest.hasPendingDraw == false)
+        // Held behind the Draw gate, not taken — the size never entered into it.
+        #expect(guest.pendingDrawTiles.count == 1)
+        #expect(guest.state.hand.isEmpty)
 
-        // Contained: the flag is spent, so the very next peer round is an
-        // obligation again. One grant is the whole blast radius.
+        // And the one after it, so this is the rule rather than a spent flag.
+        #expect(guest.draw())
         #expect(host.draw())
         try await Self.waitUntil("the second round to be held") { guest.hasPendingDraw }
         #expect(guest.pendingDrawTiles.count == 1)
         #expect(guest.state.hand.count == 1)
     }
 
-    /// The `.countdown` trigger, probed the same way — and it is *not* bounded
+    /// The phase collision, probed the same way — the one that was *not* bounded
     /// by the hand size.
     ///
-    /// A guest still counting down while the host is already playing takes any
-    /// grant that reaches it as the deal. The in-order wire normally saves this
+    /// A guest still counting down while the host is already playing used to take
+    /// any grant that reached it as the deal. The in-order wire normally saved this
     /// (the deal is enqueued before any later draw), so this drops the deal to
     /// stand in for the reordering the session's own doc comment says the
     /// transport is allowed to do.
-    @Test("KNOWN CEILING: a grant reaching a guest still in countdown is taken as the deal at any size")
-    func theCountdownTriggerMisfiresAtAnyHandSize() async throws {
+    @Test("A peer's round reaching a guest still in countdown is still an obligation")
+    func aPeersRoundIsAnObligationDuringCountdown() async throws {
         let handSize = 7
         let gate = Gate()
         let (first, second) = FakeTransport.pair(Self.alice, Self.bob)
@@ -259,13 +256,12 @@ struct MatchSessionOpeningDealAuditTests {
 
         // A one-tile round arriving while the guest is still in `.countdown`.
         #expect(host.draw())
-        try await Self.waitUntil("the round to reach the guest") { !guest.state.hand.isEmpty }
+        try await Self.waitUntil("the round to reach the guest") { guest.hasPendingDraw }
 
-        // Misfired on the phase alone: one tile, taken as a whole opening hand,
-        // no obligation — and the hand size never entered into it.
-        #expect(guest.state.hand.count == 1)
-        #expect(guest.pendingDrawTiles.isEmpty)
-        #expect(guest.hasPendingDraw == false)
+        // Held, not taken. The phase no longer decides anything: the wire named
+        // this an obligation and the guest's own status is beside the point.
+        #expect(guest.pendingDrawTiles.count == 1)
+        #expect(guest.state.hand.isEmpty)
 
         gate.open = true
         try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }

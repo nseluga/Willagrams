@@ -591,3 +591,46 @@ There are no users yet, so the break is free now and gets costly later.
   difficulty: low — one case and a fixture regeneration
   status: done — the shape. Sending it (`HostPool`, after the deal, every grant
         round and every swap) and showing it on the guest is the `polish` lane's
+
+
+## Amendment — wire v5, the host says which tiles were asked for (2026-09-18)
+
+Found in two-device play: hammering Draw late in a match hands out a burst of
+tiles and forces the opponent to draw over and over until the bag empties. The
+in-flight guard added on `lane/final-polish` fixes the pure-latency half; this
+is the other half, and it is a wire defect.
+
+A draw gives *every* player a tile, so a device received tiles for two different
+reasons and both arrived as `.grant(player: me, …)` — byte-identical. The
+receiver told them apart by guessing from its own count of unanswered requests.
+The guess is wrong whenever the two cross on the wire, which is both players
+drawing at once — routine once the rack is full and the bag is low, which is why
+it read as "only near the bottom of the bag". Being wrong spends the credit on
+the opponent's round, drops that tile into the rack instead of behind the Draw
+gate, and reopens the gate with a real request still in flight.
+
+- task: Bump the wire to v5 and name the requester
+  done when:
+    - `WireFormat.current == 5`; `MatchMessage` gains a trailing
+      `obligation(player:tiles:)`, and `poolExhausted` gains
+      `requester: PlayerID`; no other case changes shape or position
+    - `Tests/WillagramsRulesTests/Fixtures/wire-v5.json` replaces the v4 fixture
+      and decodes into all 15 messages. `MatchMessageTests` and
+      `MatchCodecTrustBoundaryTests` assert it against hand-built literals
+    - `HostPool.answer` is the only minting site: the asker gets `.grant`,
+      everybody else `.obligation`. `deal(handSize:)` still grants to all —
+      an opening hand goes to the rack
+    - `MatchSession` reads nothing from the phase or the tile count to decide
+      where a tile lands. `takeOpeningDeal` and its two documented misfires are
+      deleted
+  guardrails:
+    - `outstandingDrawRequests` no longer classifies anything. It is the
+      in-flight count and only `draw()` reads it
+    - `poolExhausted` reaches both devices — both boards need the latch — but
+      only the named requester spends a credit on it
+    - a duplicate of either case is still dropped by id (`unheld`), so a
+      replayed message cannot double a tile into the rack
+  risk: same as v4 — a case added or reordered after a build ships breaks decode
+        between two app versions, silently
+  difficulty: low — one case, one associated value, a fixture regeneration
+  status: done on `lane/final-polish`

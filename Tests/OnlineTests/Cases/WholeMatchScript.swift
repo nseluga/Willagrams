@@ -414,13 +414,20 @@ struct WholeMatchOfflineTests {
         #expect(winner == f.guestPlayer)
 
         // Criterion 1, on the wire rather than in the tally: the pool host
-        // served the guest too, and the guest saw every one of those grants.
-        let grantsToGuest = f.guestWire.received.filter {
-            if case let .grant(player, _) = $0 { player == f.guestPlayer } else { false }
+        // served the guest too, and the guest saw a tile for every round.
+        // Both kinds count — the host answers the asker with a `grant` and
+        // everybody else with an `obligation`, and the guest asked for half
+        // of these rounds — so what is being counted is that the host served
+        // it, not which side pressed Draw.
+        let tilesToGuest = f.guestWire.received.filter {
+            switch $0 {
+            case let .grant(player, _), let .obligation(player, _): player == f.guestPlayer
+            default: false
+            }
         }
         #expect(
-            grantsToGuest.count == 1 + WholeMatchScript.drawRounds,
-            "the guest saw \(grantsToGuest.count) grants, not the opening deal plus every round")
+            tilesToGuest.count == 1 + WholeMatchScript.drawRounds,
+            "the guest saw \(tilesToGuest.count) rounds, not the opening deal plus every round")
         // And the guest asked for exactly the rounds the script gave it.
         let guestRequests = f.guestWire.sent.filter {
             if case .drawRequest = $0 { true } else { false }

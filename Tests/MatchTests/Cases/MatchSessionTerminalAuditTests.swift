@@ -166,8 +166,10 @@ struct MatchSessionTerminalAuditTests {
         #expect(await wire.count == 3)
         let landed = await wire.wire
         let grantsToPeer = landed.filter { message in
-            if case let .grant(player, _) = message { return player == Self.bob }
-            return false
+            switch message {
+            case let .grant(player, _), let .obligation(player, _): return player == Self.bob
+            default: return false
+            }
         }
         #expect(grantsToPeer.count == 1)
         #expect(host.state.hand.count == 1)
@@ -204,7 +206,7 @@ struct MatchSessionTerminalAuditTests {
 
         // And the elements are not divided: every one of six offers lands.
         let offered = (0..<6).map { Tile(letter: $0.isMultiple(of: 2) ? "A" : "B") }
-        for tile in offered { wire.deliver(.grant(player: Self.bob, tiles: [tile])) }
+        for tile in offered { wire.deliver(.obligation(player: Self.bob, tiles: [tile])) }
         try await Terminal.waitUntil("all six offers to land") { guest.pendingDrawTiles.count == 6 }
         #expect(guest.pendingDrawTiles.map(\.id) == offered.map(\.id))
 
@@ -249,7 +251,7 @@ struct MatchSessionTerminalAuditTests {
         // and `receive` is synchronous, so this landing proves they were read
         // rather than still queued behind the assertions.
         let marker = Tile(letter: "M")
-        wire.deliver(.grant(player: Self.bob, tiles: [marker]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [marker]))
         try await Terminal.waitUntil("the marker to land") { guest.hasPendingDraw }
         #expect(guest.pendingDrawTiles.map(\.id) == [marker.id])
 
@@ -299,9 +301,9 @@ struct MatchSessionTerminalAuditTests {
         // would move the rack; exhaustion would latch; a second win or a
         // resignation would rename the winner.
         wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard, roster: [Self.alice, Self.bob]))
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "Q")]))
         wire.deliver(.swapGrant(player: Self.bob, tiles: [Tile(letter: "R")], returned: tiles[1]))
-        wire.deliver(.poolExhausted)
+        wire.deliver(.poolExhausted(requester: Self.bob))
         wire.deliver(.rejected(reason: .unknownPlayer))
         wire.deliver(.win(player: Self.alice, placements: []))
         wire.deliver(.resign(player: Self.alice))
@@ -420,7 +422,7 @@ struct MatchSessionTerminalAuditTests {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock)
 
-        wire.deliver(.poolExhausted)
+        wire.deliver(.poolExhausted(requester: Self.bob))
         try await Terminal.waitUntil("the latch to close") { guest.poolIsExhausted }
         #expect(guest.isMatchOver == false)
         #expect(guest.winner == nil)
@@ -441,7 +443,7 @@ struct MatchSessionTerminalAuditTests {
         // A grant reordered behind the exhaustion notice is still applied: the
         // latch is not a gate on the rack.
         let late = Tile(letter: "Q")
-        wire.deliver(.grant(player: Self.bob, tiles: [late]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [late]))
         try await Terminal.waitUntil("the reordered grant to land") { guest.hasPendingDraw }
         #expect(guest.draw())
         #expect(guest.state.hand.map(\.id) == [late.id])

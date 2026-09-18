@@ -9,7 +9,7 @@ import WillagramsRules
 @Suite("MatchCodec golden fixture and version gate")
 struct MatchCodecTrustBoundaryTests {
 
-    /// Every element of `wire-v4.json`, hand-built from the literals in the
+    /// Every element of `wire-v5.json`, hand-built from the literals in the
     /// spec — never re-encoded through this build's own encoder, since that
     /// would launder the golden bytes through the code under test.
     static var expectedFixtureMessages: [MatchMessage] {
@@ -30,7 +30,7 @@ struct MatchCodecTrustBoundaryTests {
             .grant(player: player, tiles: [tileA, tileB]),
             .swapRequest(player: player, returning: tileQ),
             .swapGrant(player: player, tiles: [tileE, tileT, tileO], returned: tileQ),
-            .poolExhausted,
+            .poolExhausted(requester: player),
             .win(player: player, placements: [
                 Placement(tile: tileH, coord: Coord(row: 0, col: 0)),
                 Placement(tile: tileI, coord: Coord(row: 0, col: 1)),
@@ -42,6 +42,10 @@ struct MatchCodecTrustBoundaryTests {
             .rejected(reason: .unknownPlayer),
             .rejected(reason: .swapDisabled),
             .poolCount(remaining: 98),
+            .obligation(
+                player: PlayerID(rawValue: "G:9876543210"),
+                tiles: [Tile(id: UUID(uuidString: "88888888-8888-4888-8888-888888888888")!, letter: "N")]
+            ),
         ]
     }
 

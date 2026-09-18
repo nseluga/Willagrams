@@ -296,7 +296,7 @@ struct MatchSessionTerminalGateTests {
         wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard, roster: [Self.alice, Self.bob]))
         wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
         wire.deliver(.swapGrant(player: Self.bob, tiles: [Tile(letter: "R")], returned: tiles[1]))
-        wire.deliver(.poolExhausted)
+        wire.deliver(.poolExhausted(requester: Self.bob))
         wire.deliver(.rejected(reason: .unknownPlayer))
         #expect(guest.draw() == false)
         #expect(guest.swap(tiles[1]) == false)

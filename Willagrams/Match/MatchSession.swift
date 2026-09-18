@@ -355,10 +355,9 @@ public final class MatchSession: AppActivityListener {
 
     /// The opening deal has not happened yet on this device.
     ///
-    /// On the host it stops a second deal — a peer returning restarts the
-    /// countdown, and that would hand out two hands. On the guest it is half of
-    /// how an opening grant is told from a peer's draw; see
-    /// ``takeOpeningDeal(_:)``.
+    /// Host-side only: it stops a second deal, because a peer returning restarts
+    /// the countdown and that would hand out two hands. A guest has no pool, so
+    /// it reads this nowhere — the deal simply arrives as a `.grant`.
     @ObservationIgnored private var awaitingOpeningDeal = false
 
     /// The countdown the freeze interrupted, held so a peer that comes back
@@ -367,17 +366,14 @@ public final class MatchSession: AppActivityListener {
 
     /// Draw requests this device has sent and not yet seen answered.
     ///
-    /// The *wire* cannot tell the two kinds of grant apart — both read
-    /// `.grant(player: me, …)` — so this counts the answers this device is owed.
-    /// A grant with nothing outstanding is the opponent's draw, and becomes an
-    /// obligation. Every request produces exactly one of a grant, a
-    /// `.poolExhausted` or a `.rejected`, so any of the three clears one — and a
-    /// request that never reached the wire clears its own.
+    /// Nothing reads this to work out what an inbound message *means* — the
+    /// wire says so: `.grant` answers this device's own request, `.obligation`
+    /// is the tile it owes for somebody else's. This is only the in-flight
+    /// count, and ``draw()`` refuses a second request while it is non-zero.
     ///
-    /// Only the inbound path guesses from this count. The host answers itself
-    /// and knows which request each message it produced belongs to, so
-    /// ``applyProduced(_:answering:)`` passes that answer down rather than
-    /// reading this.
+    /// Every request produces exactly one of a `.grant`, a `.poolExhausted`
+    /// naming this device or a `.rejected`, so any of the three clears one —
+    /// and a request that never reached the wire clears its own.
     @ObservationIgnored private var outstandingDrawRequests = 0
 
     /// This device's own `.win`/`.resign` was caught by the freeze and still
@@ -1108,25 +1104,30 @@ public final class MatchSession: AppActivityListener {
             submitToHost(message)
 
         case let .grant(player, tiles):
-            // The host is the sole authority for the three cases below: it mints
+            // The host is the sole authority for the four cases below: it mints
             // them and applies its own half from `handle`'s return value, so one
             // arriving here is a modified peer minting tiles into the host's
             // rack, desyncing it from the pool, or latching exhaustion.
             guard hostPool == nil, player == localPlayerID else { break }
-            // `nil`: only ``applyGrant(_:requestedByLocal:)`` can tell whether
-            // this is the opening deal, and a credit must not be spent on one.
-            applyGrant(tiles, requestedByLocal: nil)
+            applyGrant(tiles)
+
+        case let .obligation(player, tiles):
+            guard hostPool == nil, player == localPlayerID else { break }
+            applyObligation(tiles)
 
         case let .swapGrant(player, tiles, returned):
             guard hostPool == nil, player == localPlayerID else { break }
             applySwapGrant(tiles: tiles, returned: returned)
 
-        case .poolExhausted:
+        case let .poolExhausted(requester):
             // A latch, not an end. A grant that arrives after this one — the
             // transport may reorder — is still applied above.
             guard hostPool == nil else { break }
             poolIsExhausted = true
-            clearOneOutstandingDraw()
+            // It reaches both devices, but it answers one request. Spending a
+            // credit on somebody else's refusal would reopen this device's Draw
+            // gate with its own request still in flight.
+            if requester == localPlayerID { clearOneOutstandingDraw() }
 
         case let .win(player, placements):
             // A device declares its own win. One naming this device as the
@@ -1281,8 +1282,8 @@ public final class MatchSession: AppActivityListener {
     /// Deals both opening hands, once, from the host's pool.
     ///
     /// Only the host has a pool to deal from; the guest's hand arrives as a
-    /// `.grant` and lands through ``takeOpeningDeal(_:)``. Nothing happens on
-    /// the guest, and nothing happens twice.
+    /// `.grant` and lands through ``applyGrant(_:)``. Nothing happens on the
+    /// guest, and nothing happens twice.
     private func dealOpeningHands() {
         guard awaitingOpeningDeal, let hostPool else { return }
         // Closed synchronously, before the suspension: a peer returning restarts
@@ -1306,76 +1307,50 @@ public final class MatchSession: AppActivityListener {
                 // The grant addressed to the host never travels — this is where
                 // the host's own opening hand lands, as `applyProduced` does for
                 // a draw.
-                self.applyGrant(tiles, requestedByLocal: true)
+                self.applyGrant(tiles)
             }
         }
     }
 
-    /// Whether this grant is the opening deal, and closes the deal if it is.
+    /// Takes a granted tile into the rack.
     ///
-    /// ponytail: the phase carries what the wire cannot say, and it is a
-    /// heuristic. Wire v1 has one `.grant` case for both an opening deal and a
-    /// draw, and adding a second is a format break, so two triggers stand in for
-    /// the case that does not exist. Both can misfire:
+    /// A grant is only ever the answer to this device's own request or the
+    /// opening deal — the host addresses no other kind to it — and both land in
+    /// the rack, so there is nothing here to tell apart. Nobody requests the
+    /// deal, so the outstanding count decides the one thing that differs: a
+    /// deal spends no credit, because it answers nothing.
     ///
-    /// - **the phase trigger** takes the *first* grant arriving in `.countdown`
-    ///   as the deal, at any hand size. Sound only because the host gates
-    ///   `.drawRequest` on `state.status == .playing` and ``dealOpeningHands()``
-    ///   enqueues strictly before that flip, so on `.reliable` delivery the deal
-    ///   is always the first grant. Reorder or drop that one grant — a lossy
-    ///   link, a transport that does not keep order — and a one-tile round is
-    ///   read as a whole opening hand instead.
-    /// - **the count trigger** covers the two cases that leave no `.countdown`
-    ///   phase to read, by taking a first grant of exactly `startingHandSize`
-    ///   tiles: a zero-second countdown, and — the larger producer — a deal
-    ///   recovered from a freeze, which ``peerReturned()`` sends after the thaw
-    ///   at *any* countdown length, by which time the guest is already
-    ///   `.playing`. At `startingHandSize == 1` that is any round at all.
-    ///
-    /// `awaitingOpeningDeal` bounds either misfire to one grant, and the tiles
-    /// are real tiles from the real pool — the cost is one round taken into hand
-    /// instead of held behind the Draw button. Upgrade to the distinct `deal`
-    /// case at the pending wire v2 amendment, and delete all of this.
-    private func takeOpeningDeal(_ tiles: [Tile]) -> Bool {
-        guard awaitingOpeningDeal else { return false }
-        if case .countdown = state.status {
-            awaitingOpeningDeal = false
-            return true
-        }
-        guard tiles.count == startingHandSize else { return false }
-        awaitingOpeningDeal = false
-        return true
+    /// This replaced a heuristic that read the match phase and the tile count to
+    /// guess whether a grant was the deal. Both triggers had known misfires — a
+    /// dropped deal, or a hand size of one — and both are gone with the guess.
+    private func applyGrant(_ tiles: [Tile]) {
+        clearOneOutstandingDraw()
+
+        let fresh = unheld(tiles)
+        guard !fresh.isEmpty else { return }
+        state.hand.append(contentsOf: fresh)
     }
 
-    /// Takes a granted tile, or holds it behind the obligation.
+    /// Holds a tile behind the obligation.
     ///
-    /// A grant this device asked for goes straight to the rack. One it did not
-    /// means the opponent drew, so this device owes a tile for the same event
-    /// and the board freezes until the player presses Draw. The caller says
-    /// which: on the host it answered a request it can name, and only the wire
-    /// has to fall back on the outstanding-request count — pass `nil` for that,
-    /// and one credit is spent here on every grant that is not the opening deal.
-    private func applyGrant(_ tiles: [Tile], requestedByLocal: Bool?) {
-        // First, and whatever else is done with the grant: the deal is closed by
-        // the message that carried it, and it answers no request. A credit spent
-        // on it would leave the real answer uncredited, and the player owing a
-        // second press for a round they already took.
-        let isOpeningDeal = takeOpeningDeal(tiles)
-        let requested = requestedByLocal ?? (isOpeningDeal ? false : clearOneOutstandingDraw())
+    /// The opponent drew, so this device owes a tile for the same event and its
+    /// board stays frozen until the player presses Draw. Spends no credit: this
+    /// answers nothing this device asked for.
+    private func applyObligation(_ tiles: [Tile]) {
+        let fresh = unheld(tiles)
+        guard !fresh.isEmpty else { return }
+        pendingDrawTiles.append(contentsOf: fresh)
+    }
 
-        // A duplicated grant is peer input: taking it twice would double a tile
-        // into the rack and leave the two devices disagreeing about the pool.
+    /// The tiles of `tiles` this device is not already holding somewhere.
+    ///
+    /// A duplicated grant is peer input: taking it twice would double a tile
+    /// into the rack and leave the two devices disagreeing about the pool.
+    private func unheld(_ tiles: [Tile]) -> [Tile] {
         var held = Set(state.hand.map(\.id))
         held.formUnion(pendingDrawTiles.map(\.id))
         held.formUnion(state.board.placementList.map(\.tile.id))
-        let fresh = tiles.filter { !held.contains($0.id) }
-        guard !fresh.isEmpty else { return }
-
-        if requested || isOpeningDeal {
-            state.hand.append(contentsOf: fresh)
-        } else {
-            pendingDrawTiles.append(contentsOf: fresh)
-        }
+        return tiles.filter { !held.contains($0.id) }
     }
 
     /// Notes a refusal, and closes the request it answered.
@@ -1516,17 +1491,16 @@ public final class MatchSession: AppActivityListener {
         for message in produced {
             switch message {
             case let .grant(player, tiles) where player == localPlayerID:
-                // Closed, not consulted: a peer-initiated grant landing while
-                // this device has a Draw outstanding is still an obligation.
-                if requestedByLocal { clearOneOutstandingDraw() }
-                applyGrant(tiles, requestedByLocal: requestedByLocal)
+                applyGrant(tiles)
+            case let .obligation(player, tiles) where player == localPlayerID:
+                applyObligation(tiles)
             case let .swapGrant(player, tiles, returned) where player == localPlayerID:
                 applySwapGrant(tiles: tiles, returned: returned)
-            case .poolExhausted:
+            case let .poolExhausted(requester):
                 poolIsExhausted = true
-                // The broadcast names no requester; only the device that asked
-                // is owed an answer by it.
-                if requestedByLocal { clearOneOutstandingDraw() }
+                // The broadcast reaches both; only the device that asked is
+                // owed an answer by it.
+                if requester == localPlayerID { clearOneOutstandingDraw() }
             case let .rejected(reason) where requestedByLocal:
                 applyRejection(reason, answeredADraw: wasDrawRequest)
             default:

@@ -251,7 +251,9 @@ struct MatchSessionTerminalTests {
     @discardableResult
     static func stock(_ guest: MatchSession, _ wire: PresenceTransport) async throws -> [Tile] {
         let tiles = [Tile(letter: "W"), Tile(letter: "I"), Tile(letter: "N")]
-        wire.deliver(.grant(player: bob, tiles: tiles))
+        // `obligation`, not `grant`: these are tiles the peer's draws owe this
+        // device, which is what puts them behind the Draw gate.
+        wire.deliver(.obligation(player: bob, tiles: tiles))
         try await waitUntil("the tiles to be offered") { guest.pendingDrawTiles.count == 3 }
         // One tile per press, so three tiles is three presses. The board stays
         // shut until the last of them is taken.
@@ -385,8 +387,8 @@ struct MatchSessionTerminalTests {
         #expect(guest.resign() == false)
 
         // And what the peer said before it left cannot move the game either.
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "X")]))
-        wire.deliver(.poolExhausted)
+        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "X")]))
+        wire.deliver(.poolExhausted(requester: Self.bob))
         wire.deliver(.start(version: WireFormat.current, seed: 9, startingHandSize: 0, countdownSeconds: 5, options: .standard, roster: [Self.alice, Self.bob]))
         try await Self.settle()
 
@@ -488,7 +490,7 @@ struct MatchSessionTerminalTests {
         // Note this no longer isolates the credit's *return*: `peerReturned`
         // also zeroes the counter, so the reset above would mask a leak. The
         // return is pinned on its own in "Draw refuses a second request".
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "A")]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "A")]))
         try await Self.waitUntil("the opponent's round") { guest.hasPendingDraw }
 
         #expect(guest.state.hand.count == 2)

@@ -87,8 +87,16 @@ struct MatchSessionOrderingTests {
             }
         }
 
+        /// Draw answers of either kind: a round puts a `grant` on the wire for
+        /// the asker and an `obligation` for everyone else, and this counts how
+        /// many answers travelled, not which sort they were.
         func grantCount() -> Int {
-            wire.filter { if case .grant = $0 { return true } else { return false } }.count
+            wire.filter {
+                switch $0 {
+                case .grant, .obligation: return true
+                default: return false
+                }
+            }.count
         }
     }
 
@@ -226,8 +234,8 @@ struct MatchSessionOrderingTests {
 
         // Reordered in flight: the exhaustion notice overtook the grant.
         let late = Tile(letter: "Q")
-        wire.deliver(.poolExhausted)
-        wire.deliver(.grant(player: bob, tiles: [late]))
+        wire.deliver(.poolExhausted(requester: bob))
+        wire.deliver(.obligation(player: bob, tiles: [late]))
         try await Self.waitUntil("the reordered grant to land") { guest.hasPendingDraw }
 
         #expect(guest.poolIsExhausted)
@@ -287,8 +295,10 @@ struct MatchSessionOrderingTests {
         let grantCount = await wire.grantCount()
         #expect(grantCount == 2)
         let addressedHere = landed.contains { message in
-            if case let .grant(player, _) = message { return player == alice }
-            return false
+            switch message {
+            case let .grant(player, _), let .obligation(player, _): return player == alice
+            default: return false
+            }
         }
         #expect(addressedHere == false)
 
@@ -298,7 +308,8 @@ struct MatchSessionOrderingTests {
         // devices would then be holding the same tile.
         let travelled = Set(landed.flatMap { message -> [UUID] in
             switch message {
-            case let .grant(_, tiles), let .swapGrant(_, tiles, _): return tiles.map(\.id)
+            case let .grant(_, tiles), let .obligation(_, tiles), let .swapGrant(_, tiles, _):
+                return tiles.map(\.id)
             default: return []
             }
         })

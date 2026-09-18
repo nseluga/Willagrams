@@ -338,7 +338,7 @@ struct MatchHUDTests {
         // The call is only offered once there is nothing left to take. The host
         // says so on the wire; there is no local way to reach that latch.
         #expect(hud.isWinEnabled == false, "the call was offered with tiles still in the pool")
-        try await host.send(.poolExhausted, delivery: .reliable)
+        try await host.send(.poolExhausted(requester: PlayerID(rawValue: "aaa")), delivery: .reliable)
         try await SoloMatchTests.waitUntil("the pool to run out") { session.poolIsExhausted }
 
         #expect(hud.isWinEnabled)
@@ -565,7 +565,7 @@ struct MatchHUDTests {
         // letter it could not lay, and the whole queue then landed at once on
         // the last press.
         let owed = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
-        try await MatchBoardTests.grant(owed, from: host)
+        try await MatchBoardTests.owe(owed, from: host)
         try await SoloMatchTests.waitUntil("three tiles waiting behind Draw") {
             session.pendingDrawTiles.count == 3
         }

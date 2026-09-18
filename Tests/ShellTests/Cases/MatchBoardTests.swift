@@ -98,6 +98,12 @@ struct MatchBoardTests {
         try await host.send(.grant(player: PlayerID(rawValue: "zzz"), tiles: tiles), delivery: .reliable)
     }
 
+    /// The other half of the wire: tiles this device owes because the opponent
+    /// drew. They wait behind the Draw button instead of reaching the rack.
+    static func owe(_ tiles: [Tile], from host: FakeTransport) async throws {
+        try await host.send(.obligation(player: PlayerID(rawValue: "zzz"), tiles: tiles), delivery: .reliable)
+    }
+
     // MARK: - Criterion 1
 
     @Test("Tiles dealt at countdown end reach the board, spaced, with none left in hand")
@@ -220,7 +226,7 @@ struct MatchBoardTests {
         // board is frozen, and the session refuses every placement until the
         // player takes it. A delivery attempted here must do nothing at all.
         let owed = Tile(letter: "X")
-        try await Self.grant([owed], from: host)
+        try await Self.owe([owed], from: host)
         try await SoloMatchTests.waitUntil("the obligation") { session.hasPendingDraw }
         wiring.sync()
         wiring.sync()
@@ -273,7 +279,7 @@ struct MatchBoardTests {
         }
 
         // A second tile in hand, taken through the Draw button.
-        try await Self.grant([Tile(letter: "O")], from: host)
+        try await Self.owe([Tile(letter: "O")], from: host)
         try await SoloMatchTests.waitUntil("the obligation") { session.hasPendingDraw }
         #expect(session.draw())
         #expect(session.state.hand.count == 1)

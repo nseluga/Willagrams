@@ -94,8 +94,8 @@ struct MatchSessionOpeningDealTests {
         #expect(guest.pendingDrawTiles.isEmpty)
     }
 
-    @Test("The same grant lands in hand during the countdown and behind the obligation in play")
-    func phaseDecidesWhereAGrantLands() async throws {
+    @Test("A grant lands in hand and an obligation lands behind the Draw gate, same tiles either way")
+    func theWireDecidesWhereTilesLand() async throws {
         let gate = Gate()
         let (wire, endpoint) = FakeTransport.pair(Self.alice, Self.bob)
         // Bob is not the elected host, so this session holds no pool and every
@@ -118,8 +118,8 @@ struct MatchSessionOpeningDealTests {
         }
 
         // Identical shape, identical letters, distinct ids — a grant repeating a
-        // tile the rack already holds is dropped as a duplicate, so "the same
-        // bytes" has to mean the same payload freshly minted.
+        // tile the rack already holds is dropped as a duplicate, so two rounds
+        // of "the same tiles" have to be freshly minted.
         let dealt = [Tile(letter: "A"), Tile(letter: "B")]
         let drawn = [Tile(letter: "A"), Tile(letter: "B")]
 
@@ -132,9 +132,10 @@ struct MatchSessionOpeningDealTests {
         gate.open = true
         try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }
 
-        try await wire.send(.grant(player: Self.bob, tiles: drawn), delivery: .reliable)
+        try await wire.send(.obligation(player: Self.bob, tiles: drawn), delivery: .reliable)
         try await Self.waitUntil("the peer's round to be waiting") { guest.hasPendingDraw }
-        // Same message, played phase: held behind the obligation, not taken.
+        // The peer's round: held behind the obligation, not taken. Same tiles as
+        // the deal, and the wire — not the phase — is what tells them apart.
         #expect(guest.pendingDrawTiles.map(\.id) == drawn.map(\.id))
         #expect(guest.state.hand.map(\.id) == dealt.map(\.id))
 

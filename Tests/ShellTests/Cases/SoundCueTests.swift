@@ -280,7 +280,9 @@ struct SoundCueTests {
         f.audio.forget()
 
         // The pool runs out on the host's word; there is no local latch for it.
-        try await f.host.send(.poolExhausted, delivery: .reliable)
+        // The host asked, so it names itself: the latch reaches both devices,
+        // but a guest that did not ask spends no draw credit on it.
+        try await f.host.send(.poolExhausted(requester: PlayerID(rawValue: "aaa")), delivery: .reliable)
         try await SoloMatchTests.waitUntil("the pool to run out") { f.session.poolIsExhausted }
         #expect(f.hud.isWinEnabled)
         #expect(f.hud.claimWin())
