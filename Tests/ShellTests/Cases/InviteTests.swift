@@ -1186,12 +1186,12 @@ RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
         #expect(two.contains(#"""
 private var invitePicker: some View {
 let friends = shell.invitableFriends
-return Menu {
+return BrandMenu {
 if friends.isEmpty {
-Text(Self.noInvitableFriendsLabel)
+BrandMenuCaption(Self.noInvitableFriendsLabel)
 } else {
 ForEach(friends) { entry in
-Button(entry.profile.displayName) {
+BrandMenuRow(entry.profile.displayName) {
 shell.invitePlayFromLobby(entry)
 }
 }

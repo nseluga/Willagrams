@@ -49,14 +49,7 @@ struct FriendRowActionsTests {
     /// bytes on disk, the same pattern `InviteRowTests` uses beside it.
     @Test("FriendsView actually draws every action's label, and labels the overflow control")
     func theViewDrawsEachAction() throws {
-        let view = try String(
-            contentsOf: URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("FriendsSrc/FriendsView.swift")
-                .resolvingSymlinksInPath(),
-            encoding: .utf8
-        )
+        let view = try Self.viewSource()
         for label in ["acceptLabel", "declineLabel", "blockLabel", "invitePlayLabel", "unfriendLabel"] {
             #expect(view.contains("FriendsModel.\(label)"), "FriendsView no longer draws \(label)")
         }
@@ -64,5 +57,36 @@ struct FriendRowActionsTests {
         // screen label beside its siblings, never inlined at the call site.
         #expect(view.contains(".accessibilityLabel(FriendsModel.moreActionsLabel)"))
         #expect(!view.contains("\"More actions\""))
+    }
+
+    /// The overflow was moved off `Menu` because UIKit's system popup ignores
+    /// `DesignTokens` entirely — it cannot be themed, only replaced. A `Menu`
+    /// reintroduced here would look stock again and break nothing else, so the
+    /// count is pinned: every `Menu {` in the file must be a `BrandMenu {`.
+    @Test("The overflow is a BrandMenu, and its rows are BrandMenuRows")
+    func theOverflowIsThemed() throws {
+        let view = try Self.viewSource()
+        #expect(Self.occurrences(of: "Menu {", in: view) == Self.occurrences(of: "BrandMenu {", in: view))
+        for label in ["declineLabel", "blockLabel", "unfriendLabel"] {
+            #expect(
+                view.contains("BrandMenuRow(FriendsModel.\(label)"),
+                "\(label) is no longer a themed row"
+            )
+        }
+    }
+
+    private static func viewSource() throws -> String {
+        try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("FriendsSrc/FriendsView.swift")
+                .resolvingSymlinksInPath(),
+            encoding: .utf8
+        )
+    }
+
+    private static func occurrences(of needle: String, in text: String) -> Int {
+        text.components(separatedBy: needle).count - 1
     }
 }

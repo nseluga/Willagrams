@@ -323,7 +323,7 @@ struct FriendsView: View {
 
     /// A row's actions, rendered from `FriendRowSection` rather than a second
     /// hard-coded list: the primary action stays a visible labelled button,
-    /// everything else moves into the overflow `Menu` so a ~310pt card never
+    /// everything else moves into the overflow menu so a ~310pt card never
     /// has to fit three vertical bars.
     @ViewBuilder
     private func rowActions(_ section: FriendRowSection, entry: FriendEntry) -> some View {
@@ -332,7 +332,7 @@ struct FriendsView: View {
         }
 
         if !section.overflowActions.isEmpty {
-            Menu {
+            BrandMenu {
                 ForEach(section.overflowActions, id: \.self) { action in
                     overflowRowButton(action, entry: entry)
                 }
@@ -359,25 +359,25 @@ struct FriendsView: View {
         }
     }
 
-    /// One row inside the overflow menu — plain `Button`s, so `Menu` draws
-    /// its own row chrome rather than the brand button styles.
+    /// One row inside the overflow menu. `BrandMenuRow` carries the row chrome
+    /// the system popup used to draw, and dismisses the menu before it acts.
     @ViewBuilder
     private func overflowRowButton(_ action: FriendRowAction, entry: FriendEntry) -> some View {
         switch action {
         case .decline:
-            Button(FriendsModel.declineLabel) {
+            BrandMenuRow(FriendsModel.declineLabel) {
                 Task { await model.decline(entry) }
             }
         case .block:
             // Declining no longer blocks, so refusing someone for good needs
             // its own action on the row that asked.
-            Button(FriendsModel.blockLabel, role: .destructive) {
+            BrandMenuRow(FriendsModel.blockLabel, role: .destructive) {
                 Task { await model.block(entry) }
             }
         case .unfriend:
             // Routes through the existing confirmation dialog below — this
             // only asks for the entry, it never unfriends directly.
-            Button(FriendsModel.unfriendLabel, role: .destructive) { unfriending = entry }
+            BrandMenuRow(FriendsModel.unfriendLabel, role: .destructive) { unfriending = entry }
         case .accept, .invitePlay:
             EmptyView()
         }

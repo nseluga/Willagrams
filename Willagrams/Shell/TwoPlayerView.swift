@@ -396,17 +396,17 @@ struct TwoPlayerView: View {
 
     /// The open seat's friend picker: every accepted friend, straight from
     /// `shell.invitableFriends`, each one a tap away from an invite into the
-    /// lobby already on screen. The list is read into a local first so the body
-    /// registers the observation — a `Menu`'s content is built when it opens,
-    /// which is outside this view's tracking.
+    /// lobby already on screen. The list is still read into a local first, now
+    /// only to compute it once rather than once per branch — `BrandMenu` builds
+    /// its content here in the body, so the observation registers either way.
     private var invitePicker: some View {
         let friends = shell.invitableFriends
-        return Menu {
+        return BrandMenu {
             if friends.isEmpty {
-                Text(Self.noInvitableFriendsLabel)
+                BrandMenuCaption(Self.noInvitableFriendsLabel)
             } else {
                 ForEach(friends) { entry in
-                    Button(entry.profile.displayName) {
+                    BrandMenuRow(entry.profile.displayName) {
                         shell.invitePlayFromLobby(entry)
                     }
                 }
