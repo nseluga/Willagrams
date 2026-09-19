@@ -70,6 +70,14 @@ public actor SupabaseBackend: BackendClient {
             url: url.appendingPathComponent("/realtime/v1"),
             options: RealtimeClientOptions(
                 headers: headers,
+                // 10, not the SDK's 25. A dead socket is noticed on the
+                // heartbeat cycle *after* one goes unacknowledged, so the
+                // default takes 25–50s to see a network loss — longer than
+                // `MatchSession.reconnectGraceSeconds`, which means the peer
+                // declares the match over before this device has even noticed
+                // it left. At 10 the detection window is 10–20s and fits
+                // inside the grace with room to reconnect.
+                heartbeatInterval: 10,
                 accessToken: { try? await auth.session.accessToken }
             )
         )

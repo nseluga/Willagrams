@@ -46,6 +46,15 @@ protocol MatchChannel: Sendable {
     func onWire(_ handler: @escaping @Sendable (WireEnvelope) -> Void)
     func onPresence(_ handler: @escaping @Sendable (_ joined: [PlayerID], _ left: [PlayerID]) -> Void)
 
+    /// The local socket's own view of this subscription: `false` the moment the
+    /// channel leaves `.subscribed`, `true` on every return to it.
+    ///
+    /// Presence is server-pushed, so the endpoint that *lost* the network hears
+    /// nothing at all — every peer stays in its roster and it keeps playing
+    /// against opponents that have already frozen. No default, for the reason
+    /// ``reconnect()`` has none.
+    func onLocalStatus(_ handler: @escaping @Sendable (_ subscribed: Bool) -> Void)
+
     /// Joins the topic and tracks `player`. Returns only once the server has
     /// confirmed the subscription.
     func subscribe(as player: PlayerID) async throws
@@ -102,7 +111,7 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// `.zero`, which finishes inline exactly as before.
     private nonisolated let peerGrace: Duration
 
-    /// The production window: `MatchSession.reconnectGraceSeconds` (30) plus
+    /// The production window: `MatchSession.reconnectGraceSeconds` (45) plus
     /// margin, so the transport outlives the session's own reconnect window
     /// rather than finishing the streams 25 seconds early and turning
     /// `MatchSession.peerReturned` into dead code.
@@ -111,7 +120,7 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// system — `MatchSession` is `@MainActor`, so its constant is not
     /// referenceable from this nonisolated default. `defaultPeerGraceCoversTheSessionWindow`
     /// is the guard that fails if either number moves.
-    static let defaultPeerGrace: Duration = .seconds(35)
+    static let defaultPeerGrace: Duration = .seconds(50)
 
     /// How long a gap in a peer's sequence is held open before the messages
     /// stacked behind it are released anyway.
@@ -175,6 +184,26 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         let grace = peerGrace
         let ordering = ordering
 
+        // Opens the last-peer window — or closes immediately when there is no
+        // window to open. Shared by the two ways a roster can empty: the peer
+        // leaving, and this endpoint losing its socket.
+        let startGrace: @Sendable () -> Void = {
+            let close = { @Sendable in
+                // One lock, not two: an emptiness check and a separate latch
+                // could interleave with a re-join between them.
+                guard peers.finishIfEmpty() else { return }
+                inbound.finish()
+                states.finish()
+            }
+            guard grace != .zero else { return close() }
+            // Arming replaces any timer still running, so a
+            // leave/re-join/leave inside one window closes on the second
+            // leave's window rather than the first's. The roster owns the
+            // timer, not this closure: it also has to be paused and re-armed
+            // from `appActivityChanged(to:)`, which has no reach in here.
+            peers.armGrace(grace, close: close)
+        }
+
         // Yields whatever the orderer says is now deliverable, in order.
         // Decoding stays after the reordering: undecodable bytes still occupy
         // a sequence number, so dropping them before the orderer sees them
@@ -211,23 +240,21 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
             // re-joins inside the grace window keeps the match alive: the
             // roster is no longer empty, so nothing finishes.
             guard lastLeft else { return }
-            let close = { @Sendable in
-                // One lock, not two: an emptiness check and a separate latch
-                // could interleave with a re-join between them.
-                guard peers.finishIfEmpty() else { return }
-                inbound.finish()
-                states.finish()
-            }
-            if grace == .zero {
-                close()
-            } else {
-                // Arming replaces any timer still running, so a
-                // leave/re-join/leave inside one window closes on the second
-                // leave's window rather than the first's. The roster owns the
-                // timer, not this closure: it also has to be paused and re-armed
-                // from `appActivityChanged(to:)`, which has no reach in here.
-                peers.armGrace(grace, close: close)
-            }
+            startGrace()
+        }
+
+        // The other way a roster empties: this endpoint is the one that fell
+        // off the network. Presence cannot report that — no socket, no server
+        // messages — so the subscription's own status is the only witness.
+        channel.onLocalStatus { subscribed in
+            guard !subscribed else { return }
+            // Emptying the roster is what makes the recovery work: the rejoin's
+            // presence sync re-inserts each peer, and `insert` only yields
+            // `.connected` for a player the roster did not already hold.
+            let dropped = peers.drain()
+            guard !dropped.isEmpty else { return }
+            for player in dropped { states.yield(.disconnected(player)) }
+            startGrace()
         }
     }
 
@@ -350,6 +377,14 @@ private final class PeerRoster: @unchecked Sendable {
     /// `true` if `player` was present.
     func remove(_ player: PlayerID) -> Bool {
         lock.withLock { players.remove(player) != nil }
+    }
+
+    /// Empties the roster and hands back what was in it.
+    func drain() -> Set<PlayerID> {
+        lock.withLock {
+            defer { players.removeAll() }
+            return players
+        }
     }
 
     var isEmpty: Bool { lock.withLock { players.isEmpty } }

@@ -74,6 +74,17 @@ final class SupabaseMatchChannel: MatchChannel, @unchecked Sendable {
             })
     }
 
+    /// Registered before ``subscribe(as:)``, so the very first transition into
+    /// `.subscribed` is reported too. `onStatusChange` replays the current
+    /// status on registration, which at that point is `.unsubscribed` — the
+    /// transport's roster is empty then, so that replay is a no-op.
+    func onLocalStatus(_ handler: @escaping @Sendable (Bool) -> Void) {
+        retain(
+            channel.onStatusChange { status in
+                if case .subscribed = status { handler(true) } else { handler(false) }
+            })
+    }
+
     func subscribe(as player: PlayerID) async throws {
         try await channel.subscribeWithError()
         retrack.track(player)

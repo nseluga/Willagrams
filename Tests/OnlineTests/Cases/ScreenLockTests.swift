@@ -298,11 +298,12 @@ struct ScreenLockTests {
     /// down to runs down at exactly the rate the wait does, because they are one
     /// clock.
     ///
-    /// The window is thirty session-seconds. Fifteen of them are let run on
-    /// screen, which is 150ms of wall time — so a deadline stamped off `Date()`
-    /// while the wait ran off the injected sleeper would still say thirty
-    /// seconds were owed here, and that reading is exactly what used to make a
-    /// partial spend unobservable. Fifteen is what one clock reads.
+    /// Half the window is let run on screen, at 100× — so a deadline stamped
+    /// off `Date()` while the wait ran off the injected sleeper would still say
+    /// the whole window was owed here, and that reading is exactly what used to
+    /// make a partial spend unobservable. Half is what one clock reads. Both
+    /// the sleep and the bound come from `reconnectGraceSeconds`, so moving the
+    /// window does not falsify the case.
     @Test("The session's reconnect deadline runs down at the rate its sleep does")
     func oneClockArmsBothTheDeadlineAndTheSleep() async throws {
         let table = try await Self.table(clock: ScaledClock(factor: 100))
@@ -316,14 +317,19 @@ struct ScreenLockTests {
         }
         #expect(table.guest.reconnectSecondsOwedForTesting == MatchSession.reconnectGraceSeconds)
 
-        // Half the window, on screen.
-        try await Task.sleep(for: .milliseconds(150))
+        // Half the window, on screen. 100×, so one session-second is 10ms.
+        let spent = MatchSession.reconnectGraceSeconds / 2
+        try await Task.sleep(for: .milliseconds(spent * 10))
         table.guestActivity.send(.away)
         await Self.settle()
 
-        // Banked off the stamped deadline. On the wall clock this reads 30.
+        // Banked off the stamped deadline. On the wall clock this reads the
+        // whole window, unspent.
+        let expected = MatchSession.reconnectGraceSeconds - spent
         let owed = try #require(table.guest.reconnectSecondsOwedForTesting)
-        #expect(owed >= 10 && owed <= 20, "half a thirty-second window, not \(owed)")
+        #expect(
+            owed >= expected - 5 && owed <= expected + 5,
+            "half a \(MatchSession.reconnectGraceSeconds)-second window, not \(owed)")
     }
 
     /// `done when:` 2's other direction, on the same clock: the time off screen

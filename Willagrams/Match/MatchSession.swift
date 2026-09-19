@@ -278,7 +278,7 @@ public final class MatchSession: AppActivityListener {
     ///
     /// Public so the shell can size its banner, and so a test can name the same
     /// number the session does.
-    public static let reconnectGraceSeconds = 30
+    public static let reconnectGraceSeconds = 45
 
     // MARK: - Fixed for the life of the match
 

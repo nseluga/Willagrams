@@ -75,6 +75,7 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
     private let bus: StubBus
     private var wire: (@Sendable (WireEnvelope) -> Void)?
     private var presence: (@Sendable ([PlayerID], [PlayerID]) -> Void)?
+    private var localStatus: (@Sendable (Bool) -> Void)?
 
     /// The guardrail: one subscribe per channel per transport. A second one is
     /// a bug, so it is counted rather than tolerated.
@@ -95,6 +96,10 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
 
     func onPresence(_ handler: @escaping @Sendable ([PlayerID], [PlayerID]) -> Void) {
         lock.withLock { presence = handler }
+    }
+
+    func onLocalStatus(_ handler: @escaping @Sendable (Bool) -> Void) {
+        lock.withLock { localStatus = handler }
     }
 
     func subscribe(as player: PlayerID) async throws {
@@ -123,6 +128,12 @@ final class StubChannel: MatchChannel, @unchecked Sendable {
 
     func deliverPresence(joined: [PlayerID], left: [PlayerID]) {
         lock.withLock { presence }?(joined, left)
+    }
+
+    /// Stands in for this endpoint's own subscription dropping or returning —
+    /// the one event a device with no network still hears.
+    func deliverLocalStatus(_ subscribed: Bool) {
+        lock.withLock { localStatus }?(subscribed)
     }
 
     var subscribes: Int { lock.withLock { subscribeCount } }
@@ -422,6 +433,71 @@ struct RealtimeMatchTransportTests {
         #expect(
             RealtimeMatchTransport.defaultPeerGrace
                 >= .seconds(MatchSession.reconnectGraceSeconds))
+    }
+
+    /// The asymmetry this covers: presence is server-pushed, so the endpoint
+    /// that lost the network gets no leave at all and used to carry on playing
+    /// against a peer that had already frozen.
+    @Test("Losing the local socket disconnects every peer and ends the match")
+    func localSocketLossDisconnectsEveryPeer() async throws {
+        let bus = StubBus()
+        let hostChannel = bus.channel()
+        let host = try await connect(hostID, channel: hostChannel)
+        let guest = try await connect(guestID, channel: bus.channel())
+        defer { _ = guest }  // A discarded transport deinits, and deinit leaves.
+
+        hostChannel.deliverLocalStatus(false)
+
+        let states = try await drain(host.peerConnectionStates)
+        #expect(states == [.connected(guestID), .disconnected(guestID)])
+        #expect(host.isFinishedForTesting)
+    }
+
+    /// The roster has to be *emptied* on local loss, not just reported on:
+    /// `insert` is what yields `.connected`, and it returns `false` for a
+    /// player still in the roster. Without the drain this endpoint would stay
+    /// frozen for the rest of the match.
+    @Test("The socket returning re-connects the peers presence re-confirms")
+    func localSocketReturnReconnectsThePeers() async throws {
+        let bus = StubBus()
+        let hostChannel = bus.channel()
+        let host = try await connect(hostID, channel: hostChannel, grace: .milliseconds(200))
+        let guest = try await connect(guestID, channel: bus.channel())
+        defer { _ = guest }  // A discarded transport deinits, and deinit leaves.
+
+        hostChannel.deliverLocalStatus(false)
+        // Well inside the window, and the rejoin's presence sync carries
+        // everyone already on the topic — the shape `StubBus.join` delivers.
+        hostChannel.deliverLocalStatus(true)
+        hostChannel.deliverPresence(joined: [hostID, guestID], left: [])
+
+        // Still live: past the window, sending works rather than throwing.
+        try await Task.sleep(for: .milliseconds(300))
+        try await host.send(carrier, delivery: .reliable)
+
+        host.leave()
+        let states = try await drain(host.peerConnectionStates)
+        #expect(states == [.connected(guestID), .disconnected(guestID), .connected(guestID)])
+    }
+
+    /// `onStatusChange` replays the current status the moment it is registered,
+    /// which is before the first subscribe — so the first thing this endpoint
+    /// hears about its own socket is "not subscribed". With no peers yet there
+    /// is nothing to disconnect, and nothing to close.
+    @Test("The status replay that precedes the first peer is not a disconnect")
+    func localStatusWithAnEmptyRosterDoesNothing() async throws {
+        let bus = StubBus()
+        let hostChannel = bus.channel()
+        let host = try await connect(hostID, channel: hostChannel)
+
+        hostChannel.deliverLocalStatus(false)
+        #expect(!host.isFinishedForTesting)
+
+        let guest = try await connect(guestID, channel: bus.channel())
+        defer { _ = guest }  // A discarded transport deinits, and deinit leaves.
+        host.leave()
+        let states = try await drain(host.peerConnectionStates)
+        #expect(states == [.connected(guestID)])
     }
 
     /// A second leave restarts the clock rather than inheriting the first
