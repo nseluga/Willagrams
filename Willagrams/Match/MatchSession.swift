@@ -282,9 +282,13 @@ public final class MatchSession: AppActivityListener {
     /// the same diff with this one line stored aborts and passes without it.
     ///
     /// ponytail: each device counts its own three seconds from its own
-    /// `.connected`, so the two are aligned to one server round trip — tens of
-    /// milliseconds — and not to a shared clock. Put a `.resume` on the wire if
-    /// the drift ever shows in play; that is a wire-version bump.
+    /// `.connected`, not from a shared clock. `SelfJoinGate` is what keeps
+    /// those two moments together — it holds the returning device's
+    /// `.connected` until that device sees its own presence join, which is the
+    /// same server fan-out that tells its peer. Aligned to the fan-out, so
+    /// tens of milliseconds; without the gate it was a full round trip and
+    /// showed on device as one player counting a second ahead. A `.resume` on
+    /// the wire would make it exact, and is a wire-version bump.
     public static var resumeCountdownSeconds: Int { 3 }
 
     /// How long a dropped peer has to come back.

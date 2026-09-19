@@ -93,6 +93,12 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// `leave()` is not `async`.
     private nonisolated let peers = PeerRoster()
 
+    /// Holds a peer's `.connected` after a re-subscribe until this endpoint
+    /// sees its own presence join come back. Same reason `peers` is
+    /// lock-guarded: the presence handler is a synchronous `@Sendable` closure
+    /// called off any thread.
+    private nonisolated let selfJoin = SelfJoinGate()
+
     /// This endpoint's own send count. Actor state, so it is stamped under the
     /// actor's serialization rather than a lock.
     private var nextOutboundSequence: UInt64 = 0
@@ -110,6 +116,10 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// only the stream *finish* waits the window out. Offline tests pass
     /// `.zero`, which finishes inline exactly as before.
     private nonisolated let peerGrace: Duration
+
+    /// See ``defaultSelfJoinWait``. A parameter so a test can drive the
+    /// fallback without waiting a real second for it.
+    private nonisolated let selfJoinWait: Duration
 
     /// The production window: `MatchSession.reconnectGraceSeconds` (45) plus
     /// margin, so the transport outlives the session's own reconnect window
@@ -132,16 +142,32 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// the lost message, which is what happens today anyway.
     static let defaultGapGrace: Duration = .seconds(2)
 
+    /// How long a re-subscribed endpoint waits for its *own* presence join
+    /// before it reports the peer back anyway.
+    ///
+    /// The wait exists to align the two resume countdowns. The returning
+    /// device learns its peer is present from the presence state that arrives
+    /// with its own channel join; the peer only learns the same thing once
+    /// this device's `track` has reached the server and fanned back out — one
+    /// round trip later, which reads on device as one device counting a second
+    /// ahead of the other. Both keying off that same fan-out closes the gap.
+    ///
+    /// The fallback is what bounds it: if the self-join never arrives, the
+    /// peer is released regardless and the behaviour is exactly what it was
+    /// before this gate existed. It is not an error path with no exit.
+    static let defaultSelfJoinWait: Duration = .seconds(1)
+
     /// Builds a transport and returns it only once the channel is subscribed.
     static func connect(
         localPlayerID: PlayerID,
         channel: any MatchChannel,
         peerGrace: Duration = defaultPeerGrace,
-        gapGrace: Duration = defaultGapGrace
+        gapGrace: Duration = defaultGapGrace,
+        selfJoinWait: Duration = defaultSelfJoinWait
     ) async throws -> RealtimeMatchTransport {
         let transport = RealtimeMatchTransport(
             localPlayerID: localPlayerID, channel: channel,
-            peerGrace: peerGrace, gapGrace: gapGrace)
+            peerGrace: peerGrace, gapGrace: gapGrace, selfJoinWait: selfJoinWait)
         transport.attach()
         do {
             try await channel.subscribe(as: localPlayerID)
@@ -159,13 +185,15 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         localPlayerID: PlayerID,
         channel: any MatchChannel,
         peerGrace: Duration = defaultPeerGrace,
-        gapGrace: Duration = defaultGapGrace
+        gapGrace: Duration = defaultGapGrace,
+        selfJoinWait: Duration = defaultSelfJoinWait
     ) {
         let inbound = AsyncStream.makeStream(of: MatchMessage.self, bufferingPolicy: .unbounded)
         let states = AsyncStream.makeStream(of: PeerConnectionState.self, bufferingPolicy: .unbounded)
         self.localPlayerID = localPlayerID
         self.channel = channel
         self.peerGrace = peerGrace
+        self.selfJoinWait = selfJoinWait
         self.ordering = WireOrdering(gapGrace: gapGrace)
         self.inboundMessages = inbound.stream
         self.peerConnectionStates = states.stream
@@ -208,6 +236,14 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         let peers = peers
         let grace = peerGrace
         let ordering = ordering
+        let selfJoin = selfJoin
+        let selfJoinWait = selfJoinWait
+
+        // What the gate releases when it opens, whether that is the self-join
+        // arriving or the fallback expiring.
+        let release: @Sendable ([PlayerID]) -> Void = { players in
+            for player in players { states.yield(.connected(player)) }
+        }
 
         // Captures the locals, never `self`, so the channel holding this does
         // not retain the transport. The body is `Self.startGrace` because
@@ -238,8 +274,15 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         }
 
         channel.onPresence { joined, left in
+            // This endpoint's own key, first. The server fans one `presence_diff`
+            // out to everybody in the topic, so the moment this device sees
+            // itself back is the same moment its peer does — which is the whole
+            // point of holding the peer until then. Opened before the loop so a
+            // diff carrying both keys yields inline rather than a tick later.
+            if joined.contains(local) { release(selfJoin.open()) }
             for player in joined where player != local {
-                if peers.insert(player) { states.yield(.connected(player)) }
+                guard peers.insert(player) else { continue }
+                if selfJoin.admit(player) { states.yield(.connected(player)) }
             }
             var lastLeft = false
             for player in left where player != local {
@@ -267,6 +310,9 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
             let dropped = peers.drain()
             guard !dropped.isEmpty else { return }
             for player in dropped { states.yield(.disconnected(player)) }
+            // Closed only on the way *down*, so a first subscribe never waits
+            // on anything: the gate exists for the return trip.
+            selfJoin.close(waiting: selfJoinWait, release: release)
             startGrace()
         }
     }
@@ -313,6 +359,13 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
             // nothing else arms a window on this path.
             if !slept.isEmpty {
                 Self.startGrace(peers: peers, grace: peerGrace, inbound: inbound, states: states)
+                // Same return trip as the `onLocalStatus` drop, so the same
+                // gate: hold the peer until this device's own presence join
+                // comes back, and both count from that one fan-out.
+                let states = states
+                selfJoin.close(waiting: selfJoinWait) { players in
+                    for player in players { states.yield(.connected(player)) }
+                }
             }
             // Re-subscribed first, and only then does the window start counting
             // again: the peer is reachable again only once there is a socket,
@@ -367,6 +420,7 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         // must not be torn down twice when `deinit` follows an explicit call.
         peers.cancelGrace()  // Nothing left to wait for; don't outlive the match.
         ordering.cancelGap()  // Same reason: a held gap has nobody to deliver to.
+        _ = selfJoin.open()  // And the same for a self-join nobody is waiting on.
         if peers.closeChannel() { channel.leave() }
         guard peers.finish() else { return }  // Calling it twice is harmless.
         inbound.finish()
@@ -377,6 +431,79 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// presence tracked until the process exits. `leave()` is already
     /// synchronous and idempotent, which is what makes this safe here.
     deinit { leave() }
+}
+
+/// Holds the peers a re-subscribe re-discovers until this endpoint sees its
+/// own presence join, so both devices learn the match is live again on the one
+/// server fan-out rather than a round trip apart.
+///
+/// Open until something closes it, and it is only ever closed on a *loss* —
+/// the first subscribe of a match passes straight through. Every close arms a
+/// fallback that opens it regardless, so the worst case is the ungated
+/// behaviour, never a peer held forever.
+///
+/// A plain lock, for the reason ``PeerRoster`` is one: the presence handler is
+/// a synchronous `@Sendable` closure the SDK calls off any thread.
+private final class SelfJoinGate: @unchecked Sendable {
+    private let lock = NSLock()
+
+    /// `nil` when the gate is open. Otherwise the peers admitted since it
+    /// closed, in arrival order, waiting on the self-join.
+    private var held: [PlayerID]?
+    private var fallback: Task<Void, Never>?
+
+    /// Shuts the gate and arms the release that bounds it.
+    ///
+    /// Closing twice is a re-arm, not a second gate: whatever is already held
+    /// stays held and the fallback restarts. A second drop before the first
+    /// return is exactly when that matters.
+    func close(waiting wait: Duration, release: @escaping @Sendable ([PlayerID]) -> Void) {
+        let previous: Task<Void, Never>? = lock.withLock {
+            defer { held = held ?? [] }
+            let previous = fallback
+            fallback = nil
+            return previous
+        }
+        previous?.cancel()
+        let task = Task {
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled else { return }
+            release(self.open())
+        }
+        // The gate could have opened between the two locks; handing the task
+        // over under the lock is what lets `open` cancel it either way.
+        let stale: Bool = lock.withLock {
+            guard held != nil else { return true }
+            fallback = task
+            return false
+        }
+        if stale { task.cancel() }
+    }
+
+    /// `true` if `player` may be reported connected now. `false` means the
+    /// gate took it, and it comes back out of ``open()``.
+    func admit(_ player: PlayerID) -> Bool {
+        lock.withLock {
+            guard held != nil else { return true }
+            held?.append(player)
+            return false
+        }
+    }
+
+    /// Opens the gate and hands back what it was holding. Idempotent: a second
+    /// call returns nothing, so the self-join and the fallback racing cannot
+    /// yield the same peer twice.
+    func open() -> [PlayerID] {
+        let task: Task<Void, Never>? = lock.withLock {
+            defer { fallback = nil }
+            return fallback
+        }
+        task?.cancel()
+        return lock.withLock {
+            defer { held = nil }
+            return held ?? []
+        }
+    }
 }
 
 /// The peers this endpoint has seen, plus the one-way "this match is over"

@@ -110,10 +110,15 @@ struct ScreenLockTests {
     /// - Parameter peerGrace: the transport's last-peer window. Defaulted to
     ///   the scaled ``grace``; a case that has to *observe* the freeze before
     ///   the peer comes back needs a window it cannot lose that race to.
+    /// - Parameter selfJoinWait: how long a re-subscribed transport holds a
+    ///   returning peer waiting on its own presence join. Only a case about
+    ///   the *fallback* shortens it; every other case supplies the self-join
+    ///   and never reaches it.
     private static func table(
         countdownSeconds: Int = 0,
         clock: ScaledClock? = nil,
         peerGrace: Duration = grace,
+        selfJoinWait: Duration = RealtimeMatchTransport.defaultSelfJoinWait,
         sessionSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in
             try await Task.sleep(for: .seconds(3_600))
         }
@@ -124,11 +129,11 @@ struct ScreenLockTests {
         let hostChannel = bus.channel()
         let hostTransport = try await RealtimeMatchTransport.connect(
             localPlayerID: hostID, channel: hostChannel, peerGrace: peerGrace,
-            gapGrace: .seconds(60))
+            gapGrace: .seconds(60), selfJoinWait: selfJoinWait)
         let guestChannel = bus.channel()
         let guestTransport = try await RealtimeMatchTransport.connect(
             localPlayerID: guestID, channel: guestChannel, peerGrace: peerGrace,
-            gapGrace: .seconds(60))
+            gapGrace: .seconds(60), selfJoinWait: selfJoinWait)
 
         let host = MatchSession(
             transport: hostTransport, peerPlayerID: guestID,
@@ -210,10 +215,18 @@ struct ScreenLockTests {
         table.guestActivity.send(.active)
     }
 
-    /// The presence re-sync a rejoined channel delivers — `SupabaseMatchChannel`
-    /// re-tracks off `onStatusChange`, and the peer comes back in that sync.
+    /// The presence a rejoined channel delivers, in the two events a real
+    /// rejoin produces them in.
+    ///
+    /// The join reply's state sync carries the *peer* only: this endpoint's own
+    /// entry went when its socket did, and it has not re-tracked yet. The
+    /// second event is that re-track coming back off the server — and it is
+    /// the one `SelfJoinGate` waits for, because the peer receives the same
+    /// fan-out at the same moment. Delivering them as one event would hide the
+    /// gap the gate exists to close.
     private static func peerReappears(to table: Table) async throws {
         table.guestChannel.deliverPresence(joined: [Self.hostID], left: [])
+        table.guestChannel.deliverPresence(joined: [Self.guestID], left: [])
         // The board is locked while a peer is `.reconnecting`, so nothing about
         // Draw or Swap is decidable until the return has actually landed.
         try await waitUntil("the peer to be present again") {
@@ -965,6 +978,78 @@ struct ScreenLockTests {
             return
         }
         #expect(remaining == MatchSession.resumeCountdownSeconds)
+    }
+
+    // MARK: - Both devices start the count on the same server event
+
+    /// The hold itself. The state sync that comes back with this device's own
+    /// channel join carries the peer, and acting on it is what put this device
+    /// a whole round trip ahead of the other one — the peer does not learn
+    /// anything until this device's re-track fans back out.
+    @Test("A re-subscribed device holds its peer until its own presence returns")
+    func aReturningDeviceWaitsForItsOwnPresence() async throws {
+        let table = try await Self.table(peerGrace: .seconds(30))
+
+        // A drop this device slept through, so the gate closes on the way back.
+        table.guestActivity.send(.away)
+        try await Task.sleep(for: Self.lockDuration)
+        table.guestActivity.send(.active)
+        try await Self.waitUntil("the guest to freeze") {
+            if case .reconnecting = table.guest.presence(of: Self.hostID) { return true }
+            return false
+        }
+
+        // The join reply's state sync: the peer, and not this device.
+        table.guestChannel.deliverPresence(joined: [Self.hostID], left: [])
+        await Self.settle()
+        if case .reconnecting = table.guest.presence(of: Self.hostID) {} else {
+            Issue.record("the state sync alone released the peer, a round trip early")
+        }
+
+        // The re-track fanning back out. Both devices see this one.
+        table.guestChannel.deliverPresence(joined: [Self.guestID], left: [])
+        try await Self.waitUntil("the peer to be released") {
+            table.guest.presence(of: Self.hostID) == .present
+        }
+        guard case let .countdown(remaining) = table.guest.state.status else {
+            Issue.record("the guest resumed with no countdown")
+            return
+        }
+        #expect(remaining == MatchSession.resumeCountdownSeconds)
+    }
+
+    /// What bounds the hold. A self-join that never arrives must not strand a
+    /// peer that plainly is back: the wait expires and the peer is reported
+    /// anyway, which is exactly the behaviour there was before the gate.
+    @Test("A self-join that never arrives still releases the peer")
+    func theHoldExpiresOnItsOwn() async throws {
+        let table = try await Self.table(peerGrace: .seconds(30), selfJoinWait: .milliseconds(50))
+
+        table.guestActivity.send(.away)
+        try await Task.sleep(for: Self.lockDuration)
+        table.guestActivity.send(.active)
+        try await Self.waitUntil("the guest to freeze") {
+            if case .reconnecting = table.guest.presence(of: Self.hostID) { return true }
+            return false
+        }
+
+        // The peer, and nothing else — ever.
+        table.guestChannel.deliverPresence(joined: [Self.hostID], left: [])
+        try await Self.waitUntil("the fallback to release the peer") {
+            table.guest.presence(of: Self.hostID) == .present
+        }
+    }
+
+    /// The first subscribe of a match must not wait on anything: the gate is
+    /// closed only on a loss, and there has not been one. `table` already
+    /// starts a match through the ordinary path, so a default-length wait that
+    /// applied here would stall every case in this file for a second.
+    @Test("A first subscribe is not gated")
+    func aFirstSubscribeIsNotGated() async throws {
+        let started = ContinuousClock.now
+        let table = try await Self.table()
+        #expect(ContinuousClock.now - started < RealtimeMatchTransport.defaultSelfJoinWait)
+        #expect(table.guest.presence(of: Self.hostID) == .present)
     }
 
     private static func source(of path: String) throws -> String {
