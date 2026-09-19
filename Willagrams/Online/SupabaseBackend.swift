@@ -78,6 +78,14 @@ public actor SupabaseBackend: BackendClient {
                 // it left. At 10 the detection window is 10–20s and fits
                 // inside the grace with room to reconnect.
                 heartbeatInterval: 10,
+                // 2, not the SDK's 7. This is the base the client waits before
+                // retrying a socket that errored, and it is what a player sees
+                // as the pause between both devices being back and the match
+                // being live again — 5-10 seconds of it, reported from two
+                // devices. It still backs off exponentially from here, so a
+                // genuinely dead network is not hammered; only the first retry,
+                // which is the one that almost always succeeds, comes sooner.
+                reconnectDelay: 2,
                 accessToken: { try? await auth.session.accessToken }
             )
         )
