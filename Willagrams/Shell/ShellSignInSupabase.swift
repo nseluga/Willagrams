@@ -2,9 +2,19 @@
 //  ShellSignInSupabase.swift
 //  Willagrams
 //
-//  The only `#if DEBUG` in the shell. It fences the anonymous session itself —
-//  never a route, never a screen — so a Release build contains no reference to
-//  `signInAnonymously` and simply has no sign-in to offer.
+//  The app's whole sign-in: an anonymous Supabase session, with no screen, no
+//  email and no password. It is what puts a `Profile` behind the friend-code
+//  and username flow, and `ShellModel.canPlayOnline` is false without it.
+//
+//  It was fenced behind `#if DEBUG` until the App Store build was tried, which
+//  meant a Release build had no sign-in at all and could not play a friend.
+//  The fence carried no rationale and was never a policy — it arrived inside a
+//  checkpoint commit — so it is gone. The only fence left here is the
+//  portability one below.
+//
+//  ponytail: an anonymous session lives on one device. A reinstall or a new
+//  phone loses the username and the friends list with no way back. Sign in with
+//  Apple is the upgrade path, deferred in FOUNDATION.md.
 //
 
 #if canImport(Match)
@@ -17,24 +27,18 @@ import Match
 // `xcodebuild` compile everything below it.
 #if canImport(Auth)
 
-#if DEBUG
 extension SupabaseBackend: ShellSignIn {
     public func signIn() async throws -> Profile {
         try await signInAnonymously()
     }
 }
-#endif
 
 extension ShellServices {
 
-    /// The sign-in this build can offer: the anonymous session in Debug, none
-    /// in Release. The caller passes the result straight to ``init`` and holds
-    /// no conditional of its own.
-    #if DEBUG
+    /// The sign-in every build offers. The caller passes the result straight to
+    /// ``init`` and holds no conditional of its own — it stays optional because
+    /// `ShellServices` takes an optional and a build without the SDK has none.
     public static func anonymousSignIn(_ backend: SupabaseBackend) -> (any ShellSignIn)? { backend }
-    #else
-    public static func anonymousSignIn(_ backend: SupabaseBackend) -> (any ShellSignIn)? { nil }
-    #endif
 }
 
 #endif

@@ -97,10 +97,10 @@ public actor SupabaseBackend: BackendClient {
         try await mapping { try await auth.signOut() }
     }
 
-    #if DEBUG
-    /// Anonymous sign-in, for live tests and for trying the app without an
-    /// Apple ID. Debug-only: a shipped build must never hand out a session that
-    /// no one can ever sign back into.
+    /// Anonymous sign-in: the session every online feature runs on, in every
+    /// build. It was `#if DEBUG` until item 6, which is why a Release build
+    /// could not play a friend at all — ``ShellSignInSupabase`` calls this, and
+    /// its header carries the device-scoped-identity ceiling this accepts.
     ///
     /// Idempotent — called with a session already in hand it reuses it, so the
     /// same user signing in twice gets the same profile row rather than a
@@ -112,7 +112,6 @@ public actor SupabaseBackend: BackendClient {
         let session = try await mapping { try await auth.signInAnonymously() }
         return try await ensureProfile(id: session.user.id)
     }
-    #endif
 
     // MARK: - Profiles
 

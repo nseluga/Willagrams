@@ -76,17 +76,24 @@ struct ServiceFenceTests {
         return (inside, outside)
     }
 
-    @Test("Anonymous sign-in exists, and only inside a #if DEBUG region")
-    func signInIsDebugOnly() throws {
+    /// The inverse of what it asserted until the App Store build was tried.
+    ///
+    /// The anonymous session is the app's only sign-in, and it was fenced
+    /// behind `#if DEBUG`: `ShellServices.signIn` was nil in Release,
+    /// `currentProfile` never landed, and a submitted build could not play a
+    /// friend at all. Every device test to that point had been Debug, so
+    /// nothing caught it. A fence put back anywhere on this symbol fails here.
+    @Test("Anonymous sign-in exists, and no #if DEBUG region fences it")
+    func signInIsInEveryBuild() throws {
         var mentions = 0
         for file in try Self.swiftFiles() {
             let text = try Self.text(of: file)
             guard text.contains(Self.signIn) else { continue }
             let (inside, outside) = Self.debugFencedLines(text)
-            mentions += inside.filter { $0.contains(Self.signIn) }.count
-            for line in outside where line.contains(Self.signIn) {
+            mentions += outside.filter { $0.contains(Self.signIn) }.count
+            for line in inside where line.contains(Self.signIn) {
                 Issue.record(
-                    "\(file.lastPathComponent) calls \(Self.signIn) outside \(Self.debugFence): \(line.trimmingCharacters(in: .whitespaces))"
+                    "\(file.lastPathComponent) fences \(Self.signIn) behind \(Self.debugFence): \(line.trimmingCharacters(in: .whitespaces))"
                 )
             }
         }
@@ -114,9 +121,13 @@ struct ServiceFenceTests {
             #expect(directives.isEmpty, "\(relative) fences code behind \(Self.debugFence)")
         }
 
-        // Falsifiability: the one file that may carry the fence still does, so
-        // deleting the conformance fails here instead of passing silently.
-        let fence = Self.appSourceDirectory.appendingPathComponent("Shell/ShellSignInSupabase.swift")
+        // Falsifiability: a file that legitimately carries the fence still
+        // does, so a typo in `debugFence` fails here instead of matching
+        // nothing above and passing silently. `MenuView` is the one this
+        // test's own note names — the style gallery's long press — and it took
+        // over the anchor when `ShellSignInSupabase` lost its fence and the
+        // anonymous session went live in Release.
+        let fence = Self.appSourceDirectory.appendingPathComponent("Shell/MenuView.swift")
         let fenceDirectives = try Self.text(of: fence)
             .components(separatedBy: "\n")
             .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix(Self.debugFence) }
