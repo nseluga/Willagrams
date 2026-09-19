@@ -173,6 +173,31 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         self.states = states.continuation
     }
 
+    /// Opens the last-peer window — or closes immediately when there is no
+    /// window to open. Shared by the three ways a roster can empty: the peer
+    /// leaving, this endpoint losing its socket, and this endpoint coming back
+    /// on screen to find it had lost one while suspended.
+    private static func startGrace(
+        peers: PeerRoster,
+        grace: Duration,
+        inbound: AsyncStream<MatchMessage>.Continuation,
+        states: AsyncStream<PeerConnectionState>.Continuation
+    ) {
+        let close = { @Sendable in
+            // One lock, not two: an emptiness check and a separate latch could
+            // interleave with a re-join between them.
+            guard peers.finishIfEmpty() else { return }
+            inbound.finish()
+            states.finish()
+        }
+        guard grace != .zero else { return close() }
+        // Arming replaces any timer still running, so a leave/re-join/leave
+        // inside one window closes on the second leave's window rather than
+        // the first's. The roster owns the timer, not this function: it also
+        // has to be paused and re-armed from `appActivityChanged(to:)`.
+        peers.armGrace(grace, close: close)
+    }
+
     /// Registers the channel handlers. Captures the continuations and the
     /// roster rather than `self`, so the channel holding these closures does
     /// not keep the transport alive in a cycle.
@@ -184,24 +209,12 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         let grace = peerGrace
         let ordering = ordering
 
-        // Opens the last-peer window — or closes immediately when there is no
-        // window to open. Shared by the two ways a roster can empty: the peer
-        // leaving, and this endpoint losing its socket.
+        // Captures the locals, never `self`, so the channel holding this does
+        // not retain the transport. The body is `Self.startGrace` because
+        // `appActivityChanged(to:)` needs the same window and has no reach in
+        // here.
         let startGrace: @Sendable () -> Void = {
-            let close = { @Sendable in
-                // One lock, not two: an emptiness check and a separate latch
-                // could interleave with a re-join between them.
-                guard peers.finishIfEmpty() else { return }
-                inbound.finish()
-                states.finish()
-            }
-            guard grace != .zero else { return close() }
-            // Arming replaces any timer still running, so a
-            // leave/re-join/leave inside one window closes on the second
-            // leave's window rather than the first's. The roster owns the
-            // timer, not this closure: it also has to be paused and re-armed
-            // from `appActivityChanged(to:)`, which has no reach in here.
-            peers.armGrace(grace, close: close)
+            Self.startGrace(peers: peers, grace: grace, inbound: inbound, states: states)
         }
 
         // Yields whatever the orderer says is now deliverable, in order.
@@ -279,6 +292,28 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
             // to re-join; without this every foreground re-opens the Realtime
             // socket for a match that is over.
             guard !peers.isFinished else { return }
+            // The loss nothing was awake to hear. `onLocalStatus` is the only
+            // witness to this endpoint's own socket going down, and a suspended
+            // process runs no callback — so a drop across a lock drains no
+            // roster, the rejoin's presence sync re-inserts a peer that never
+            // left it, and `insert` yields no `.connected`. Without this the
+            // device that walked away is the one that never freezes and never
+            // counts back in, while the device that stayed on screen does both.
+            //
+            // ponytail: it cannot tell a socket that died from one that
+            // survived a two-second app switch, so that switch also costs a
+            // freeze and a 3-2-1 on this device alone. Telling them apart needs
+            // the channel to report its live subscription state, which the SDK
+            // only pushes on transition — and the transition is exactly what
+            // was slept through. Accepted: a count back in after a trip away is
+            // defensible on its own.
+            let slept = peers.drain()
+            for player in slept { states.yield(.disconnected(player)) }
+            // The peer that never comes back still has to end the match, and
+            // nothing else arms a window on this path.
+            if !slept.isEmpty {
+                Self.startGrace(peers: peers, grace: peerGrace, inbound: inbound, states: states)
+            }
             // Re-subscribed first, and only then does the window start counting
             // again: the peer is reachable again only once there is a socket,
             // and a window spent before that is spent on nothing. The channel

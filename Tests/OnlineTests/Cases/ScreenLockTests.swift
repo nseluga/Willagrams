@@ -107,9 +107,13 @@ struct ScreenLockTests {
     ///   and their `now`. Given one, `sessionSleep` is ignored — a case that
     ///   wants a scaled window wants both halves scaled together or it is back
     ///   to two clocks.
+    /// - Parameter peerGrace: the transport's last-peer window. Defaulted to
+    ///   the scaled ``grace``; a case that has to *observe* the freeze before
+    ///   the peer comes back needs a window it cannot lose that race to.
     private static func table(
         countdownSeconds: Int = 0,
         clock: ScaledClock? = nil,
+        peerGrace: Duration = grace,
         sessionSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in
             try await Task.sleep(for: .seconds(3_600))
         }
@@ -119,10 +123,12 @@ struct ScreenLockTests {
         let bus = StubBus()
         let hostChannel = bus.channel()
         let hostTransport = try await RealtimeMatchTransport.connect(
-            localPlayerID: hostID, channel: hostChannel, peerGrace: grace, gapGrace: .seconds(60))
+            localPlayerID: hostID, channel: hostChannel, peerGrace: peerGrace,
+            gapGrace: .seconds(60))
         let guestChannel = bus.channel()
         let guestTransport = try await RealtimeMatchTransport.connect(
-            localPlayerID: guestID, channel: guestChannel, peerGrace: grace, gapGrace: .seconds(60))
+            localPlayerID: guestID, channel: guestChannel, peerGrace: peerGrace,
+            gapGrace: .seconds(60))
 
         let host = MatchSession(
             transport: hostTransport, peerPlayerID: guestID,
@@ -882,6 +888,48 @@ struct ScreenLockTests {
         transport.appActivityChanged(to: .active)
 
         #expect(channel.reconnects == before, "\(channel.reconnects) reconnects, was \(before)")
+    }
+
+    // MARK: - The drop nobody was awake to hear
+
+    /// The lock as it actually lands on the device that walks away.
+    ///
+    /// ``lock(_:for:)`` above delivers a presence leave, which is the *other*
+    /// device's view — and, on the locked one, the lucky case where the leave
+    /// arrived before the process stopped running. Suspend first and nothing is
+    /// heard at all: no presence leave, and no `onLocalStatus(false)` either,
+    /// because a suspended process runs no callback. The roster is still full
+    /// when the app comes back, so the rejoin's presence sync re-inserts a peer
+    /// that never left it and `insert` yields no `.connected`.
+    ///
+    /// Reported from two devices: the one that dropped kept playing and never
+    /// counted back in, while the one that stayed on screen froze. This is that
+    /// device, and what it owes the player is the same freeze and the same
+    /// count as its opponent.
+    @Test("A drop that was slept through still freezes the device that slept")
+    func aDropNobodyHeardStillFreezesThisDevice() async throws {
+        // A window the freeze cannot be lost to: this case watches the guest
+        // sit frozen before it lets the peer back, which `grace` is too short
+        // to allow.
+        let table = try await Self.table(peerGrace: .seconds(30))
+
+        table.guestActivity.send(.away)
+        try await Task.sleep(for: Self.lockDuration)
+        table.guestActivity.send(.active)
+
+        try await Self.waitUntil("the guest to freeze on a drop it never heard") {
+            if case .reconnecting = table.guest.presence(of: Self.hostID) { return true }
+            return false
+        }
+
+        // And back in on the same countdown a peer's return gives the device
+        // that stayed — not a board that snaps live under the player's thumb.
+        try await Self.peerReappears(to: table)
+        guard case let .countdown(remaining) = table.guest.state.status else {
+            Issue.record("the guest resumed with no countdown at all")
+            return
+        }
+        #expect(remaining == MatchSession.resumeCountdownSeconds)
     }
 
     private static func source(of path: String) throws -> String {
