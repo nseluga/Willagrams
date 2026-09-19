@@ -274,6 +274,19 @@ public final class MatchSession: AppActivityListener {
         return winner
     }
 
+    /// How long both boards stay covered after a peer comes back mid-match.
+    ///
+    /// Computed, not a `static let`: a stored static added to this class walks
+    /// MatchTests into the `swift_task_dealloc` abort `docs/amendment-wire-v2.md`
+    /// records against adding stored properties here. Bisected, not guessed —
+    /// the same diff with this one line stored aborts and passes without it.
+    ///
+    /// ponytail: each device counts its own three seconds from its own
+    /// `.connected`, so the two are aligned to one server round trip — tens of
+    /// milliseconds — and not to a shared clock. Put a `.resume` on the wire if
+    /// the drift ever shows in play; that is a wire-version bump.
+    public static var resumeCountdownSeconds: Int { 3 }
+
     /// How long a dropped peer has to come back.
     ///
     /// Public so the shell can size its banner, and so a test can name the same
@@ -815,7 +828,20 @@ public final class MatchSession: AppActivityListener {
             // re-armed it. The countdown is already spent, so this is the only
             // place left to deal: without it both racks stay empty for the rest
             // of the match and nothing says why.
-            dealOpeningHands()
+            //
+            // `awaitingOpeningDeal`, not the status, is what tells that case
+            // apart: the deal is enqueued ahead of the flip to `.playing`, so a
+            // freeze on that exact moment leaves a session that is `.playing`
+            // and still owes two hands.
+            guard !awaitingOpeningDeal else {
+                dealOpeningHands()
+                return
+            }
+            // Mid-match. The deal is long done, and what a returning peer owes
+            // the two players is a moment to look at the board before it is
+            // live again — not a board that snaps back under their thumbs.
+            guard case .playing = state.status else { return }
+            beginCountdown(seconds: Self.resumeCountdownSeconds)
             return
         }
         heldCountdownSeconds = nil

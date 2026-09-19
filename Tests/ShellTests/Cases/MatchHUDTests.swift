@@ -379,14 +379,23 @@ struct MatchHUDTests {
     /// SwiftUI file the macOS test target cannot compile.
     ///
     /// Two halves, because the split is what makes it safe: the view must read
-    /// `isDrawPressable`, and `isDrawPressable` must not consult the board.
+    /// `isDrawPressable`, and `isDrawPressable` must not consult `board.canDraw`.
+    ///
+    /// Named that way rather than "the board": the gate now goes through
+    /// ``MatchHUDModel/isMatchLive``, which does read `board.inputLocked`. That
+    /// is a cover over the whole surface and not the completion gate — it is
+    /// the reason a control cannot go live under the resume countdown. What
+    /// must stay out is `canDraw`, the one that swallows the refusal press.
     @Test("The completion gate does not disable the control")
     func theGateLeavesTheControlLive() throws {
         let view = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
         #expect(view.contains(".disabled(!hud.isDrawPressable)"),
                 "the Draw button reads the board's gate — the refusal press is swallowed")
         let model = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
-        #expect(model.contains("public var isDrawPressable: Bool {\n        !session.isMatchOver"),
+        let declaration = "public var isDrawPressable: Bool {"
+        #expect(model.contains(declaration), "isDrawPressable was renamed")
+        let body = model.components(separatedBy: declaration)[1].components(separatedBy: "}")[0]
+        #expect(!body.contains("canDraw"),
                 "isDrawPressable gates on the board again — the refusal press is swallowed")
     }
 

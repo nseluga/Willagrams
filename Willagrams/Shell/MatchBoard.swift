@@ -128,6 +128,14 @@ public final class MatchBoard {
             guard case .reconnecting = session.presence(of: player) else { continue }
             return .reconnecting(peer: player.rawValue)
         }
+        // Asked of `CountdownOverlay`, which is the one type that answers
+        // whether a count is on screen — the pre-match card and this one are
+        // the same question, and asking it twice cannot disagree with itself.
+        // Anybody still away is checked first: a second peer that has not come
+        // back keeps the match frozen, and its banner outranks the count.
+        if let card = CountdownOverlay(session: session) {
+            return .resuming(secondsRemaining: card.secondsRemaining)
+        }
         return nil
     }
 
@@ -356,10 +364,15 @@ public final class MatchBoard {
 
 /// What covers the board instead of the match.
 ///
-/// One case, and no `nil` case: absence *is* nil. A screen that is not covered
-/// has no overlay, so there is no "none" to forget to handle.
+/// No `nil` case: absence *is* nil. A screen that is not covered has no
+/// overlay, so there is no "none" to forget to handle.
 public enum MatchOverlay: Equatable, Sendable {
     /// A peer has dropped and may still come back. The board is frozen and the
     /// player is told who they are waiting on.
     case reconnecting(peer: String)
+
+    /// A countdown owns the board. The peer is back and play restarts when it
+    /// runs out, so this is the cover that replaces ``reconnecting(peer:)``
+    /// rather than a second kind of freeze.
+    case resuming(secondsRemaining: Int)
 }

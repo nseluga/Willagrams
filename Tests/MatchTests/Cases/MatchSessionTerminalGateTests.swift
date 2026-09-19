@@ -237,16 +237,23 @@ struct MatchSessionTerminalGateTests {
         try await Terminal.waitUntil("the first window") { clock.parkedCount == 1 }
         wire.restore(Self.alice)
         try await Terminal.waitUntil("the peer to return") { guest.peerPresence == .present }
+        // Out of the resume countdown before the second drop, so what this case
+        // counts is windows and not the second the resume also parks.
+        try await Terminal.resume(guest, on: clock)
 
         wire.drop(Self.alice)
         try await Terminal.waitUntil("the second freeze") { guest.peerPresence != .present }
         try await Terminal.waitUntil("the second window") { clock.parkedCount == 2 }
 
-        // A fresh window, asked for in full, with a deadline still ahead.
-        #expect(clock.requested == [
-            .seconds(MatchSession.reconnectGraceSeconds),
-            .seconds(MatchSession.reconnectGraceSeconds),
-        ])
+        // A fresh window, asked for in full, with a deadline still ahead. The
+        // resume's own one-second sleeps are filtered out: this is about the
+        // reconnect window, and counting seconds it never asked for would make
+        // the case fail on a change to the countdown's length.
+        #expect(
+            clock.requested.filter { $0 == .seconds(MatchSession.reconnectGraceSeconds) } == [
+                .seconds(MatchSession.reconnectGraceSeconds),
+                .seconds(MatchSession.reconnectGraceSeconds),
+            ])
         let deadline = try #require({ () -> Date? in
             guard case let .reconnecting(deadline) = guest.peerPresence else { return nil }
             return deadline
@@ -313,6 +320,11 @@ struct MatchSessionTerminalGateTests {
 
         wire.restore(Self.alice)
         try await Terminal.waitUntil("the peer to return") { guest.peerPresence == .present }
+        // The resume countdown holds `status` at `.countdown` for three
+        // seconds, and `status` is in the snapshot. Run it out, then compare:
+        // the claim is that play resumes where it left off, not that the cover
+        // never goes up.
+        try await Terminal.resume(guest, on: clock)
         try await Terminal.settle()
 
         // The A-B the guardrail asks for: what the peer comes back to is what it

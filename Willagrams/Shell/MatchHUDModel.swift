@@ -187,9 +187,20 @@ public final class MatchHUDModel {
     /// up for a finished match, a departed opponent or an empty pool, so those
     /// really do disable the control.
     public var isDrawPressable: Bool {
-        !session.isMatchOver
-            && session.peerPresence == .present
-            && (owesATile || !session.poolIsExhausted)
+        isMatchLive && (owesATile || !session.poolIsExhausted)
+    }
+
+    /// The match is this player's to act on: not over, the peer is here, and
+    /// nothing covers the board.
+    ///
+    /// Named once because all three controls need the same answer. The cover
+    /// clause is why: a resume countdown unfreezes the session before it runs,
+    /// so `peerPresence` alone stops blocking the moment the peer returns and
+    /// every control would go live under the 3-2-1 the board is showing.
+    /// ``MatchBoard/inputLocked`` is the same question the surface already
+    /// asks, so the HUD and the board cannot disagree about who owns the turn.
+    public var isMatchLive: Bool {
+        !session.isMatchOver && session.peerPresence == .present && !board.inputLocked
     }
 
     /// Takes a round. Refuses outright when ``isDrawEnabled`` is false, so the
@@ -231,8 +242,7 @@ public final class MatchHUDModel {
     /// The other three are the Draw rules, minus the pool clause `isDrawPressable`
     /// folds in — which is false in exactly the state this must be true in.
     public var isWinEnabled: Bool {
-        !session.isMatchOver
-            && session.peerPresence == .present
+        isMatchLive
             && !owesATile
             && session.poolIsExhausted
             && board.canDraw
@@ -298,8 +308,7 @@ public final class MatchHUDModel {
     /// a pool too small — which is exactly what the refusal explains.
     public var isSwapPressable: Bool {
         isSwapOffered
-            && !session.isMatchOver
-            && session.peerPresence == .present
+            && isMatchLive
             && !session.hasPendingDraw
     }
 

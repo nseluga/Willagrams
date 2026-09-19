@@ -382,13 +382,13 @@ struct MatchSessionTerminalAuditTests {
         #expect(guest.isMatchOver)
         #expect(guest.winner == nil)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .countdown(secondsRemaining: 3))
+        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
 
         // The tick parked from before the drop, handed out onto a match that has
         // ended.
         clock.release(.seconds(1))
         try await Terminal.settle()
-        #expect(guest.state.status == .countdown(secondsRemaining: 3))
+        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
         #expect(guest.winner == nil)
 
         // Nothing arriving afterwards names one either, and a peer that comes
@@ -403,7 +403,7 @@ struct MatchSessionTerminalAuditTests {
         #expect(guest.isMatchOver)
         #expect(guest.winner == nil)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .countdown(secondsRemaining: 3))
+        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
         #expect(guest.claimWin() == false)
         #expect(guest.resign() == false)
         #expect(await wire.count == 0)
@@ -438,7 +438,13 @@ struct MatchSessionTerminalAuditTests {
         #expect(guest.poolIsExhausted)
         #expect(guest.isMatchOver == false)
         #expect(guest.winner == nil)
-        #expect(guest.state.status == .playing)
+        // The resume countdown, not `.playing`: a peer returning mid-match
+        // covers both boards for a moment before play restarts. Still not an
+        // end state, which is what this case is about — the draw and the place
+        // below go through while it is on screen.
+        #expect(
+            guest.state.status
+                == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
 
         // A grant reordered behind the exhaustion notice is still applied: the
         // latch is not a gate on the rack.

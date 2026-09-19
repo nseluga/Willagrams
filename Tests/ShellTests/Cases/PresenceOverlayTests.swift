@@ -335,8 +335,12 @@ struct PresenceOverlayTests {
             .filter { !$0.hasPrefix("//") && !$0.isEmpty }
 
         #expect(code.contains { $0.contains("inputLocked: matchBoard.inputLocked") })
-        #expect(code.contains { $0.contains("= matchBoard.overlay") })
+        #expect(code.contains { $0.contains("switch matchBoard.overlay") })
         #expect(code.contains { $0.contains("ReconnectingOverlay()") })
+        // The other arm of that switch. The resume countdown is the same card
+        // the pre-match screen draws, so a rename of it fails here too.
+        #expect(code.contains { $0.contains("case let .resuming(secondsRemaining):") })
+        #expect(code.contains { $0.contains("CountdownCard(") })
         // The copy is the model's, so the fence over player-facing strings has
         // one place to look. Both lines, not just the title: the peer's raw
         // `PlayerID` used to be the second one, and in a real online match that

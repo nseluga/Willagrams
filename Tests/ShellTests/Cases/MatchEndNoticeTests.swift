@@ -224,11 +224,19 @@ struct MatchEndNoticeTests {
 
         // Link 4 — the waiting cover over that board, gated on nothing but the
         // model's own answer, and with no modifier between the arm and the view.
+        // A switch, not an `if case`: a returning peer replaces the cover with
+        // the resume countdown, and both arms are the one model's one answer.
         #expect(view.contains("""
         .overlay { MatchHUD(hud: hud) }
         .overlay {
-        if case .reconnecting = matchBoard.overlay {
+        switch matchBoard.overlay {
+        case .reconnecting:
         ReconnectingOverlay()
+        case let .resuming(secondsRemaining):
+        CountdownCard(
+        title: Terminology.countdownTitle, secondsRemaining: secondsRemaining)
+        case nil:
+        EmptyView()
         }
         }
         """))

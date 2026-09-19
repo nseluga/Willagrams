@@ -188,6 +188,22 @@ struct MatchSessionTerminalTests {
         }
     }
 
+    /// Runs out the countdown a peer returning mid-match starts, leaving the
+    /// session `.playing`.
+    ///
+    /// For the cases that are about the freeze and not about the resume: a
+    /// returning peer now covers both boards for
+    /// ``MatchSession/resumeCountdownSeconds``, which parks a one-second
+    /// sleeper on the clock and holds `status` at `.countdown`. Those cases
+    /// assert against a `.playing` session, so they crank it out first rather
+    /// than each re-deriving the same three seconds.
+    @MainActor
+    static func resume(_ session: MatchSession, on clock: HandCrankedClock) async throws {
+        try await crank(clock, releasing: .seconds(1), until: "the resume countdown") {
+            session.state.status == .playing
+        }
+    }
+
     /// Long enough for anything the session had already enqueued to have run.
     /// Used only before asserting that nothing happened.
     static func settle() async throws {
@@ -477,6 +493,10 @@ struct MatchSessionTerminalTests {
         // never granted, so both tiles are still in the rack.
         wire.restore(Self.alice)
         try await Self.waitUntil("the peer to return") { guest.peerPresence == .present }
+        // The return puts the resume countdown up before play is live again.
+        // This case is about what crossed the wire during the freeze, not about
+        // the cover, so it runs the count out and asserts against a live match.
+        try await Self.resume(guest, on: clock)
         #expect(guest.state.hand.count == 2)
         #expect(guest.pendingDrawTiles.isEmpty)
         #expect(guest.state.status == .playing)

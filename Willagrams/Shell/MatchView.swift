@@ -86,8 +86,17 @@ struct MatchView: View {
             )
             .overlay { MatchHUD(hud: hud) }
             .overlay {
-                if case .reconnecting = matchBoard.overlay {
+                switch matchBoard.overlay {
+                case .reconnecting:
                     ReconnectingOverlay()
+                // The same card the pre-match countdown shows, over a board
+                // with tiles already on it. `MatchBoard.overlay` decided that
+                // this is a count and not a freeze; nothing is decided here.
+                case let .resuming(secondsRemaining):
+                    CountdownCard(
+                        title: Terminology.countdownTitle, secondsRemaining: secondsRemaining)
+                case nil:
+                    EmptyView()
                 }
             }
             // The measured size, handed over as-is. In `.onChange`, never in
