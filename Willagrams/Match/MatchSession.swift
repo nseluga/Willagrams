@@ -374,6 +374,13 @@ public final class MatchSession: AppActivityListener {
     /// Every request produces exactly one of a `.grant`, a `.poolExhausted`
     /// naming this device or a `.rejected`, so any of the three clears one —
     /// and a request that never reached the wire clears its own.
+    ///
+    /// ponytail: one way out is not covered — a request that reaches the host
+    /// and is dropped there by ``receive(_:)``'s `state.status == .playing`
+    /// guard is never answered and never times out, and the credit it opened
+    /// latches Draw shut. Unreachable at two players, who run the same status
+    /// machine off the same `.start`; give the credit a deadline if a larger
+    /// match ever makes the statuses diverge.
     @ObservationIgnored private var outstandingDrawRequests = 0
 
     /// This device's own `.win`/`.resign` was caught by the freeze and still
