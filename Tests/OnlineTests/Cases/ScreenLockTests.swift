@@ -225,6 +225,10 @@ struct ScreenLockTests {
     /// fan-out at the same moment. Delivering them as one event would hide the
     /// gap the gate exists to close.
     private static func peerReappears(to table: Table) async throws {
+        // The socket coming back, first: `SelfJoinGate` measures its wait from
+        // here, because nothing this endpoint is waiting for can arrive before
+        // there is a channel to carry it.
+        table.guestChannel.deliverLocalStatus(true)
         table.guestChannel.deliverPresence(joined: [Self.hostID], left: [])
         table.guestChannel.deliverPresence(joined: [Self.guestID], left: [])
         // The board is locked while a peer is `.reconnecting`, so nothing about
@@ -1050,6 +1054,40 @@ struct ScreenLockTests {
         let table = try await Self.table()
         #expect(ContinuousClock.now - started < RealtimeMatchTransport.defaultSelfJoinWait)
         #expect(table.guest.presence(of: Self.hostID) == .present)
+    }
+
+    /// The outage is the thing the first attempt at this got wrong. A wait
+    /// armed when the socket *drops* expires while the device is still off the
+    /// air — `RealtimeClientOptions.reconnectDelay` alone outlasts it — so the
+    /// gate is already open by the time presence comes back and the state sync
+    /// is released on the spot. That is the ungated behaviour, and it is what
+    /// showed on device as one player still counting a second ahead.
+    @Test("An outage longer than the wait still gates the return")
+    func anOutageDoesNotSpendTheWait() async throws {
+        let table = try await Self.table(peerGrace: .seconds(30), selfJoinWait: .milliseconds(300))
+
+        table.guestActivity.send(.away)
+        try await Task.sleep(for: Self.lockDuration)
+        table.guestActivity.send(.active)
+        try await Self.waitUntil("the guest to freeze") {
+            if case .reconnecting = table.guest.presence(of: Self.hostID) { return true }
+            return false
+        }
+
+        // Off the air for well past the wait, the way a real reconnect is.
+        try await Task.sleep(for: .milliseconds(600))
+        table.guestChannel.deliverLocalStatus(true)
+        table.guestChannel.deliverPresence(joined: [Self.hostID], left: [])
+        await Self.settle()
+        if case .reconnecting = table.guest.presence(of: Self.hostID) {} else {
+            Issue.record("the outage spent the wait: the state sync released the peer early")
+        }
+
+        // And the re-track fan-out — the event the peer sees too — releases it.
+        table.guestChannel.deliverPresence(joined: [Self.guestID], left: [])
+        try await Self.waitUntil("the peer to be released on the fan-out") {
+            table.guest.presence(of: Self.hostID) == .present
+        }
     }
 
     private static func source(of path: String) throws -> String {

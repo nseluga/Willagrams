@@ -157,6 +157,19 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// before this gate existed. It is not an error path with no exit.
     static let defaultSelfJoinWait: Duration = .seconds(1)
 
+    /// The outer bound on a shut gate, measured from the loss rather than from
+    /// the return.
+    ///
+    /// ``defaultSelfJoinWait`` cannot do this job: it is armed when the socket
+    /// comes *back*, and a socket that never comes back would leave a gate shut
+    /// with nothing to open it. Only reachable when a peer is admitted and no
+    /// re-subscribe ever follows — a presence event on a socket that never
+    /// churned. Long enough to clear `RealtimeClientOptions.reconnectDelay`
+    /// plus a handshake, so an ordinary reconnect is always the shorter wait,
+    /// and short enough that the odd case costs seconds rather than the whole
+    /// reconnect window.
+    static let selfJoinBackstop: Duration = .seconds(3)
+
     /// Builds a transport and returns it only once the channel is subscribed.
     static func connect(
         localPlayerID: PlayerID,
@@ -303,7 +316,13 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         // off the network. Presence cannot report that — no socket, no server
         // messages — so the subscription's own status is the only witness.
         channel.onLocalStatus { subscribed in
-            guard !subscribed else { return }
+            guard !subscribed else {
+                // Back on the air, so this endpoint's own presence join is due
+                // now — and only now is there any point counting. No-op unless
+                // the gate is shut, so a first subscribe is untouched.
+                selfJoin.resubscribed(waiting: selfJoinWait, release: release)
+                return
+            }
             // Emptying the roster is what makes the recovery work: the rejoin's
             // presence sync re-inserts each peer, and `insert` only yields
             // `.connected` for a player the roster did not already hold.
@@ -312,7 +331,7 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
             for player in dropped { states.yield(.disconnected(player)) }
             // Closed only on the way *down*, so a first subscribe never waits
             // on anything: the gate exists for the return trip.
-            selfJoin.close(waiting: selfJoinWait, release: release)
+            selfJoin.close(backstop: Self.selfJoinBackstop, release: release)
             startGrace()
         }
     }
@@ -363,7 +382,7 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
                 // gate: hold the peer until this device's own presence join
                 // comes back, and both count from that one fan-out.
                 let states = states
-                selfJoin.close(waiting: selfJoinWait) { players in
+                selfJoin.close(backstop: Self.selfJoinBackstop) { players in
                     for player in players { states.yield(.connected(player)) }
                 }
             }
@@ -452,18 +471,51 @@ private final class SelfJoinGate: @unchecked Sendable {
     private var held: [PlayerID]?
     private var fallback: Task<Void, Never>?
 
-    /// Shuts the gate and arms the release that bounds it.
+    /// Shuts the gate and arms the backstop that bounds it.
     ///
     /// Closing twice is a re-arm, not a second gate: whatever is already held
-    /// stays held and the fallback restarts. A second drop before the first
+    /// stays held and the backstop restarts. A second drop before the first
     /// return is exactly when that matters.
-    func close(waiting wait: Duration, release: @escaping @Sendable ([PlayerID]) -> Void) {
+    func close(backstop: Duration, release: @escaping @Sendable ([PlayerID]) -> Void) {
+        arm(backstop, release: release, onlyIfClosed: false)
+    }
+
+    /// The channel is subscribed again, so this endpoint's own presence join
+    /// is now actually due — restart the wait from here.
+    ///
+    /// This, not ``close(backstop:release:)``, is what the wait is measured
+    /// from. Closing happens when the socket is *lost*, and the reconnect that
+    /// follows does not even begin until `RealtimeClientOptions.reconnectDelay`
+    /// has passed; a wait armed at that moment expires while the device is
+    /// still offline, opens on an empty gate, and the state sync that
+    /// eventually arrives is then released on the spot — which is the ungated
+    /// behaviour wearing the gate's clothes.
+    ///
+    /// No-op on an open gate: an ordinary first subscribe must not wait.
+    func resubscribed(waiting wait: Duration, release: @escaping @Sendable ([PlayerID]) -> Void) {
+        arm(wait, release: release, onlyIfClosed: true)
+    }
+
+    private func arm(
+        _ wait: Duration,
+        release: @escaping @Sendable ([PlayerID]) -> Void,
+        onlyIfClosed: Bool
+    ) {
+        // `skip` rather than an early return out of the closure: a `defer`
+        // that closes the gate would still run on the way out and shut a gate
+        // this call was only ever allowed to re-arm.
+        var skip = false
         let previous: Task<Void, Never>? = lock.withLock {
-            defer { held = held ?? [] }
+            if onlyIfClosed, held == nil {
+                skip = true
+                return nil
+            }
+            held = held ?? []
             let previous = fallback
             fallback = nil
             return previous
         }
+        guard !skip else { return }
         previous?.cancel()
         let task = Task {
             try? await Task.sleep(for: wait)
