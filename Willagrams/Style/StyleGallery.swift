@@ -261,6 +261,7 @@ public struct StyleGallery: View {
                 ruler("Stroke", [
                     ("hairline", DesignTokens.Stroke.hairline), ("bevel", DesignTokens.Stroke.bevel),
                     ("selectedRing", DesignTokens.Stroke.selectedRing),
+                    ("selectionBorder", DesignTokens.Stroke.selectionBorder),
                 ]) { width in
                     DesignTokens.Palette.ink.frame(width: DesignTokens.Space.xl, height: width)
                 }
