@@ -130,6 +130,23 @@ struct OrientationTests {
         }
     }
 
+    /// The iPad list is landscape-only, which Apple's upload validator rejects
+    /// (error 90474) unless the app also declares that it never shares the
+    /// screen. Dropping this key does not fail a build or a test run — it fails
+    /// the App Store upload, days later, which is why it is pinned here.
+    @Test("The iPad opts out of multitasking, which its short orientation list requires")
+    func requiresFullScreen() throws {
+        let pbx = try String(
+            contentsOf: Self.root.appendingPathComponent("Willagrams.xcodeproj/project.pbxproj"),
+            encoding: .utf8
+        ).components(separatedBy: "\n")
+        let fullScreen = pbx.filter { $0.contains("INFOPLIST_KEY_UIRequiresFullScreen") }
+        #expect(fullScreen.count == 2)
+        for line in fullScreen {
+            #expect(line.contains("= YES;"))
+        }
+    }
+
     /// Pins the review's Important fix: the static mask starts already
     /// resolved from the policy (launch route is `.menu`, non-gameplay), not
     /// from `.all`, which would let UIKit answer "anything goes" from window
