@@ -86,7 +86,10 @@ private struct BrandMenuPanel<Content: View>: View {
             let anchor = box.frame
 
             ZStack(alignment: .topLeading) {
-                DesignTokens.Palette.ink.opacity(Self.dimOpacity)
+                // Catches the tap that dismisses, and nothing else: the
+                // screen behind the panel stays at its normal brightness, so
+                // the outline below is what separates the two.
+                Color.clear
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { close() }
@@ -95,6 +98,19 @@ private struct BrandMenuPanel<Content: View>: View {
                     .padding(.vertical, DesignTokens.Space.s)
                     .frame(width: BrandMenuMetrics.panelWidth, alignment: .leading)
                     .brandCard()
+                    // The card's own border is a hairline meant to sit against
+                    // a page. Over live content it disappears, so the panel
+                    // takes the accent at selection weight instead.
+                    .overlay {
+                        RoundedRectangle(
+                            cornerRadius: DesignTokens.Radius.panel,
+                            style: .continuous
+                        )
+                        .strokeBorder(
+                            DesignTokens.Palette.accent,
+                            lineWidth: DesignTokens.Stroke.selectionBorder
+                        )
+                    }
                     .background {
                         GeometryReader { panel in
                             Color.clear
@@ -135,7 +151,6 @@ private struct BrandMenuPanel<Content: View>: View {
         return max(above, Self.margin)
     }
 
-    private static var dimOpacity: Double { 0.35 }
     private static var gap: CGFloat { DesignTokens.Space.s }
     private static var margin: CGFloat { DesignTokens.Space.m }
 }
