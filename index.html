@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Willagrams</title>
+<style>
+  :root { --bg:#faf8f4; --fg:#2e2b28; --muted:#5d574f; --rule:#e2ddd4; --link:#8a5a2b; --tile:#f2ece1; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#191715; --fg:#e8e3da; --muted:#a9a196; --rule:#332f2a; --link:#d2a066; --tile:#262320; }
+  }
+  :root[data-theme="dark"] { --bg:#191715; --fg:#e8e3da; --muted:#a9a196; --rule:#332f2a; --link:#d2a066; --tile:#262320; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:16px/1.65 ui-sans-serif,-apple-system,"Helvetica Neue",sans-serif;
+         padding:48px 16px; }
+  main { max-width:680px; margin:0 auto; }
+  .word { display:flex; gap:6px; margin:0 0 1.5rem; flex-wrap:wrap; }
+  .word span { background:var(--tile); border:1px solid var(--rule); border-radius:6px;
+               width:34px; height:38px; display:grid; place-items:center;
+               font-weight:600; font-size:1.05rem; }
+  h1 { font-size:1.9rem; margin:0 0 .25rem; letter-spacing:-.01em; }
+  h2 { font-size:1.1rem; margin:2.25rem 0 .5rem; }
+  .sub { color:var(--muted); margin:0 0 2rem; font-size:1.05rem; }
+  a { color:var(--link); }
+  ul { padding-left:1.25rem; } li { margin:.3rem 0; }
+  hr { border:0; border-top:1px solid var(--rule); margin:2.5rem 0 1.25rem; }
+  footer { color:var(--muted); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <p class="word" aria-hidden="true">
+    <span>W</span><span>I</span><span>L</span><span>L</span><span>A</span><span>G</span><span>R</span><span>A</span><span>M</span><span>S</span>
+  </p>
+  <h1>Willagrams</h1>
+  <p class="sub">Race to build your word grid.</p>
+
+  <p>Willagrams is a word game for iPhone and iPad. Draw letter tiles, build them into a connected grid of your own, and empty your hand before your opponent empties theirs.</p>
+
+  <h2>Support</h2>
+  <p>Found a bug, stuck on something, or want a feature? Email <a href="mailto:nseluga@g.hmc.edu">nseluga@g.hmc.edu</a> and you will get a reply.</p>
+  <p>It helps to include your device (iPhone or iPad), your iOS version, and your friend code if the problem involves playing with someone else.</p>
+
+  <h2>Common questions</h2>
+  <ul>
+    <li><strong>Do I need an account?</strong> No. There is no sign-up, no email and no password. Online play creates an anonymous profile for you automatically.</li>
+    <li><strong>How do I play with a friend?</strong> Open Play a Friend and share the invite. Add people using their eight-character friend code from the Friends screen.</li>
+    <li><strong>I moved to a new phone and my profile is gone.</strong> Profiles are anonymous and live on one device, so they do not transfer. Email the address above if you need the old one cleared.</li>
+    <li><strong>Can I play on my own?</strong> Yes — Solo Practice plays against the computer at Easy, Medium or Hard.</li>
+  </ul>
+
+  <h2>Privacy</h2>
+  <p>Willagrams has no ads, no analytics and no tracking. Read the <a href="privacy.html">privacy policy</a>.</p>
+
+  <hr>
+  <footer>© 2026 Nathaniel Seluga</footer>
+</main>
+</body>
+</html>
