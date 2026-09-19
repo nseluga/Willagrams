@@ -932,6 +932,41 @@ struct ScreenLockTests {
         #expect(remaining == MatchSession.resumeCountdownSeconds)
     }
 
+    // MARK: - Both devices count back in
+
+    /// The resume countdown on the device that is *not* holding the pool.
+    ///
+    /// Here rather than in MatchTests because this needs a match with a real
+    /// opening deal behind it, and ``table(countdownSeconds:clock:peerGrace:sessionSleep:)``
+    /// is the only harness that stands one up. `MatchTests` deals a hand of
+    /// zero, which leaves `awaitingOpeningDeal` false on both devices and hides
+    /// the whole question.
+    ///
+    /// The pool goes to `roster[0]`, and the ids sort so that is the session
+    /// named `guest`. `host` is therefore the device with nothing to deal, and
+    /// it is the one that reported resuming with no count on it.
+    @Test("The device that holds no pool counts back in too")
+    func theDeviceWithoutThePoolAlsoCountsBackIn() async throws {
+        let table = try await Self.table(peerGrace: .seconds(30))
+
+        table.hostChannel.deliverPresence(joined: [], left: [Self.guestID])
+        try await Self.waitUntil("the pool-less device to freeze") {
+            if case .reconnecting = table.host.presence(of: Self.guestID) { return true }
+            return false
+        }
+
+        table.hostChannel.deliverPresence(joined: [Self.guestID], left: [])
+        try await Self.waitUntil("its peer to be present again") {
+            table.host.presence(of: Self.guestID) == .present
+        }
+
+        guard case let .countdown(remaining) = table.host.state.status else {
+            Issue.record("the device without the pool resumed with no countdown")
+            return
+        }
+        #expect(remaining == MatchSession.resumeCountdownSeconds)
+    }
+
     private static func source(of path: String) throws -> String {
         try String(
             contentsOf: URL(fileURLWithPath: #filePath)

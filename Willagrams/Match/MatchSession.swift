@@ -1252,7 +1252,14 @@ public final class MatchSession: AppActivityListener {
             max(0, start.startingHandSize),
             LetterDistribution.totalTiles / roster.count
         )
-        self.awaitingOpeningDeal = self.startingHandSize > 0
+        // Only the device holding the pool has a deal to owe: everyone else's
+        // opening hand arrives as a `.grant`. Armed on those devices too, and
+        // nothing ever cleared it — `dealOpeningHands()` returns at its
+        // `let hostPool` guard without reaching the line that does — so the
+        // flag stayed true for the whole match and `peerReturned` took the
+        // deal branch and returned before the resume countdown. Only the pool
+        // holder ever counted 3-2-1.
+        self.awaitingOpeningDeal = self.startingHandSize > 0 && start.host == localPlayerID
 
         if start.host == localPlayerID {
             let pool = Pool.standard(seed: start.seed)
