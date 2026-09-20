@@ -10,14 +10,14 @@ counts are Apple's limits, checked against the text below.
 | Name (30) | `Willagrams` |
 | Subtitle (30) | `Race to build your word grid` |
 | Primary category | Games |
-| Secondary category | Word *(under Games; optional but it is the one people browse)* |
+| Game subcategory | Word *(selecting Games reveals two game-subcategory dropdowns; Word goes in the first)* |
+| Secondary category | *(leave empty — this is a second top-level category, not a game subcategory)* |
 | Bundle ID | `com.willagrams.Willagrams` — already correct |
 | SKU | `willagrams-ios-2026` — already correct |
 | Content rights | Does not contain, show, or access third-party content |
 | Age rating | Expect **4+** — every questionnaire answer is None/No. See below. |
 
-> **The Name field currently reads `Nate Seluga`.** That is the store listing
-> name, not the developer name, and it has to be changed before submission.
+> **Done 2026-09-19** — the Name field read `Nate Seluga` and is now `Willagrams`.
 
 ### Age rating questionnaire — the answers
 
