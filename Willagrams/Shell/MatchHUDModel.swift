@@ -25,6 +25,9 @@ import BoardKit
 #if canImport(Style)
 import Style
 #endif
+#if canImport(Audio)
+import Audio
+#endif
 
 import Foundation
 import Observation
@@ -38,7 +41,9 @@ import WillagramsRules
 /// There is no opponent-facing value on this type and there is nothing for a
 /// view to render one from. Not their board, not their tile count, not whether
 /// they are there — `peerPresence` is read only to decide whether a control of
-/// *this* player's can do anything, and is never published.
+/// *this* player's can do anything, and is never published. What a peer's
+/// absence puts *over* the board is ``MatchBoard/overlay``, because the lock it
+/// implies is the board's.
 ///
 /// ## Every value is computed
 ///
@@ -74,6 +79,10 @@ public final class MatchHUDModel {
     @discardableResult
     private func refuse() -> Bool {
         completionAttempts += 1
+        // Every refusal the HUD counts is a refusal the player hears. Here
+        // rather than at the three call sites, so a fourth control that refuses
+        // cannot be added silent.
+        audio.play(.invalid)
         return false
     }
 
@@ -81,10 +90,21 @@ public final class MatchHUDModel {
     @ObservationIgnored private let session: MatchSession
     @ObservationIgnored private let board: MatchBoard
 
-    public init(shell: ShellModel, session: MatchSession, board: MatchBoard) {
+    /// The one injected player, handed down by ``MatchRun``. Held rather than
+    /// read off ``shell``: that reference is `unowned`, and a control pressed
+    /// on a HUD whose shell has gone would trap on the way to a sound.
+    @ObservationIgnored private let audio: any AudioPlayer
+
+    public init(
+        shell: ShellModel,
+        session: MatchSession,
+        board: MatchBoard,
+        audio: any AudioPlayer
+    ) {
         self.shell = shell
         self.session = session
         self.board = board
+        self.audio = audio
     }
 
     // MARK: - Pool
@@ -92,8 +112,8 @@ public final class MatchHUDModel {
     /// How many tiles are left to take, or `nil` when the session cannot say.
     ///
     /// Straight from `MatchSession.poolRemaining`, which reads the host's real
-    /// pool back after every movement of it. `nil` on a device that runs no
-    /// pool — a guest cannot know this number.
+    /// pool back after every movement of it — on a guest, from the host's
+    /// `.poolCount` broadcast. `nil` until a count is known.
     ///
     /// Nothing is counted here on purpose: a shell-side ledger of grants is a
     /// second source of truth that can silently disagree with the pool it
@@ -105,14 +125,12 @@ public final class MatchHUDModel {
 
     /// The count beside that name, or a placeholder while there is no count to
     /// show. Never a guess.
-    public var poolValue: String {
-        guard let poolRemaining else { return Self.unknownValue }
-        return String(poolRemaining)
-    }
+    public var poolValue: String { MatchHUDLayout.poolValue(poolRemaining) }
 
     /// Local chrome, not `Terminology`: an em dash standing in for a number is
-    /// not a game concept.
-    public static let unknownValue = "—"
+    /// not a game concept. Delegates to `MatchHUDLayout` so the literal lives
+    /// in one place.
+    public static let unknownValue = MatchHUDLayout.unknownValue
 
     // MARK: - Draw
 
@@ -169,9 +187,20 @@ public final class MatchHUDModel {
     /// up for a finished match, a departed opponent or an empty pool, so those
     /// really do disable the control.
     public var isDrawPressable: Bool {
-        !session.isMatchOver
-            && session.peerPresence == .present
-            && (owesATile || !session.poolIsExhausted)
+        isMatchLive && (owesATile || !session.poolIsExhausted)
+    }
+
+    /// The match is this player's to act on: not over, the peer is here, and
+    /// nothing covers the board.
+    ///
+    /// Named once because all three controls need the same answer. The cover
+    /// clause is why: a resume countdown unfreezes the session before it runs,
+    /// so `peerPresence` alone stops blocking the moment the peer returns and
+    /// every control would go live under the 3-2-1 the board is showing.
+    /// ``MatchBoard/inputLocked`` is the same question the surface already
+    /// asks, so the HUD and the board cannot disagree about who owns the turn.
+    public var isMatchLive: Bool {
+        !session.isMatchOver && session.peerPresence == .present && !board.inputLocked
     }
 
     /// Takes a round. Refuses outright when ``isDrawEnabled`` is false, so the
@@ -194,6 +223,7 @@ public final class MatchHUDModel {
         // would let them. The pool went down by two, no letter arrived, and
         // nothing could ever move again.
         guard isDrawEnabled, session.draw() else { return refuse() }
+        audio.play(.draw)
         return true
     }
 
@@ -212,8 +242,7 @@ public final class MatchHUDModel {
     /// The other three are the Draw rules, minus the pool clause `isDrawPressable`
     /// folds in — which is false in exactly the state this must be true in.
     public var isWinEnabled: Bool {
-        !session.isMatchOver
-            && session.peerPresence == .present
+        isMatchLive
             && !owesATile
             && session.poolIsExhausted
             && board.canDraw
@@ -231,7 +260,7 @@ public final class MatchHUDModel {
     public func claimWin() -> Bool {
         resignArmed = false
         guard isWinEnabled, board.canDraw, session.claimWin() else { return refuse() }
-        shell.matchEnded(winner: session.winner)
+        shell.matchEnded(winner: session.winner, localPlayerID: session.localPlayerID)
         return true
     }
 
@@ -279,8 +308,7 @@ public final class MatchHUDModel {
     /// a pool too small — which is exactly what the refusal explains.
     public var isSwapPressable: Bool {
         isSwapOffered
-            && !session.isMatchOver
-            && session.peerPresence == .present
+            && isMatchLive
             && !session.hasPendingDraw
     }
 
@@ -288,9 +316,11 @@ public final class MatchHUDModel {
     ///
     /// A swap takes ``Pool/swapSize`` and gives one back, and the host refuses
     /// it as a unit — so below that the control cannot work, however many tiles
-    /// are left. `nil` is a guest, which cannot see the count and must not
-    /// guess one: it keeps the old, weaker test and learns the truth from the
-    /// host's refusal.
+    /// are left. `nil` is a count not yet known, which must not be guessed: it
+    /// keeps the old, weaker test and learns the truth from the host's refusal.
+    /// A guest's received count is never below the pool's real one (it keeps
+    /// the minimum of what the host sent), so it can only enable a press the
+    /// host then refuses, never hide one that would work.
     public var poolCanServeASwap: Bool {
         guard let remaining = session.poolRemaining else { return !session.poolIsExhausted }
         return remaining >= Pool.swapSize
@@ -332,6 +362,7 @@ public final class MatchHUDModel {
             }
             return false
         }
+        audio.play(.swap)
         return true
     }
 
@@ -362,7 +393,7 @@ public final class MatchHUDModel {
         guard resignArmed else { return false }
         resignArmed = false
         guard session.resign() else { return false }
-        shell.matchEnded(winner: session.winner)
+        shell.matchEnded(winner: session.winner, localPlayerID: session.localPlayerID)
         return true
     }
 }

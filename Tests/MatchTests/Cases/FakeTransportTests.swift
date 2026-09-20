@@ -78,7 +78,7 @@ struct FakeTransportTests {
         let sent: [MatchMessage] = [
             .start(version: WireFormat.current, seed: 42, startingHandSize: 21, countdownSeconds: 3, options: .standard, roster: [hostID, guestID].sorted { $0.rawValue < $1.rawValue }),
             .drawRequest(player: hostID),
-            .poolExhausted,
+            .poolExhausted(requester: hostID),
         ]
         for message in sent {
             try await host.send(message, delivery: .reliable)
@@ -129,7 +129,7 @@ struct FakeTransportTests {
         let (host, guest) = FakeTransport.pair(hostID, guestID)
 
         let lost = MatchMessage.drawRequest(player: hostID)
-        let kept = MatchMessage.poolExhausted
+        let kept = MatchMessage.poolExhausted(requester: hostID)
         await host.setDropFilter { $0 == lost }
 
         // `nil` means the send hung past the deadline; `false` means it threw.

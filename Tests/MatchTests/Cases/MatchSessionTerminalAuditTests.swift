@@ -144,10 +144,15 @@ struct MatchSessionTerminalAuditTests {
         // No sleep, and no race to lose.
         await wire.closeGate()
         #expect(host.draw())
-        #expect(host.draw())
         try await Terminal.waitUntil("the first submission to reach the pool") {
             await wire.parkedCount == 1
         }
+        // The peer's own request is the second submission, not a second press:
+        // `draw()` refuses a second request while one is unanswered. Either way
+        // it is a pool submission sitting on the same chain, and a round serves
+        // both players, so what must not happen is unchanged.
+        wire.deliver(.drawRequest(player: Self.bob))
+        await Task.yield()
 
         wire.drop(Self.bob)
         try await Terminal.waitUntil("the session to freeze") { host.peerPresence != .present }
@@ -157,11 +162,14 @@ struct MatchSessionTerminalAuditTests {
         // One round left the pool — the one already in the pool's hands. The
         // second never reached it: no second grant on the wire, and no second
         // tile in the host's own rack, which is where the host takes its half.
-        #expect(await wire.count == 2)
+        // The start, then the one round's peer grant and its pool count.
+        #expect(await wire.count == 3)
         let landed = await wire.wire
         let grantsToPeer = landed.filter { message in
-            if case let .grant(player, _) = message { return player == Self.bob }
-            return false
+            switch message {
+            case let .grant(player, _), let .obligation(player, _): return player == Self.bob
+            default: return false
+            }
         }
         #expect(grantsToPeer.count == 1)
         #expect(host.state.hand.count == 1)
@@ -198,7 +206,7 @@ struct MatchSessionTerminalAuditTests {
 
         // And the elements are not divided: every one of six offers lands.
         let offered = (0..<6).map { Tile(letter: $0.isMultiple(of: 2) ? "A" : "B") }
-        for tile in offered { wire.deliver(.grant(player: Self.bob, tiles: [tile])) }
+        for tile in offered { wire.deliver(.obligation(player: Self.bob, tiles: [tile])) }
         try await Terminal.waitUntil("all six offers to land") { guest.pendingDrawTiles.count == 6 }
         #expect(guest.pendingDrawTiles.map(\.id) == offered.map(\.id))
 
@@ -243,7 +251,7 @@ struct MatchSessionTerminalAuditTests {
         // and `receive` is synchronous, so this landing proves they were read
         // rather than still queued behind the assertions.
         let marker = Tile(letter: "M")
-        wire.deliver(.grant(player: Self.bob, tiles: [marker]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [marker]))
         try await Terminal.waitUntil("the marker to land") { guest.hasPendingDraw }
         #expect(guest.pendingDrawTiles.map(\.id) == [marker.id])
 
@@ -293,9 +301,9 @@ struct MatchSessionTerminalAuditTests {
         // would move the rack; exhaustion would latch; a second win or a
         // resignation would rename the winner.
         wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard, roster: [Self.alice, Self.bob]))
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "Q")]))
         wire.deliver(.swapGrant(player: Self.bob, tiles: [Tile(letter: "R")], returned: tiles[1]))
-        wire.deliver(.poolExhausted)
+        wire.deliver(.poolExhausted(requester: Self.bob))
         wire.deliver(.rejected(reason: .unknownPlayer))
         wire.deliver(.win(player: Self.alice, placements: []))
         wire.deliver(.resign(player: Self.alice))
@@ -374,13 +382,13 @@ struct MatchSessionTerminalAuditTests {
         #expect(guest.isMatchOver)
         #expect(guest.winner == nil)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .countdown(secondsRemaining: 3))
+        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
 
         // The tick parked from before the drop, handed out onto a match that has
         // ended.
         clock.release(.seconds(1))
         try await Terminal.settle()
-        #expect(guest.state.status == .countdown(secondsRemaining: 3))
+        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
         #expect(guest.winner == nil)
 
         // Nothing arriving afterwards names one either, and a peer that comes
@@ -395,7 +403,7 @@ struct MatchSessionTerminalAuditTests {
         #expect(guest.isMatchOver)
         #expect(guest.winner == nil)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .countdown(secondsRemaining: 3))
+        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
         #expect(guest.claimWin() == false)
         #expect(guest.resign() == false)
         #expect(await wire.count == 0)
@@ -414,7 +422,7 @@ struct MatchSessionTerminalAuditTests {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock)
 
-        wire.deliver(.poolExhausted)
+        wire.deliver(.poolExhausted(requester: Self.bob))
         try await Terminal.waitUntil("the latch to close") { guest.poolIsExhausted }
         #expect(guest.isMatchOver == false)
         #expect(guest.winner == nil)
@@ -430,12 +438,18 @@ struct MatchSessionTerminalAuditTests {
         #expect(guest.poolIsExhausted)
         #expect(guest.isMatchOver == false)
         #expect(guest.winner == nil)
-        #expect(guest.state.status == .playing)
+        // The resume countdown, not `.playing`: a peer returning mid-match
+        // covers both boards for a moment before play restarts. Still not an
+        // end state, which is what this case is about — the draw and the place
+        // below go through while it is on screen.
+        #expect(
+            guest.state.status
+                == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
 
         // A grant reordered behind the exhaustion notice is still applied: the
         // latch is not a gate on the rack.
         let late = Tile(letter: "Q")
-        wire.deliver(.grant(player: Self.bob, tiles: [late]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [late]))
         try await Terminal.waitUntil("the reordered grant to land") { guest.hasPendingDraw }
         #expect(guest.draw())
         #expect(guest.state.hand.map(\.id) == [late.id])
@@ -514,16 +528,22 @@ struct MatchSessionTerminalAuditTests {
         let (host, wire) = try await Self.playingHost(clock: clock)
         await wire.closeGate()
         #expect(host.draw())
-        #expect(host.draw())
         try await Terminal.waitUntil("the first submission to reach the pool") {
             await wire.parkedCount == 1
         }
+        // The peer's own request is the second submission, not a second press:
+        // `draw()` refuses a second request while one is unanswered. Either way
+        // it is a pool submission sitting on the same chain, and a round serves
+        // both players, so what must not happen is unchanged.
+        wire.deliver(.drawRequest(player: Self.bob))
+        await Task.yield()
         wire.deliver(.resign(player: Self.bob))
         try await Terminal.waitUntil("the match to end") { host.isMatchOver }
         #expect(host.winner == Self.alice)
         await wire.releaseAll()
         try await Terminal.settle()
-        #expect(await wire.count == 2)
+        // The start, then the one round's peer grant and its pool count.
+        #expect(await wire.count == 3)
         #expect(host.state.hand.count == 1)
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

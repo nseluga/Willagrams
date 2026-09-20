@@ -119,9 +119,9 @@ struct MatchSessionHardeningTests {
         // MARK: Readings
 
         var count: Int { wire.count }
-        var grants: Int { wire.filter { if case .grant = $0 { return true } else { return false } }.count }
+        var grants: Int { wire.filter { switch $0 { case .grant, .obligation: return true; default: return false } }.count }
         var swapGrants: Int { wire.filter { if case .swapGrant = $0 { return true } else { return false } }.count }
-        var exhaustions: Int { wire.filter { $0 == .poolExhausted }.count }
+        var exhaustions: Int { wire.filter { if case .poolExhausted = $0 { return true } else { return false } }.count }
         var drawRequests: Int {
             wire.filter { if case .drawRequest = $0 { return true } else { return false } }.count
         }
@@ -195,7 +195,7 @@ struct MatchSessionHardeningTests {
         let forged = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
         wire.deliver(.grant(player: Self.alice, tiles: [minted]))
         wire.deliver(.swapGrant(player: Self.alice, tiles: forged, returned: own))
-        wire.deliver(.poolExhausted)
+        wire.deliver(.poolExhausted(requester: Self.bob))
         // The marker: only the real pool can answer this, and the answer lands
         // on the wire behind all three forgeries.
         wire.deliver(.drawRequest(player: Self.bob))
@@ -215,7 +215,7 @@ struct MatchSessionHardeningTests {
         // learns anything, and every one of them must still apply.
         let (guest, guestWire) = try await Self.playingGuest()
         let given = Tile(letter: "R")
-        guestWire.deliver(.grant(player: Self.bob, tiles: [given]))
+        guestWire.deliver(.obligation(player: Self.bob, tiles: [given]))
         try await Self.waitUntil("the guest's granted tile") { guest.hasPendingDraw }
         #expect(guest.draw())
         #expect(guest.state.hand.map(\.id) == [given.id])
@@ -225,7 +225,7 @@ struct MatchSessionHardeningTests {
         try await Self.waitUntil("the guest's swap answer") { guest.state.hand.count == 3 }
         #expect(guest.state.hand.map(\.id) == three.map(\.id))
 
-        guestWire.deliver(.poolExhausted)
+        guestWire.deliver(.poolExhausted(requester: Self.bob))
         try await Self.waitUntil("the guest to latch exhaustion") { guest.poolIsExhausted }
     }
 
@@ -246,6 +246,10 @@ struct MatchSessionHardeningTests {
         // draw outstanding while the peer's answer is still in flight.
         #expect(host.draw())
 
+        await wire.releaseOne()
+        // The pool count follows the peer's grant on the same send path, and
+        // the host applies its half only once both have gone.
+        try await Self.waitUntil("the peer's pool count to park mid-send") { await wire.parkedCount == 1 }
         await wire.releaseOne()
         // The peer's answer is applied by the time this device's own round has
         // reached its send — the chain runs one submission at a time.
@@ -285,7 +289,7 @@ struct MatchSessionHardeningTests {
         // The opponent draws. This device asked for nothing that is still owed,
         // so this is an obligation and the board freezes.
         let opponents = Tile(letter: "T")
-        wire.deliver(.grant(player: Self.bob, tiles: [opponents]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [opponents]))
         try await Self.waitUntil("the opponent's round to land") {
             guest.hasPendingDraw || !guest.state.hand.isEmpty
         }
@@ -305,7 +309,7 @@ struct MatchSessionHardeningTests {
         // --- A refused return must not spend the draw credit.
         let (guest, wire) = try await Self.playingGuest()
         let held = Tile(letter: "Q")
-        wire.deliver(.grant(player: Self.bob, tiles: [held]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [held]))
         try await Self.waitUntil("a tile to hold") { guest.hasPendingDraw }
         #expect(guest.draw())
         #expect(guest.state.hand.map(\.id) == [held.id])
@@ -332,7 +336,7 @@ struct MatchSessionHardeningTests {
 
         // Nothing is owed now, so the next grant is the opponent's round.
         let opponents = Tile(letter: "S")
-        otherWire.deliver(.grant(player: Self.bob, tiles: [opponents]))
+        otherWire.deliver(.obligation(player: Self.bob, tiles: [opponents]))
         try await Self.waitUntil("the opponent's round") {
             other.hasPendingDraw || !other.state.hand.isEmpty
         }
@@ -347,7 +351,7 @@ struct MatchSessionHardeningTests {
     func exhaustionStopsFreshRequestsButNotAcceptance() async throws {
         // --- The guest, told by the broadcast.
         let (guest, wire) = try await Self.playingGuest()
-        wire.deliver(.poolExhausted)
+        wire.deliver(.poolExhausted(requester: Self.bob))
         try await Self.waitUntil("the guest to latch exhaustion") { guest.poolIsExhausted }
 
         let before = await wire.count
@@ -357,7 +361,7 @@ struct MatchSessionHardeningTests {
         // never suppressed by the latch — this is the acceptance criterion under
         // the guard that stops the request.
         let late = Tile(letter: "W")
-        wire.deliver(.grant(player: Self.bob, tiles: [late]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [late]))
         try await Self.waitUntil("the late grant") { guest.hasPendingDraw }
         #expect(guest.draw())
         #expect(guest.pendingDrawTiles.isEmpty)
@@ -529,7 +533,7 @@ struct MatchSessionHardeningTests {
         // The marker: a live session still applies a grant. A finished one
         // ignores everything, so this arriving is proof the match is alive.
         let marker = Tile(letter: "M")
-        wire.deliver(.grant(player: Self.bob, tiles: [marker]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [marker]))
         try await Self.waitUntil("the marker grant, or an end this device did not earn") {
             guest.hasPendingDraw || guest.state.status != .playing
         }
@@ -620,11 +624,11 @@ struct MatchSessionHardeningTests {
         let (guest, wire) = try await Self.playingGuest()
 
         let tile = Tile(letter: "P")
-        wire.deliver(.grant(player: Self.bob, tiles: [tile]))
-        wire.deliver(.grant(player: Self.bob, tiles: [tile]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [tile]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [tile]))
         // The marker: a second, genuinely new tile behind the duplicate.
         let second = Tile(letter: "K")
-        wire.deliver(.grant(player: Self.bob, tiles: [second]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [second]))
         try await Self.waitUntil("the second tile") {
             guest.pendingDrawTiles.contains { $0.id == second.id }
         }
@@ -635,9 +639,9 @@ struct MatchSessionHardeningTests {
         #expect(guest.draw())
         #expect(guest.draw())
         #expect(guest.state.hand.count == 2)
-        wire.deliver(.grant(player: Self.bob, tiles: [tile]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [tile]))
         let third = Tile(letter: "H")
-        wire.deliver(.grant(player: Self.bob, tiles: [third]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [third]))
         try await Self.waitUntil("the third tile") { guest.hasPendingDraw }
         #expect(guest.pendingDrawTiles.map(\.id) == [third.id])
         #expect(guest.state.hand.map(\.id) == [tile.id, second.id])
@@ -645,9 +649,9 @@ struct MatchSessionHardeningTests {
         // And once it is on the board.
         #expect(guest.draw())
         try guest.place(tileID: tile.id, at: Coord(row: 0, col: 0))
-        wire.deliver(.grant(player: Self.bob, tiles: [tile]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [tile]))
         let fourth = Tile(letter: "G")
-        wire.deliver(.grant(player: Self.bob, tiles: [fourth]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [fourth]))
         try await Self.waitUntil("the fourth tile") { guest.hasPendingDraw }
         #expect(guest.pendingDrawTiles.map(\.id) == [fourth.id])
         #expect(guest.state.hand.map(\.id) == [second.id, third.id])
@@ -660,7 +664,7 @@ struct MatchSessionHardeningTests {
     func drawTakesOneTilePerPress() async throws {
         let (guest, wire) = try await Self.playingGuest()
         let waiting = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
-        for tile in waiting { wire.deliver(.grant(player: Self.bob, tiles: [tile])) }
+        for tile in waiting { wire.deliver(.obligation(player: Self.bob, tiles: [tile])) }
         try await Self.waitUntil("three waiting") { guest.pendingDrawTiles.count == 3 }
 
         // Falling three rounds behind costs three presses, and the rack grows by
@@ -682,16 +686,27 @@ struct MatchSessionHardeningTests {
 
     // MARK: - Minor: who may open a match, and when the board stops moving
 
-    @Test("Only the elected device opens the match, and a finished board stays still")
-    func onlyTheElectedDeviceOpensTheMatchAndAFinishedBoardStaysStill() async throws {
-        // --- The election. `bob` is not the host, so this is not bob's to send.
+    @Test("A player who is not the pool host may open, a second start is ignored, and a finished board stays still")
+    func aNonPoolHostOpensOnceAndAFinishedBoardStaysStill() async throws {
+        // --- `bob` is not `roster[0]`, but is in the match: the creator's
+        // Start press may come from either side of the sort.
         let wire = ScriptedTransport(localPlayerID: Self.bob)
         let guest = MatchSession(transport: wire, peerPlayerID: Self.alice, dictionary: EveryWordIsReal())
         guest.startMatch(seed: 4, startingHandSize: 0, countdownSeconds: 0, options: .standard)
 
-        #expect(guest.state.status == .countdown(secondsRemaining: 0))
-        #expect(guest.lastNote == "only the host opens the match")
-        #expect(await wire.count == 0)
+        #expect(guest.state.status == .playing)
+        #expect(guest.lastNote == nil)
+        try await Self.waitUntil("bob's start to reach the wire") { await wire.count == 1 }
+        // The pool stays with `roster[0]`: bob sent the start but holds none.
+        #expect(guest.poolRemaining == nil)
+
+        // A second start is ignored: without the guard it would reopen a
+        // five-second countdown. The grant behind it is the fence that proves
+        // the start was processed, not merely still in flight.
+        wire.deliver(.start(version: WireFormat.current, seed: 9, startingHandSize: 0, countdownSeconds: 5, options: .standard, roster: [Self.alice, Self.bob]))
+        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "Q")]))
+        try await Self.waitUntil("the fence grant") { guest.pendingDrawTiles.count == 1 }
+        #expect(guest.state.status == .playing, "a second start reopened the countdown")
 
         // The elected device's own call is the control: the same call works.
         let (host, hostWire) = Self.playingHost()
@@ -701,7 +716,7 @@ struct MatchSessionHardeningTests {
         // --- A finished match freezes the board at both entry points.
         let (other, otherWire) = try await Self.playingGuest()
         let pair = [Tile(letter: "X"), Tile(letter: "Y")]
-        otherWire.deliver(.grant(player: Self.bob, tiles: pair))
+        otherWire.deliver(.obligation(player: Self.bob, tiles: pair))
         try await Self.waitUntil("two tiles") { other.pendingDrawTiles.count == 2 }
         #expect(other.draw())
         #expect(other.draw())
@@ -723,8 +738,8 @@ struct MatchSessionHardeningTests {
         #expect(other.state.hand.map(\.id) == [pair[1].id])
         #expect(other.draw() == false)
 
-        // Re-read at the end of the test, by which point a start enqueued by the
-        // device that had no standing to send one would long since have landed.
-        #expect(await wire.count == 0)
+        // Re-read at the end of the test: bob's one start, and nothing more —
+        // the ignored second start sent nothing back.
+        #expect(await wire.count == 1)
     }
 }

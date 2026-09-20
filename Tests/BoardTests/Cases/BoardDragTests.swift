@@ -47,6 +47,16 @@ final class BoardDragTests: XCTestCase {
         return board
     }
 
+    /// The eight cells around (row, col), each holding a tile. `board(_:)` skips
+    /// a cell already taken (the mover's home), so it is safe to append.
+    private static func ring(row: Int, col: Int) -> [(Coord, Tile)] {
+        var out: [(Coord, Tile)] = []
+        for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
+            out.append((Coord(row: row + dr, col: col + dc), Tile(letter: "Z")))
+        } }
+        return out
+    }
+
     private func drag(
         _ origins: Set<Coord>,
         anchor: Coord,
@@ -194,7 +204,9 @@ final class BoardDragTests: XCTestCase {
 
     // MARK: - Criterion 3 — a refused drop leaves the board exactly as it was
 
-    func testADropOnAnOccupiedCellIsRefusedAndTheBoardIsUntouched() throws {
+    // Rewritten for one-cell forgiveness: a single tile released on an occupied
+    // cell lands on the nearest free neighbour instead of flying home.
+    func testADropOnAnOccupiedCellLandsOnTheNearestFreeNeighbour() throws {
         let mover = Tile(letter: "A")
         let sitter = Tile(letter: "B")
         let home = Coord(row: 0, col: 0)
@@ -204,77 +216,15 @@ final class BoardDragTests: XCTestCase {
         let inFlight = try drag([home], anchor: home, haptics)
 
         let after = inFlight.drop(
-            translation: CGSize(width: 48, height: 0),
+            translation: CGSize(width: 48 + 10, height: 0),
             on: board, camera: Self.camera, threshold: Self.threshold
         )
 
-        XCTAssertEqual(after, board)
-        XCTAssertEqual(after.placementList, before)
+        XCTAssertEqual(after.placementList.count, before.count)
         XCTAssertEqual(after.tile(at: Coord(row: 0, col: 1))?.id, sitter.id)
-        XCTAssertEqual(after.tile(at: home)?.id, mover.id)
-        XCTAssertEqual(haptics.events, [.pickup, .reject])
-    }
-
-    func testADropBeyondTheThresholdIsRefusedAndTheBoardIsUntouched() throws {
-        let tile = Tile(letter: "A")
-        let home = Coord(row: 0, col: 0)
-        let board = Self.board([(home, tile)])
-        let before = board.placementList
-        let haptics = RecordedHaptics()
-        let inFlight = try drag([home], anchor: home, haptics)
-
-        // Halfway between two cell centres: 24pt from either, past a 22 reach.
-        let after = inFlight.drop(
-            translation: CGSize(width: 24, height: 0),
-            on: board, camera: Self.camera, threshold: Self.threshold
-        )
-        XCTAssertEqual(after, board)
-        XCTAssertEqual(after.placementList, before)
-        XCTAssertEqual(haptics.events, [.pickup, .reject])
-    }
-
-    func testJustInsideTheThresholdLandsAndJustOutsideIsRefused() throws {
-        let tile = Tile(letter: "A")
-        let home = Coord(row: 0, col: 0)
-        let board = Self.board([(home, tile)])
-        let target = Coord(row: 0, col: 1)
-
-        // Cell centres are 48 apart. A translation of 27 leaves the anchor
-        // centre 21 short of the next centre; 25 leaves it 23 short.
-        let inside = try drag([home], anchor: home, RecordedHaptics())
-        let landed = inside.drop(
-            translation: CGSize(width: 27, height: 0),
-            on: board, camera: Self.camera, threshold: Self.threshold
-        )
-        XCTAssertEqual(landed.tile(at: target)?.id, tile.id, "21pt is inside a 22pt reach")
-
-        let outside = try drag([home], anchor: home, RecordedHaptics())
-        let refused = outside.drop(
-            translation: CGSize(width: 25, height: 0),
-            on: board, camera: Self.camera, threshold: Self.threshold
-        )
-        XCTAssertEqual(refused, board, "23pt is outside a 22pt reach")
-    }
-
-    func testTheThresholdIsActuallyConsulted() throws {
-        // Teeth for the pair above: the same translation has to flip on the
-        // threshold alone, or `drop` is ignoring the parameter and both
-        // assertions are being carried by something else.
-        let tile = Tile(letter: "A")
-        let home = Coord(row: 0, col: 0)
-        let board = Self.board([(home, tile)])
-        let translation = CGSize(width: 27, height: 0)
-
-        let generous = try drag([home], anchor: home, RecordedHaptics())
-        XCTAssertNotEqual(
-            generous.drop(translation: translation, on: board, camera: Self.camera, threshold: 22),
-            board
-        )
-        let strict = try drag([home], anchor: home, RecordedHaptics())
-        XCTAssertEqual(
-            strict.drop(translation: translation, on: board, camera: Self.camera, threshold: 1),
-            board
-        )
+        XCTAssertEqual(after.tile(at: Coord(row: 0, col: 2))?.id, mover.id)
+        XCTAssertNil(after.tile(at: home))
+        XCTAssertEqual(haptics.events, [.pickup, .snap])
     }
 
     func testANonFiniteTranslationIsRefusedRatherThanTrapping() throws {
@@ -347,23 +297,6 @@ final class BoardDragTests: XCTestCase {
             inFlight.drop(translation: .zero, on: board, camera: broken, threshold: Self.threshold),
             board
         )
-    }
-
-    func testANonFiniteThresholdIsRefused() throws {
-        let tile = Tile(letter: "A")
-        let home = Coord(row: 0, col: 0)
-        let board = Self.board([(home, tile)])
-
-        for bad: CGFloat in [.nan, .infinity, -1] {
-            let inFlight = try drag([home], anchor: home, RecordedHaptics())
-            XCTAssertEqual(
-                inFlight.drop(
-                    translation: CGSize(width: 48, height: 0),
-                    on: board, camera: Self.camera, threshold: bad
-                ),
-                board
-            )
-        }
     }
 
     func testADropThatWouldOverflowACoordIsRefusedWholeAndTheBoardIsUntouched() throws {
@@ -440,19 +373,15 @@ final class BoardDragTests: XCTestCase {
         )
         XCTAssertEqual(landing.events, [.pickup, .snap])
 
+        // Every cell within one of the target taken, so forgiveness has nowhere
+        // to put it and the release is a refusal.
+        let surrounded = Self.board([(home, mover), (Coord(row: 0, col: 1), Tile(letter: "B"))] + Self.ring(row: 0, col: 1))
         let onTaken = RecordedHaptics()
         _ = try drag([home], anchor: home, onTaken).drop(
             translation: CGSize(width: 48, height: 0),
-            on: board, camera: Self.camera, threshold: Self.threshold
+            on: surrounded, camera: Self.camera, threshold: Self.threshold
         )
         XCTAssertEqual(onTaken.events, [.pickup, .reject])
-
-        let tooFar = RecordedHaptics()
-        _ = try drag([home], anchor: home, tooFar).drop(
-            translation: CGSize(width: 0, height: 24),
-            on: board, camera: Self.camera, threshold: Self.threshold
-        )
-        XCTAssertEqual(tooFar.events, [.pickup, .reject])
     }
 
     func testAPanGrabBuildsNoDragAndFiresNothing() {
@@ -580,5 +509,75 @@ final class BoardDragTests: XCTestCase {
                 dragging: [], by: CGSize(width: 99, height: 99)
             )
         )
+    }
+
+    // MARK: - Item 8 — no snap-back: "too far" is not a reason to refuse
+
+    /// 25 cells right in ONE update — what a fast flick reports — released
+    /// 20pt off the target's centre on both axes (28pt reach, past the old
+    /// fixture threshold, so the old distance guard would have refused it).
+    private static let flick = CGSize(width: 48 * 25 + 20, height: 20)
+    private static let flickTarget = Coord(row: 0, col: 25)
+
+    func testAFastDragAcrossTwentyFiveCellsLandsOnTheEmptyCellItWasReleasedOn() throws {
+        let tile = Tile(letter: "A")
+        let home = Coord(row: 0, col: 0)
+        let board = Self.board([(home, tile)])
+        let haptics = RecordedHaptics()
+        let inFlight = try drag([home], anchor: home, haptics)
+
+        let after = inFlight.drop(
+            translation: Self.flick, on: board, camera: Self.camera, threshold: Self.threshold
+        )
+        XCTAssertEqual(after.tile(at: Self.flickTarget)?.id, tile.id, "the tile snapped back instead of landing")
+        XCTAssertNil(after.tile(at: home))
+        XCTAssertEqual(haptics.events, [.pickup, .snap])
+    }
+
+    func testAFastDragReleasedOnAnOccupiedCellReturnsToItsOrigin() throws {
+        let mover = Tile(letter: "A")
+        let sitter = Tile(letter: "B")
+        let home = Coord(row: 0, col: 0)
+        // Every cell within one of the target taken: no forgiveness, so home.
+        let board = Self.board([(home, mover), (Self.flickTarget, sitter)] + Self.ring(row: 0, col: 25))
+        let haptics = RecordedHaptics()
+        let inFlight = try drag([home], anchor: home, haptics)
+
+        let after = inFlight.drop(
+            translation: Self.flick, on: board, camera: Self.camera, threshold: Self.threshold
+        )
+        XCTAssertEqual(after, board)
+        XCTAssertEqual(after.tile(at: home)?.id, mover.id)
+        XCTAssertEqual(after.tile(at: Self.flickTarget)?.id, sitter.id)
+        XCTAssertEqual(haptics.events, [.pickup, .reject])
+    }
+
+    /// A two-tile group flung 30 cells: all-or-nothing still holds at range.
+    private static let groupFlick = CGSize(width: 48 * 30 + 20, height: 48 * 3 - 20)
+
+    func testAFastGroupDragLandsWholeWhenEveryTargetIsFree() throws {
+        let a = Tile(letter: "A"), b = Tile(letter: "B")
+        let board = Self.board([(Coord(row: 0, col: 0), a), (Coord(row: 0, col: 1), b)])
+        let haptics = RecordedHaptics()
+        let inFlight = try drag([Coord(row: 0, col: 0), Coord(row: 0, col: 1)], anchor: Coord(row: 0, col: 0), haptics)
+
+        let after = inFlight.drop(translation: Self.groupFlick, on: board, camera: Self.camera, threshold: Self.threshold)
+        XCTAssertEqual(after.tile(at: Coord(row: 3, col: 30))?.id, a.id)
+        XCTAssertEqual(after.tile(at: Coord(row: 3, col: 31))?.id, b.id)
+        XCTAssertEqual(after.placementList.count, 2)
+        XCTAssertEqual(haptics.events, [.pickup, .snap])
+    }
+
+    func testAFastGroupDragIsRefusedWholeWhenAnyTargetIsTaken() throws {
+        let a = Tile(letter: "A"), b = Tile(letter: "B")
+        let board = Self.board([
+            (Coord(row: 0, col: 0), a), (Coord(row: 0, col: 1), b), (Coord(row: 3, col: 31), Tile(letter: "C")),
+        ])
+        let haptics = RecordedHaptics()
+        let inFlight = try drag([Coord(row: 0, col: 0), Coord(row: 0, col: 1)], anchor: Coord(row: 0, col: 0), haptics)
+
+        let after = inFlight.drop(translation: Self.groupFlick, on: board, camera: Self.camera, threshold: Self.threshold)
+        XCTAssertEqual(after, board)
+        XCTAssertEqual(haptics.events, [.pickup, .reject])
     }
 }

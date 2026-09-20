@@ -148,7 +148,10 @@ struct ResultsModelTests {
     /// merely unreferenced by the screen.
     @Test("Main Menu returns to the menu and tears the match down")
     func mainMenuTearsTheMatchDown() async throws {
-        let shell = ShellModel()
+        // `sleepFor` injected as every other solo test does: a default
+        // `ShellModel` runs the countdown on the wall clock, and the session
+        // cancelling that sleep as this shell is released aborts the process.
+        let shell = ShellModel(sleepFor: { _ in })
         shell.startSoloPractice(seed: 4)
         shell.countdownFinished()
         shell.matchEnded(winner: nil)

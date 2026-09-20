@@ -71,6 +71,17 @@ struct BoardPinchReporter: UIViewRepresentable {
         Coordinator(onChange: onChange, onEnd: onEnd)
     }
 
+    /// The recognizer lives on the WINDOW, which outlives this view by a long
+    /// way, so nothing takes it off when the board goes. Without this every
+    /// board ever shown leaves a live recognizer on the window, each still
+    /// calling back into the model of a board that is gone — the pinches pile
+    /// up one per board ever shown, and a dead one cancels the live board's
+    /// drag. The one owner that knows both the recognizer and when the view
+    /// ends is this.
+    static func dismantleUIView(_ uiView: Surface, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
 
         var onChange: (CGFloat, CGPoint) -> Void
@@ -78,6 +89,12 @@ struct BoardPinchReporter: UIViewRepresentable {
 
         /// The inert view whose coordinate space the midpoints are reported in.
         private weak var surface: UIView?
+
+        /// The recognizer this coordinator put on the window, held so it can be
+        /// taken back off. Strong: the window owns it while it is attached, and
+        /// after `detach` this is the only reference and it is dropped in the
+        /// same line.
+        private var recognizer: UIPinchGestureRecognizer?
 
         init(onChange: @escaping (CGFloat, CGPoint) -> Void, onEnd: @escaping () -> Void) {
             self.onChange = onChange
@@ -103,7 +120,28 @@ struct BoardPinchReporter: UIViewRepresentable {
             pinch.delaysTouchesBegan = false
             pinch.delaysTouchesEnded = false
             host.addGestureRecognizer(pinch)
+            recognizer = pinch
             surface = view
+        }
+
+        /// Takes the recognizer back off the window and forgets it, so `attach`
+        /// is armed again should this view rejoin a window.
+        ///
+        /// Ends a LIVE pinch first. Removing a recognizer mid-pinch means no
+        /// `.ended` or `.cancelled` ever arrives, so the owner would be left
+        /// believing two fingers are still down — and it drops every one-finger
+        /// drag frame while it believes that, which is a board that never moves
+        /// again. Reported as an ordinary end: from outside, fingers leaving
+        /// and the recognizer leaving are the same event.
+        ///
+        /// Only when there IS a pinch to end. `onEnd` writes the owner's model,
+        /// and this runs inside SwiftUI's teardown; a board that never pinched
+        /// — which is most of them — must not write anything on its way out.
+        func detach() {
+            if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() }
+            if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) }
+            recognizer = nil
+            surface = nil
         }
 
         @objc func handle(_ recognizer: UIPinchGestureRecognizer) {

@@ -1,7 +1,7 @@
 [
   {
     "start": {
-      "version": 3,
+      "version": 5,
       "seed": 3735928559,
       "startingHandSize": 21,
       "countdownSeconds": 3,
@@ -9,7 +9,7 @@
         "minimumWordLength": 2,
         "swapEnabled": true,
         "dictionaryID": "standard",
-        "dictionaryHash": "212ad761133bbe21fa93aefb59e03a5d012bc2f858816fd178b57fcd047832e1"
+        "dictionaryHash": "c3259ca40c625da096b5b153acc5502bfdee91945f62218d1d8893643648e97d"
       },
       "roster": [
         {
@@ -82,7 +82,11 @@
     }
   },
   {
-    "poolExhausted": {}
+    "poolExhausted": {
+      "requester": {
+        "rawValue": "G:1234567890"
+      }
+    }
   },
   {
     "win": {
@@ -153,6 +157,24 @@
       "reason": {
         "swapDisabled": {}
       }
+    }
+  },
+  {
+    "poolCount": {
+      "remaining": 98
+    }
+  },
+  {
+    "obligation": {
+      "player": {
+        "rawValue": "G:9876543210"
+      },
+      "tiles": [
+        {
+          "id": "88888888-8888-4888-8888-888888888888",
+          "letter": "N"
+        }
+      ]
     }
   }
 ]

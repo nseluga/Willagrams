@@ -122,13 +122,20 @@ public actor HostPool {
             // or none at all, so a pool too small to go round is refused with
             // the pool untouched rather than half dealt.
             guard let drawn = pool.draw(players.count) else {
-                return await answer([.poolExhausted], to: player)
+                return await answer([.poolExhausted(requester: player)], to: player)
             }
+            // The asker gets `grant` — the answer it is waiting for. Everybody
+            // else gets `obligation`, a tile they must press Draw to take. The
+            // host is the only side that knows which is which; saying it here
+            // is what stops the receiver guessing.
             return await answer(
-                zip(players, drawn).map { player, tile in
-                    MatchMessage.grant(player: player, tiles: [tile])
+                zip(players, drawn).map { recipient, tile in
+                    recipient == player
+                        ? MatchMessage.grant(player: recipient, tiles: [tile])
+                        : MatchMessage.obligation(player: recipient, tiles: [tile])
                 },
-                to: player
+                to: player,
+                broadcastingCount: true
             )
 
         case let .swapRequest(player, returning):
@@ -154,7 +161,8 @@ public actor HostPool {
             }
             return await answer(
                 [.swapGrant(player: player, tiles: drawn, returned: returning)],
-                to: player
+                to: player,
+                broadcastingCount: true
             )
 
         default:
@@ -190,7 +198,7 @@ public actor HostPool {
         }
         // No requester: the deal answers nobody's request. Only `rejected` and
         // the default arm read it, and this produces neither.
-        return await answer(grants, to: transport.localPlayerID)
+        return await answer(grants, to: transport.localPlayerID, broadcastingCount: true)
     }
 
     /// Puts the part of `produced` the peer is entitled to see on the wire, in
@@ -200,9 +208,21 @@ public actor HostPool {
     /// peer that has already gone, the connection-state stream reports that
     /// authoritatively, and by here the pool has already moved. Retrying into a
     /// dead peer would be the one way to hand the same tile out twice.
-    private func answer(_ produced: [MatchMessage], to requester: PlayerID) async -> [MatchMessage] {
+    ///
+    /// `broadcastingCount` follows a pool movement — the deal, a round, a swap —
+    /// with the pool's new size, so a guest's HUD can show it. Informational
+    /// only, and not part of `produced`: the host reads its own count from the
+    /// pool, never from the wire.
+    private func answer(
+        _ produced: [MatchMessage],
+        to requester: PlayerID,
+        broadcastingCount: Bool = false
+    ) async -> [MatchMessage] {
         for message in produced where isForPeer(message, requestedBy: requester) {
             try? await transport.send(message, delivery: .reliable)
+        }
+        if broadcastingCount {
+            try? await transport.send(.poolCount(remaining: pool.count), delivery: .reliable)
         }
         return produced
     }
@@ -215,7 +235,7 @@ public actor HostPool {
     /// side of the wire can stop it reading what we chose to send.
     private func isForPeer(_ message: MatchMessage, requestedBy requester: PlayerID) -> Bool {
         switch message {
-        case let .grant(player, _), let .swapGrant(player, _, _):
+        case let .grant(player, _), let .obligation(player, _), let .swapGrant(player, _, _):
             return player != transport.localPlayerID
         case .poolExhausted:
             // The one real broadcast: it ends the match for both players.

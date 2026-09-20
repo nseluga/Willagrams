@@ -231,3 +231,14 @@ Two deliberate limits, both worth knowing:
 - [ ] Counsel review of this document, focused on item 1
 - [ ] Extend the terminology fence to App Store metadata (`release` lane)
 - [ ] Confirm no screenshot or preview video shows a banana, a pouch, or the banned terms
+
+---
+
+## Audio assets
+
+Nine `.wav` files in `Willagrams/Resources/Sounds/` (tile-place, tile-recall,
+draw, swap, invalid, countdown-tick, win, loss, menu-tap).
+
+**Source:** procedurally synthesized from sine/square waveforms via Python's
+`wave`+`math` stdlib only — no samples, libraries, or third-party assets used.
+Original work, no Bananagrams IP. License: CC0 (public domain equivalent).

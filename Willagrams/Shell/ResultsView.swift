@@ -18,6 +18,8 @@ struct ResultsView: View {
 
     let results: ResultsModel
 
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     /// The board `BoardView` draws. A `@State` because the binding demands one;
     /// nothing on this screen writes it, because nothing on this screen can move
     /// a tile.
@@ -59,11 +61,15 @@ struct ResultsView: View {
                 .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: DesignTokens.Space.m) {
-                Button { results.rematch() } label: {
-                    Text(ResultsModel.rematchLabel).resultsActionLabel()
+                // Absent, not disabled. There is nothing to rematch into on a
+                // network match, and a greyed control invites a press that can
+                // never work.
+                if results.isRematchEnabled {
+                    Button { results.rematch() } label: {
+                        Text(ResultsModel.rematchLabel).resultsActionLabel()
+                    }
+                    .buttonStyle(.brandPrimary)
                 }
-                .buttonStyle(.brandPrimary)
-                .disabled(!results.isRematchEnabled)
 
                 Button { results.mainMenu() } label: {
                     Text(ResultsModel.mainMenuLabel).resultsActionLabel()
@@ -71,7 +77,7 @@ struct ResultsView: View {
                 .buttonStyle(.brandQuiet)
             }
         }
-        .padding(DesignTokens.Space.xl)
+        .padding(verticalSizeClass == .compact ? DesignTokens.Space.l : DesignTokens.Space.xl)
         .brandCard()
         .padding(DesignTokens.Space.l)
     }

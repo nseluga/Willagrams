@@ -1,0 +1,354 @@
+import Foundation
+import Testing
+import WillagramsRules
+@testable import Account
+@testable import Match
+
+/// The profile screen's model: the row it renders, the one field it can change,
+/// and the clamp that keeps a bad name off the wire.
+@MainActor
+@Suite("Profile")
+struct ProfileModelTests {
+
+    struct Fixture {
+        let backend: RecordingBackend
+        let profile: Profile
+        let model: ProfileModel
+    }
+
+    /// A signed-in player and their screen, editing on.
+    static func make(isEditable: Bool = true) async throws -> Fixture {
+        let fake = FakeBackend()
+        let profile = try await fake.signInWithApple(idToken: "profile-owner", nonce: "n")
+        let backend = RecordingBackend(inner: fake)
+        return Fixture(
+            backend: backend,
+            profile: profile,
+            model: ProfileModel(profile: profile, isEditable: isEditable, backend: backend)
+        )
+    }
+
+    // MARK: - done when: saves a new name and re-reads it
+
+    @Test("Saving a new name stores it and the screen shows what came back")
+    func savingStoresAndRereads() async throws {
+        let f = try await Self.make()
+        #expect(f.model.draftName == f.profile.displayName)
+
+        f.model.draftName = "Ada"
+        #expect(f.model.canSave)
+        await f.model.save()
+
+        #expect(await f.backend.updateDisplayNameCalls == ["Ada"])
+        #expect(f.model.profile.displayName == "Ada")
+        #expect(f.model.draftName == "Ada")
+        #expect(f.model.message == ProfileModel.savedMessage)
+        #expect(f.model.isSaving == false)
+
+        // Re-read through the backend, not off the model: the stored row moved,
+        // not just the copy on screen.
+        let stored = try await f.backend.profile(id: f.profile.id)
+        #expect(stored.displayName == "Ada")
+
+        // And a screen rebuilt from that row opens on it.
+        let reopened = ProfileModel(profile: stored, isEditable: true, backend: f.backend)
+        #expect(reopened.draftName == "Ada")
+    }
+
+    /// The edges are trimmed before the length is judged and before the row is
+    /// written, so a name is never stored with the whitespace a keyboard added.
+    @Test("The draft is trimmed before it is sent")
+    func draftIsTrimmed() async throws {
+        let f = try await Self.make()
+
+        f.model.draftName = "  Grace  "
+        await f.model.save()
+
+        #expect(await f.backend.updateDisplayNameCalls == ["Grace"])
+        #expect(f.model.profile.displayName == "Grace")
+    }
+
+    // MARK: - done when: a 25-character draft is refused before any call
+
+    @Test("A 25-character draft is refused before the backend is called")
+    func tooLongIsRefusedWithoutACall() async throws {
+        let f = try await Self.make()
+        let tooLong = String(repeating: "a", count: 25)
+        #expect(tooLong.count == ProfileModel.nameLength.upperBound + 1)
+
+        f.model.draftName = tooLong
+        // The button stays pressable so the refusal below is reachable.
+        #expect(f.model.canSave)
+
+        await f.model.save()
+
+        // The negative side effect, read off a recorder rather than re-derived:
+        // the call never happened.
+        #expect(await f.backend.updateDisplayNameCalls.isEmpty)
+        #expect(f.model.message == ProfileModel.nameLengthMessage)
+        #expect(f.model.profile.displayName == f.profile.displayName)
+        let stored = try await f.backend.profile(id: f.profile.id)
+        #expect(stored.displayName == f.profile.displayName)
+    }
+
+    @Test("An empty draft is refused before the backend is called")
+    func emptyIsRefusedWithoutACall() async throws {
+        let f = try await Self.make()
+
+        f.model.draftName = "   "
+        #expect(f.model.canSave == false)
+        await f.model.save()
+
+        #expect(await f.backend.updateDisplayNameCalls.isEmpty)
+        #expect(f.model.message == ProfileModel.nameLengthMessage)
+    }
+
+    /// The boundaries themselves, so the clamp is 1–24 and not 1–23 or 1–25.
+    @Test("The clamp is exactly 1 through 24")
+    func clampBoundaries() async throws {
+        for length in [1, 24] {
+            let f = try await Self.make()
+            f.model.draftName = String(repeating: "x", count: length)
+            #expect(f.model.canSave, "\(length) characters should be savable")
+            await f.model.save()
+            #expect(await f.backend.updateDisplayNameCalls.count == 1)
+        }
+    }
+
+    // MARK: - done when: no backend means a disabled Save that says why
+
+    /// The button used to be enabled with nothing behind it, and `save()`
+    /// returned in silence. Now the refusal is visible before it is tapped.
+    @Test("With no backend, Save is disabled and the screen says why")
+    func noBackendDisablesSaveAndSaysWhy() async throws {
+        let model = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Ada",
+                friendCode: "ABCD1234",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            isEditable: true
+        )
+
+        #expect(model.message == ProfileModel.noBackendMessage, "the screen went quiet instead of saying why")
+        #expect(model.canSave == false, "Save is offered with nothing behind it")
+
+        model.draftName = "Grace"
+        #expect(model.canSave == false, "a valid draft cannot rescue a missing backend")
+        await model.save()
+        #expect(model.profile.displayName == "Ada")
+    }
+
+    /// The same missing backend is not a complaint on a friend's screen: there
+    /// is no name field there to explain.
+    @Test("A read-only screen with no backend says nothing about saving")
+    func readOnlyWithNoBackendIsSilent() throws {
+        let model = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Stranger",
+                friendCode: "QQQQ9999",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            isEditable: false
+        )
+        #expect(model.message == nil)
+        #expect(model.canSave == false)
+    }
+
+    /// A successful save hands the row to whoever owns it. `ShellModel` is that
+    /// owner; `ProfileRouteTests` pins the shell half.
+    @Test("A successful save hands the stored row back to the owner")
+    func savingHandsTheRowToTheOwner() async throws {
+        let fake = FakeBackend()
+        let profile = try await fake.signInWithApple(idToken: "owner", nonce: "n")
+        nonisolated(unsafe) var handedBack: [Profile] = []
+        let model = ProfileModel(
+            profile: profile,
+            isEditable: true,
+            backend: fake,
+            onSaved: { handedBack.append($0) }
+        )
+
+        model.draftName = "Ada"
+        await model.save()
+        #expect(handedBack.map(\.displayName) == ["Ada"], "the saved row never reached the owner")
+
+        // A refused draft hands nothing back: the stored row did not move.
+        model.draftName = String(repeating: "a", count: 25)
+        await model.save()
+        #expect(handedBack.count == 1)
+    }
+
+    /// `adopt` is how the owner hands a freshly-read row down. A different row
+    /// is refused outright: the screen renders one player, and taking somebody
+    /// else's would silently swap who is on screen.
+    @Test("Adopting refreshes the stats, and refuses a row that is not this one")
+    func adoptTakesTheSameRowOnly() async throws {
+        let f = try await Self.make()
+
+        var bumped = f.profile
+        bumped.matchesPlayed = 4
+        bumped.tilesPlaced = 77
+        f.model.adopt(bumped)
+        #expect(f.model.stats.map(\.value) == ["4", "0", "77", ProfileModel.noValue])
+
+        let stranger = Profile(
+            id: UUID(),
+            displayName: "Stranger",
+            friendCode: "QQQQ9999",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            matchesPlayed: 99
+        )
+        f.model.adopt(stranger)
+        #expect(f.model.profile.id == f.profile.id, "the screen adopted somebody else's row")
+        #expect(f.model.stats.first?.value == "4")
+    }
+
+    // MARK: - guardrail: no stat is computed client-side
+
+    @Test("The four stats are the row as read, and there is no fifth")
+    func statsAreTheRowAsRead() throws {
+        let row = Profile(
+            id: UUID(),
+            displayName: "Reader",
+            friendCode: "ABCD1234",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            matchesPlayed: 7,
+            matchesWon: 3,
+            tilesPlaced: 214,
+            fastestWinSeconds: 96
+        )
+        let model = ProfileModel(profile: row, isEditable: false)
+
+        #expect(model.stats == [
+            ProfileStat(label: ProfileModel.matchesPlayedLabel, value: "7"),
+            ProfileStat(label: ProfileModel.matchesWonLabel, value: "3"),
+            ProfileStat(label: ProfileModel.tilesPlacedLabel, value: "214"),
+            ProfileStat(label: ProfileModel.fastestWinLabel, value: "96s"),
+        ])
+    }
+
+    @Test("A player who has never won shows a placeholder, not a zero")
+    func fastestWinIsAbsentUntilThereIsOne() throws {
+        let row = Profile(
+            id: UUID(),
+            displayName: "New",
+            friendCode: "ZZZZ0000",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let model = ProfileModel(profile: row, isEditable: false)
+        #expect(model.stats.last?.value == ProfileModel.noValue)
+        #expect(model.stats.map(\.value) == ["0", "0", "0", ProfileModel.noValue])
+    }
+
+    // MARK: - guardrail: the screen renders for any profile, read-only
+
+    @Test("A read-only screen renders the row and never calls the backend")
+    func readOnlyScreenSavesNothing() async throws {
+        let f = try await Self.make(isEditable: false)
+
+        #expect(f.model.canSave == false)
+        f.model.draftName = "Somebody Else"
+        await f.model.save()
+
+        #expect(await f.backend.updateDisplayNameCalls.isEmpty)
+        #expect(f.model.profile.displayName == f.profile.displayName)
+        // Everything the screen shows is still there — read-only is a missing
+        // field, not a missing screen.
+        #expect(f.model.stats.count == 4)
+        #expect(f.model.profile.friendCode == f.profile.friendCode)
+    }
+
+    /// Item 9 opens this screen for a friend, on a backend the viewer cannot
+    /// write that friend's row through. Nothing about that case needs a backend
+    /// at all.
+    @Test("A profile that is nobody's local row renders with no backend")
+    func rendersSomebodyElsesRow() async throws {
+        let stranger = Profile(
+            id: UUID(),
+            displayName: "Stranger",
+            friendCode: "QQQQ9999",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            matchesPlayed: 2,
+            matchesWon: 1,
+            tilesPlaced: 40
+        )
+        let model = ProfileModel(profile: stranger, isEditable: false)
+
+        #expect(model.profile == stranger)
+        #expect(model.stats.first?.value == "2")
+        await model.save()
+        #expect(model.message == nil, "a read-only screen has nothing to say about saving")
+    }
+
+    // MARK: - win rate
+
+    /// A plain value, worked out in the model so a `swift test` target that
+    /// cannot compile `ProfileView` can still hold it to account. Rounded to
+    /// a whole percent, and `nil` — not zero — before anything is played.
+    @Test("Win rate is won over played, rounded, and absent at zero played")
+    func winRateIsWonOverPlayedRounded() throws {
+        let played = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Ada",
+                friendCode: "ABCD1234",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                matchesPlayed: 3,
+                matchesWon: 2
+            ),
+            isEditable: true
+        )
+        #expect(played.winRatePercent == 67)
+
+        let untouched = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Ada",
+                friendCode: "ABCD1234",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                matchesPlayed: 0,
+                matchesWon: 0
+            ),
+            isEditable: true
+        )
+        #expect(untouched.winRatePercent == nil)
+    }
+
+    // MARK: - the friend code
+
+    @Test("Copying puts the friend code, not the share sentence, on the clipboard")
+    func copyingCopiesTheCode() throws {
+        let f = ProfileModel(
+            profile: Profile(
+                id: UUID(),
+                displayName: "Ada",
+                friendCode: "ABCD1234",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+            ),
+            isEditable: true,
+            pasteboard: { Pasteboard.shared.text = $0 }
+        )
+
+        #expect(f.didCopyCode == false)
+        f.copyFriendCode()
+        #expect(Pasteboard.shared.text == "ABCD1234")
+        #expect(f.didCopyCode)
+
+        // The share sheet sends the code with a sentence around it, so the
+        // recipient knows what the eight characters are for.
+        #expect(f.shareMessage.contains("ABCD1234"))
+        #expect(f.shareMessage != "ABCD1234")
+    }
+
+    /// Somewhere for the injected clipboard closure to land. `UIPasteboard` is
+    /// UIKit and this package builds for macOS, which is exactly why the closure
+    /// is injected rather than called from `Willagrams/Account`.
+    @MainActor
+    final class Pasteboard {
+        static let shared = Pasteboard()
+        var text: String?
+    }
+}

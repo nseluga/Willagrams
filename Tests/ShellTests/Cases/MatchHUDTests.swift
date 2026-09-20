@@ -1,3 +1,4 @@
+import Audio
 import BoardKit
 import CoreGraphics
 import Foundation
@@ -23,7 +24,7 @@ struct MatchHUDTests {
     static func hud() async throws -> (SoloMatch, MatchBoard, ShellModel, MatchHUDModel) {
         let (solo, wiring) = try await MatchBoardTests.wired()
         let shell = ShellModel(route: .match(setup))
-        return (solo, wiring, shell, MatchHUDModel(shell: shell, session: solo.session, board: wiring))
+        return (solo, wiring, shell, MatchHUDModel(shell: shell, session: solo.session, board: wiring, audio: SilentAudioPlayer()))
     }
 
     /// Selects one tile the way a sweep does — through `BoardModel`'s own
@@ -80,8 +81,8 @@ struct MatchHUDTests {
             handSize: 3, dictionary: EveryWordIsReal()
         )
         let shell = ShellModel(route: .match(Self.setup))
-        let board = MatchBoard(session: session, dictionary: EveryWordIsReal())
-        let hud = MatchHUDModel(shell: shell, session: session, board: board)
+        let board = MatchBoard(session: session, dictionary: EveryWordIsReal(), audio: SilentAudioPlayer())
+        let hud = MatchHUDModel(shell: shell, session: session, board: board, audio: SilentAudioPlayer())
         #expect(hud.poolRemaining == nil)
         #expect(hud.poolValue == MatchHUDModel.unknownValue)
         session.leave()
@@ -93,10 +94,10 @@ struct MatchHUDTests {
     func drawFollowsBoardValidity() async throws {
         let dictionary = EnableWordList(words: ["GO"])
         let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = MatchBoardTests.viewport
         let shell = ShellModel(route: .match(Self.setup))
-        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring, audio: SilentAudioPlayer())
 
         try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
         try await SoloMatchTests.waitUntil("the opening on the board") {
@@ -258,10 +259,10 @@ struct MatchHUDTests {
     func refusedDrawCountsACompletionAttempt() async throws {
         let dictionary = EnableWordList(words: ["GO"])
         let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = MatchBoardTests.viewport
         let shell = ShellModel(route: .match(Self.setup))
-        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring, audio: SilentAudioPlayer())
 
         try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
         try await SoloMatchTests.waitUntil("the opening on the board") {
@@ -317,10 +318,10 @@ struct MatchHUDTests {
     func acceptedClaimRoutesToResults() async throws {
         let dictionary = EveryWordIsReal()
         let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = MatchBoardTests.viewport
         let shell = ShellModel(route: .match(Self.setup))
-        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring, audio: SilentAudioPlayer())
 
         try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
         try await SoloMatchTests.waitUntil("the opening on the board") {
@@ -337,7 +338,7 @@ struct MatchHUDTests {
         // The call is only offered once there is nothing left to take. The host
         // says so on the wire; there is no local way to reach that latch.
         #expect(hud.isWinEnabled == false, "the call was offered with tiles still in the pool")
-        try await host.send(.poolExhausted, delivery: .reliable)
+        try await host.send(.poolExhausted(requester: PlayerID(rawValue: "aaa")), delivery: .reliable)
         try await SoloMatchTests.waitUntil("the pool to run out") { session.poolIsExhausted }
 
         #expect(hud.isWinEnabled)
@@ -378,14 +379,23 @@ struct MatchHUDTests {
     /// SwiftUI file the macOS test target cannot compile.
     ///
     /// Two halves, because the split is what makes it safe: the view must read
-    /// `isDrawPressable`, and `isDrawPressable` must not consult the board.
+    /// `isDrawPressable`, and `isDrawPressable` must not consult `board.canDraw`.
+    ///
+    /// Named that way rather than "the board": the gate now goes through
+    /// ``MatchHUDModel/isMatchLive``, which does read `board.inputLocked`. That
+    /// is a cover over the whole surface and not the completion gate — it is
+    /// the reason a control cannot go live under the resume countdown. What
+    /// must stay out is `canDraw`, the one that swallows the refusal press.
     @Test("The completion gate does not disable the control")
     func theGateLeavesTheControlLive() throws {
         let view = try String(contentsOf: Self.shellSource("MatchHUD.swift"), encoding: .utf8)
         #expect(view.contains(".disabled(!hud.isDrawPressable)"),
                 "the Draw button reads the board's gate — the refusal press is swallowed")
         let model = try String(contentsOf: Self.shellSource("MatchHUDModel.swift"), encoding: .utf8)
-        #expect(model.contains("public var isDrawPressable: Bool {\n        !session.isMatchOver"),
+        let declaration = "public var isDrawPressable: Bool {"
+        #expect(model.contains(declaration), "isDrawPressable was renamed")
+        let body = model.components(separatedBy: declaration)[1].components(separatedBy: "}")[0]
+        #expect(!body.contains("canDraw"),
                 "isDrawPressable gates on the board again — the refusal press is swallowed")
     }
 
@@ -405,7 +415,9 @@ struct MatchHUDTests {
         )
         let shell = ShellModel(route: .match(Self.setup))
         let hidden = MatchHUDModel(
-            shell: shell, session: off, board: MatchBoard(session: off, dictionary: dictionary)
+            shell: shell, session: off,
+            board: MatchBoard(session: off, dictionary: dictionary, audio: SilentAudioPlayer()),
+            audio: SilentAudioPlayer()
         )
         #expect(hidden.isSwapOffered == false, "the control is offered under rules that refuse it")
 
@@ -414,7 +426,9 @@ struct MatchHUDTests {
         let (_, on) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
         let shown = MatchHUDModel(
             shell: ShellModel(route: .match(Self.setup)),
-            session: on, board: MatchBoard(session: on, dictionary: dictionary)
+            session: on,
+            board: MatchBoard(session: on, dictionary: dictionary, audio: SilentAudioPlayer()),
+            audio: SilentAudioPlayer()
         )
         #expect(shown.isSwapOffered, "the standard rules lost their swap")
     }
@@ -544,10 +558,10 @@ struct MatchHUDTests {
     func everyPressLaysItsTileWithMoreStillQueued() async throws {
         let dictionary = EveryWordIsReal()
         let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = MatchBoardTests.viewport
         let shell = ShellModel(route: .match(Self.setup))
-        let hud = MatchHUDModel(shell: shell, session: session, board: wiring)
+        let hud = MatchHUDModel(shell: shell, session: session, board: wiring, audio: SilentAudioPlayer())
 
         try await MatchBoardTests.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
         try await SoloMatchTests.waitUntil("the opening on the board") {
@@ -560,7 +574,7 @@ struct MatchHUDTests {
         // letter it could not lay, and the whole queue then landed at once on
         // the last press.
         let owed = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
-        try await MatchBoardTests.grant(owed, from: host)
+        try await MatchBoardTests.owe(owed, from: host)
         try await SoloMatchTests.waitUntil("three tiles waiting behind Draw") {
             session.pendingDrawTiles.count == 3
         }

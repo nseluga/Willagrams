@@ -429,4 +429,48 @@ final class BoardModelTests: XCTestCase {
         XCTAssertEqual(model.dragging, [Self.home], "a lock set twice left the surface inert after unlocking")
         XCTAssertEqual(feel.events, [.pickup])
     }
+
+    // MARK: - Item 8 — a drag whose release never arrives still lands
+
+    /// The system takes the touch mid-drag, so `onEnded` never fires. Before
+    /// item 8 the next touch's `began` silently dropped the hold and the tile
+    /// was drawn back at its origin — the snap-back.
+    func testADragWhoseReleaseNeverArrivesLandsAtItsLastReportedCell() throws {
+        let fixture = self.fixture()
+        let feel = SessionHaptics()
+        var model = BoardModel()
+        let far = Coord(row: 2, col: 21)
+        model.began(.tile(fixture.tile, at: Self.home), haptics: feel)
+        model.moved(to: CGSize(width: 48 * 5, height: 0))
+        model.moved(to: CGSize(width: 48 * 21 + 20, height: 48 * 2 + 20))
+
+        let after = model.interrupted(on: fixture.board, camera: Self.camera, against: Self.dictionary)
+
+        XCTAssertEqual(after.tile(at: far)?.id, fixture.tile.id, "the interrupted tile went back to its origin")
+        XCTAssertNil(after.tile(at: Self.home))
+        XCTAssertTrue(model.dragging.isEmpty)
+        XCTAssertEqual(feel.events, [.pickup, .snap])
+        // The next touch finds nothing stale to discard.
+        model.began(.pan, haptics: feel)
+        XCTAssertEqual(model.interrupted(on: after, camera: Self.camera, against: Self.dictionary), after)
+    }
+
+    func testAnInterruptedDragOverAnOccupiedCellReturnsToItsOrigin() throws {
+        let fixture = self.fixture()
+        let feel = SessionHaptics()
+        var model = BoardModel()
+        model.began(.tile(fixture.tile, at: Self.home), haptics: feel)
+        model.moved(to: CGSize(width: 48 * 6, height: 48 * 4))  // onto the bystander
+        // Every cell within one of the bystander taken, so one-cell forgiveness
+        // has nowhere to land it and it returns home.
+        var board = fixture.board
+        for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
+            try? board.place(Tile(letter: "Z"), at: Coord(row: Self.bystander.row + dr, col: Self.bystander.col + dc))
+        } }
+
+        let after = model.interrupted(on: board, camera: Self.camera, against: Self.dictionary)
+
+        XCTAssertEqual(after.placementList, board.placementList)
+        XCTAssertEqual(feel.events, [.pickup, .reject])
+    }
 }

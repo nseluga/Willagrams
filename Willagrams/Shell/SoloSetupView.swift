@@ -26,19 +26,14 @@ struct SoloSetupView: View {
                 .foregroundStyle(DesignTokens.Palette.textPrimary)
                 .accessibilityAddTraits(.isHeader)
 
-            // Two columns side by side when the screen is wide, one under the
-            // other when it is not. `ViewThatFits` measures — no size class is
-            // read and no branch is taken on state.
+            // A single portrait column: the opponent presets over the match
+            // rules, scrolled so a small phone never clips them. The start
+            // action sits outside this scroll view, anchored to the screen's
+            // bottom edge below.
             ScrollView {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: DesignTokens.Space.xl) {
-                        opponent(setup: setup).frame(minWidth: Self.columnWidth)
-                        rules(setup: setup).frame(minWidth: Self.columnWidth)
-                    }
-                    VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
-                        opponent(setup: setup)
-                        rules(setup: setup)
-                    }
+                VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                    opponent(setup: setup)
+                    rules(setup: setup)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, DesignTokens.Space.m)
@@ -52,7 +47,7 @@ struct SoloSetupView: View {
                     .buttonStyle(.brandPrimary)
             }
         }
-        .padding(DesignTokens.Space.l)
+        .screenPadding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             LinearGradient(
@@ -64,11 +59,14 @@ struct SoloSetupView: View {
         }
     }
 
-    /// How narrow a column may get before the two stop sitting side by side.
-    private static let columnWidth: CGFloat = 340
-
-    /// What the match itself is played under. The bounds are `SoloSetup`'s and
-    /// the engine's — this column names none of its own.
+    /// What the match itself is played under: the starting hand, which is this
+    /// screen's own, and then the settings lane's own options screen, embedded
+    /// as it ships. There is no second copy of those rows here — the toggle and
+    /// the length control are `MatchOptionsView`'s, bound straight to the
+    /// `MatchOptionsForm` `SoloSetup` loaded on the way in.
+    ///
+    /// The form is nil only when the bundled word list failed to read, which is
+    /// the model's state to hold, not a decision this view takes.
     private func rules(setup: SoloSetup) -> some View {
         @Bindable var setup = setup
         return VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
@@ -77,15 +75,9 @@ struct SoloSetupView: View {
                 value: $setup.handSize,
                 in: SoloSetup.handSizeRange
             )
-            stepper(
-                SoloSetup.minimumWordLengthLabel,
-                value: $setup.minimumWordLength,
-                in: MatchOptions.lengthRange
-            )
-            Toggle(SoloSetup.swapLabel, isOn: $setup.swapEnabled)
-                .font(DesignTokens.Typography.body)
-                .foregroundStyle(DesignTokens.Palette.textPrimary)
-                .tint(DesignTokens.Palette.accent)
+            if let form = Binding($setup.optionsForm) {
+                MatchOptionsView(form: form)
+            }
         }
     }
 

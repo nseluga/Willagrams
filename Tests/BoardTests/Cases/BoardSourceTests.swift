@@ -110,7 +110,7 @@ final class BoardSourceTests: XCTestCase {
         let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
         XCTAssertTrue(text.contains("hasFramed"), "BoardView no longer frames the opening block")
         XCTAssertTrue(
-            text.contains("camera = BoardGesture.recentered(camera, over: board, in: rect)"),
+            text.contains("camera = recentered(in: rect)") && text.contains("BoardLayout.framing(board, in: rect"),
             "the framing does not go through the one recenter implementation"
         )
     }
@@ -280,9 +280,22 @@ final class BoardSourceTests: XCTestCase {
             text.contains("exclusively(before:"),
             "BoardView is back on an exclusive chain, which starves the drag of every single-finger touch"
         )
+        // The guard as one contiguous whole statement. Dropping the frames is
+        // only half of it now that a tile hold waits for travel: the finger the
+        // pinch took away must also be disowned, or one still under the
+        // threshold when the second one landed begins AFTER the pinch ends —
+        // firing a pickup on a hold `pinched()` already cancelled and applying
+        // every point of the pinch's travel in one frame, which teleports the
+        // tile and commits it there.
+        let normalized = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
         XCTAssertTrue(
-            text.contains("guard pinch == nil else { return }"),
-            "BoardView drops no drag frame while a pinch is live, so pan and zoom fight over the camera"
+            normalized.contains(
+                "guard pinch == nil else { begun.mark(value.startLocation) return }"
+            ),
+            "BoardView either keeps handling drag frames while a pinch is live, or lets a finger the pinch took away begin a hold once the pinch ends"
         )
     }
 
@@ -321,7 +334,7 @@ final class BoardSourceTests: XCTestCase {
             "BoardView does not animate recenter over Motion.snapDuration"
         )
         XCTAssertTrue(
-            text.contains("BoardGesture.recentered("),
+            text.contains("BoardLayout.framing("),
             "BoardView does not route recenter through the pure layer"
         )
     }
@@ -386,7 +399,16 @@ final class BoardSourceTests: XCTestCase {
         )
         // BrandTile applies Motion.tileLift for .selected itself. Naming it here
         // would be a second lift on top of the one the tile already has.
-        XCTAssertFalse(text.contains("tileLift"), "BoardView applies its own lift")
+        // Handing the SAME token to the drop (so it measures from where the
+        // tile is drawn) is not a second lift; that exact argument is exempt.
+        XCTAssertEqual(
+            text.components(separatedBy: "lift: DesignTokens.Motion.tileLift").count - 1, 2,
+            "BoardView does not pass Motion.tileLift to both the commit and the interrupted landing"
+        )
+        XCTAssertFalse(
+            text.replacingOccurrences(of: "lift: DesignTokens.Motion.tileLift", with: "").contains("tileLift"),
+            "BoardView applies its own lift"
+        )
         XCTAssertFalse(text.contains(".offset(y:"), "BoardView lifts the tile itself")
     }
 
@@ -510,7 +532,7 @@ final class BoardSourceTests: XCTestCase {
         // Both still do their own job, so the checks above are not passing on an
         // empty path.
         XCTAssertTrue(magnify.contains("magnified(by:"), "the pinch path no longer zooms")
-        XCTAssertTrue(recenter.contains("BoardGesture.recentered("), "the recenter path no longer recenters")
+        XCTAssertTrue(recenter.contains("camera = recentered(in: rect)"), "the recenter path no longer recenters")
 
         // The session that owns the lock owns no camera at all, so there is
         // nothing there for a zoom or a recenter to be refused by.
@@ -545,8 +567,12 @@ final class BoardSourceTests: XCTestCase {
         }
 
         // The body names the lock exactly once, and that once is the sync into
-        // the session. A second mention is a second decision.
-        let named = body.split(separator: "\n").filter { $0.contains("Locked") }
+        // the session. A second mention is a second decision. The one exemption
+        // is deferring edge swipes: it touches no input on the board, so it
+        // cannot stop the camera, and it must not defer them on a locked board.
+        let named = body.split(separator: "\n").filter {
+            $0.contains("Locked") && !$0.contains(".defersSystemGestures(on: inputLocked ? [] : .all)")
+        }
         XCTAssertEqual(named.count, 1, "BoardView's body reads the lock outside the sync: \(named)")
         XCTAssertTrue(
             named.first?.contains(".onChange(of: inputLocked, initial: true)") == true,
@@ -801,8 +827,20 @@ final class BoardSourceTests: XCTestCase {
         // with `enterSelection` unreachable the selection set could never become
         // non-empty, so multi-select was dead too.
         XCTAssertTrue(
-            text.contains(".simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })"),
+            text.contains("SpatialTapGesture(count: 2).onEnded { tap in"),
             "BoardView has no double tap into selection mode"
+        )
+        // SPATIAL, not plain. The tap has to name the letter it landed on or
+        // the selection cannot be seeded with it, and an unseeded selection
+        // draws exactly like being out of the mode — which is how a player
+        // ended up unable to tell whether the double tap took.
+        XCTAssertTrue(
+            text.contains("model.enterSelection(at: tap.location, on: board, camera: camera)"),
+            "BoardView enters selection without the tap's location, so nothing seeds the set"
+        )
+        XCTAssertFalse(
+            text.contains("TapGesture(count: 2).onEnded { model.enterSelection() }"),
+            "BoardView enters selection through a locationless tap, so the tapped letter is lost"
         )
         // The regression itself: the competing form must not come back.
         XCTAssertFalse(
@@ -815,7 +853,7 @@ final class BoardSourceTests: XCTestCase {
         )
         XCTAssertTrue(text.contains("model.painting("), "BoardView never sweeps")
         XCTAssertTrue(
-            text.contains("model.endedPainting()"),
+            text.contains("model.endedPainting(startedAt: value.startLocation)"),
             "BoardView never releases a sweep, so a tap on empty space cannot get the player out"
         )
         XCTAssertTrue(
@@ -887,10 +925,17 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertFalse("model.moved(to: value.translation)".contains("model.painting("))
 
         // A simultaneous double tap versus the competing one that never fired.
-        let wired = ".simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })"
-        XCTAssertTrue(wired.contains(".simultaneousGesture(TapGesture(count: 2)"))
+        let wired = "SpatialTapGesture(count: 2).onEnded { tap in"
+        XCTAssertTrue(wired.contains("SpatialTapGesture(count: 2)"))
         XCTAssertFalse(wired.contains(".onTapGesture(count: 2)"))
         XCTAssertTrue(".onTapGesture(count: 2) { model.enterSelection() }".contains(".onTapGesture(count: 2)"))
+
+        // A tap that names where it landed versus one that does not. The
+        // locationless form still READS like it enters the mode, which is what
+        // made the missing seed invisible.
+        let seeded = "model.enterSelection(at: tap.location, on: board, camera: camera)"
+        XCTAssertTrue(seeded.contains("enterSelection(at:"))
+        XCTAssertFalse("model.enterSelection()".contains("enterSelection(at:"))
 
         // A paint that could write to the caller's board versus one that cannot.
         XCTAssertTrue("func paint(from: CGPoint, to: CGPoint, on board: inout Board)".contains("inout Board"))
@@ -1122,7 +1167,7 @@ final class BoardSourceTests: XCTestCase {
         XCTAssertTrue("if model.inputLocked { return }\ncamera = start.magnified(by: m, about: a)".contains("inputLocked"))
         XCTAssertFalse("camera = start.magnified(by: m, about: a)".contains("inputLocked"))
         XCTAssertTrue("if isLocked { return }".contains("Locked"))
-        XCTAssertFalse("camera = BoardGesture.recentered(camera, over: board, in: rect)".contains("Locked"))
+        XCTAssertFalse("camera = recentered(in: rect)".contains("Locked"))
         // ...and the "still does its job" halves must separate a live path from
         // an emptied one.
         XCTAssertTrue("camera = start.magnified(by: value.magnification, about: a)".contains("magnified(by:"))
@@ -1162,5 +1207,276 @@ final class BoardSourceTests: XCTestCase {
         let sliced = try section(of: file, from: "private func pinched(", to: "private func recenterControl")
         XCTAssertTrue(sliced.contains("zoom()"))
         XCTAssertFalse(sliced.contains("frame()"))
+    }
+
+    // MARK: - The window pinch recognizer is taken back off
+
+    /// `BoardPinch` imports UIKit, so this package cannot compile it, let alone
+    /// run it — a source scan is the honest ceiling for it and this check
+    /// proves TEXT, not reachability.
+    ///
+    /// What it is guarding: the recognizer goes on the WINDOW, which outlives
+    /// every board by a long way, and nothing but this takes it off. Without a
+    /// teardown each board ever shown leaves a live recognizer behind, still
+    /// calling into the model of a board that is gone, and a dead one cancels
+    /// the live board's drag. And the teardown must end the pinch before it
+    /// goes: pulling a live recognizer means no `.ended` ever arrives, so the
+    /// owner keeps believing two fingers are down and drops every one-finger
+    /// drag frame from then on — a board that never moves again.
+    ///
+    /// Two literals, each a WHOLE declaration matched over source with its
+    /// indentation normalized away, rather than a handful of independent
+    /// `contains` fragments that would each go on passing while the declaration
+    /// around them was taken apart.
+    func testThePinchRecognizerIsRemovedWhenTheBoardGoesAndEndsThePinchOnTheWayOut() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardPinch.swift"))
+        let normalized = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        XCTAssertTrue(
+            normalized.contains(
+                "static func dismantleUIView(_ uiView: Surface, coordinator: Coordinator) { coordinator.detach() }"
+            ),
+            "BoardPinch leaves its window recognizer behind when the board goes"
+        )
+        XCTAssertTrue(
+            normalized.contains(
+                "func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
+            ),
+            "BoardPinch's teardown does not end a live pinch BEFORE taking the recognizer off the window"
+        )
+        // The other half of the same wiring, and the half a literal aimed at
+        // `detach` cannot see: if `attach` stops handing the recognizer to the
+        // coordinator, `detach` removes nothing and the whole teardown is a
+        // silent no-op while both literals above still match word for word.
+        XCTAssertTrue(
+            normalized.contains(
+                "func attach(reporting view: UIView) { guard let host = view.window, surface == nil else { return } let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handle(_:))) pinch.delegate = self pinch.cancelsTouchesInView = false pinch.delaysTouchesBegan = false pinch.delaysTouchesEnded = false host.addGestureRecognizer(pinch) recognizer = pinch surface = view }"
+            ),
+            "BoardPinch never hands the recognizer it created to the coordinator, so nothing can take it off again"
+        )
+        // `recognizer` is written in exactly those two places — set on attach,
+        // dropped on detach — so a third write anywhere in the file, which
+        // either literal would happily ignore, fails here.
+        XCTAssertEqual(
+            text.components(separatedBy: "recognizer = ").count - 1, 2,
+            "BoardPinch writes its recognizer somewhere other than attach and detach"
+        )
+
+        // And the two literals have teeth: each fails on a file that has been
+        // hollowed out in exactly the way this is here to catch.
+        let gone = "struct BoardPinchReporter: UIViewRepresentable { func makeCoordinator() -> Coordinator { Coordinator() } }"
+        XCTAssertFalse(gone.contains("static func dismantleUIView(_ uiView: Surface, coordinator: Coordinator) { coordinator.detach() }"))
+        let hollow = "func detach() { }"
+        XCTAssertFalse(hollow.contains("func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"))
+        let silent = "func detach() { if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"
+        XCTAssertFalse(silent.contains("func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"), "a teardown that never ends the pinch still matched")
+        // And the ordering the literal exists to hold: ending AFTER the removal
+        // is a pinch the owner never hears the end of.
+        let reordered = "func detach() { if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } recognizer = nil surface = nil }"
+        XCTAssertFalse(reordered.contains("func detach() { if let recognizer, recognizer.state == .began || recognizer.state == .changed { onEnd() } if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) } recognizer = nil surface = nil }"), "a teardown that ends the pinch after removing it still matched")
+        let unstored = "func attach(reporting view: UIView) { host.addGestureRecognizer(pinch) surface = view }"
+        XCTAssertFalse(unstored.contains("host.addGestureRecognizer(pinch) recognizer = pinch surface = view }"))
+        XCTAssertEqual("let pinch = UIPinchGestureRecognizer() surface = view".components(separatedBy: "recognizer = ").count - 1, 0)
+    }
+
+    // MARK: - The view's "this gesture has begun" fact is written nowhere else
+
+    /// A literal starting at `if inFlight.shouldBegin(` proves the gate's own
+    /// text and nothing around it. Inserting one unconditional `begun.clear()`
+    /// just ABOVE that gate leaves it matching word for word while `begun` is
+    /// false on every frame — which is the original bug in full, a pickup
+    /// haptic per frame for the whole drag. So the fact is pinned by its WRITE
+    /// COUNT: marked where the hold begins and where a pinch disowns a gesture,
+    /// put down in exactly the two places a gesture can end. Any extra write
+    /// anywhere in the file fails here, wherever it is and whatever it is.
+    func testBoardViewWritesTheBegunGestureFactInExactlyThePlacesThatEndAGesture() throws {
+        let text = try view()
+        func count(_ needle: String) -> Int { text.components(separatedBy: needle).count - 1 }
+
+        // Three marks: the hold beginning, a swallowed pinch frame disowning the
+        // finger under it, and the pinch ENDING — that third one is not
+        // redundant, since a pinch can begin and end without a single drag frame
+        // arriving in between, and then nothing else ever marks that finger.
+        XCTAssertEqual(
+            count("begun.mark("), 3,
+            "BoardView marks the begun fact \(count("begun.mark(")) times, not once per way a gesture begins or is taken away"
+        )
+        XCTAssertEqual(
+            count("begun.mark(drag?.startLocation)"), 1,
+            "BoardView does not disown the finger left under a pinch that began and ended between two drag frames"
+        )
+        XCTAssertEqual(
+            count("begun.clear()"), 2,
+            "BoardView clears the begun gesture \(count("begun.clear()")) times, not once per way a gesture ends"
+        )
+        XCTAssertEqual(
+            count("begun.has(value.startLocation)"), 1,
+            "BoardView reads the begun fact somewhere other than the hold gate"
+        )
+        // Five writes and no sixth. Counted as WRITES rather than as mentions,
+        // so a new read of the fact is free while a new write anywhere in the
+        // file fails here.
+        XCTAssertEqual(
+            count("begun.mark(") + count("begun.clear()"), 5,
+            "BoardView writes the begun fact somewhere outside those five places"
+        )
+
+        // Teeth: a fixed sample rather than `text` itself, so the teeth still
+        // read the same numbers when the file under test is the mutated one.
+        let sound = "guard pinch == nil else { begun.mark(value.startLocation) \nreturn }\nonEnd: { begun.mark(drag?.startLocation) }\nif !now { drag = nil; begun.clear() }\nif d.shouldBegin(begun: begun.has(value.startLocation)) { began() \nbegun.mark(value.startLocation) }\ndrag = nil\nbegun.clear()"
+        func tally(_ s: String) -> Int {
+            s.components(separatedBy: "begun.mark(").count - 1
+                + s.components(separatedBy: "begun.clear()").count - 1
+        }
+        XCTAssertEqual(tally(sound), 5)
+        // The mutation this exists to catch: one unconditional clear above the
+        // gate, which the gate's own literal cannot see.
+        let regressed = sound.replacingOccurrences(of: "if d.shouldBegin(", with: "begun.clear()\nif d.shouldBegin(")
+        XCTAssertEqual(tally(regressed), 6)
+        XCTAssertEqual(regressed.components(separatedBy: "begun.clear()").count - 1, 3)
+        // And the one that drops the pinch-end disowning, leaving the mark count
+        // right in total but wrong per site.
+        let routeB = sound.replacingOccurrences(of: "onEnd: { begun.mark(drag?.startLocation) }\n", with: "onEnd: { }\n")
+        XCTAssertEqual(routeB.components(separatedBy: "begun.mark(drag?.startLocation)").count - 1, 0)
+        // A read added is not a write: the write count must not move for one.
+        let read = sound.replacingOccurrences(of: "began()", with: "began(begun.has(value.startLocation))")
+        XCTAssertEqual(tally(read), 5)
+    }
+
+    // MARK: - Guardrail: the deal animation is not keyed on the culled draw list
+
+    /// `cells` is viewport-culled, so `Set(cells.compactMap { $0.tile?.id })`
+    /// changed on every pan, pinch, recenter and the opening framing, and each
+    /// change restarted a `dealDuration` ease over every tile's offset — the
+    /// letters trailing the grid. `BoardRenderTests` shows by value that the
+    /// drawn id set moves under a pan alone; this pins that it is not what the
+    /// animation is keyed on, and that what is keyed on comes from the owner's
+    /// delivery token and nothing else.
+    ///
+    /// One contiguous literal per link on the path: the animation call, the
+    /// declaration of the value it reads, and the argument that feeds it.
+    func testDealAnimationIsKeyedOnTheDeliveryTokenNotTheDrawnTiles() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
+
+        XCTAssertTrue(
+            text.contains(".animation(.easeOut(duration: DesignTokens.Motion.dealDuration), value: dealToken)"),
+            "the deal animation is no longer keyed on the delivery token"
+        )
+        XCTAssertFalse(
+            text.contains("value: Set(cells"),
+            "the deal animation is keyed on the culled draw list again"
+        )
+        XCTAssertFalse(
+            text.contains("cells.compactMap"),
+            "BoardView derives an animation trigger from the culled cells again"
+        )
+        XCTAssertTrue(text.contains("let dealToken: Int"), "BoardSurface no longer takes the delivery token")
+        XCTAssertTrue(
+            text.contains("dealToken: arrivalToken,"),
+            "the surface's deal token is no longer fed from the owner's arrivalToken"
+        )
+        // The whole draw path stays O(viewport): the tile ids themselves would
+        // mean reading the board's placements every body evaluation, which
+        // `testNeitherFileIteratesPlacements` refuses.
+        XCTAssertEqual(
+            BoardSource.matches(#"(\.animation\()"#, in: text).count, 1,
+            "a second animation was attached to the surface — the guardrail above only covers the one"
+        )
+    }
+
+    // MARK: - Guardrail: a freshly built board does not re-fly a delivered hand
+
+    /// The countdown and the board sit in separate `switch` arms of the root,
+    /// so the board's `BoardView` is built fresh with the owner's token already
+    /// at 1 — and an `Int` `@State` starting at 0 read that as a brand-new
+    /// delivery and re-flew the entire opening hand from the bag corner. The
+    /// seeding decision now lives in `BoardRender.ArrivalGate`, which
+    /// `BoardRenderTests` proves by value; this pins that the view holds one,
+    /// asks it, and makes no arrival decision of its own.
+    func testArrivalGateOwnsTheSeedingDecision() throws {
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
+
+        XCTAssertTrue(
+            text.contains("@State private var arrival = BoardRender.ArrivalGate()"),
+            "BoardView no longer holds an ArrivalGate"
+        )
+        XCTAssertFalse(text.contains("arrivedToken"), "the hand-rolled arrived token is back")
+        XCTAssertTrue(
+            text.contains("arrival.active(arriving, token: arrivalToken)"),
+            "what the surface is told is arriving no longer comes from the gate"
+        )
+        XCTAssertTrue(
+            text.contains("guard arrival.begin(token: arrivalToken, arriving: arriving) else { return }"),
+            "the flight no longer asks the gate whether this delivery is a real one"
+        )
+        XCTAssertTrue(text.contains("arrival.finish(token: arrivalToken)"), "the batch is never expired")
+        // The gated answer has to be the one the surface is actually handed.
+        // Feeding it the raw `arriving` instead leaves `activeArriving` and the
+        // whole gate dead code that no other assertion here would miss, and the
+        // fresh board re-flies the delivered hand exactly as before.
+        XCTAssertTrue(
+            text.contains("arriving: activeArriving,"),
+            "BoardSurface is fed the ungated arriving set, so the gate decides nothing"
+        )
+        // The decision must not be re-made in the view: no comparison of the
+        // owner's token against anything here.
+        XCTAssertTrue(
+            BoardSource.matches(#"arrivalToken\s*([<>])"#, in: text).isEmpty,
+            "BoardView compares the arrival token itself again instead of asking the gate"
+        )
+    }
+
+    // MARK: - Guardrail: the unread arrival drawing state stays deleted
+
+    /// `arrivalProgress` was written by the flight task and plumbed into
+    /// `BoardSurface`, and `arrivalCorner` and `arrivalScale` were declared
+    /// beside it — none of the three was ever read. The flight is the insertion
+    /// transition, and a second set of arrival numbers can only ever disagree
+    /// with it.
+    func testNoUnreadArrivalStateIsReintroduced() throws {
+        for name in ["BoardView.swift", "BoardRender.swift"] {
+            let text = BoardSource.strippingComments(try BoardSource.text(name))
+            for dead in ["arrivalProgress", "arrivalCorner", "arrivalScale"] {
+                XCTAssertFalse(text.contains(dead), "\(name) reintroduces unread arrival state: \(dead)")
+            }
+        }
+        // The flight itself must stay: this item stops tiles already on the
+        // table re-flying, it does not remove the arrival animation.
+        let text = BoardSource.strippingComments(try BoardSource.text("BoardView.swift"))
+        XCTAssertTrue(
+            text.contains("BoardRender.arrivalTransition(for: tile.id, arriving: arriving) == .fromBag"),
+            "a genuine draw or swap no longer flies in from the bag"
+        )
+        XCTAssertTrue(text.contains("active: FromBag(") && text.contains("identity: FromBag("),
+                      "the bag flight modifier is no longer attached")
+    }
+
+    func testArrivalAndDealChecksHaveTeeth() {
+        // Teeth on fixed samples, never on the file under test.
+        let keyedOnCells = ".animation(\n.easeOut(duration: DesignTokens.Motion.dealDuration),\nvalue: Set(cells.compactMap { $0.tile?.id })\n)"
+        XCTAssertTrue(keyedOnCells.contains("value: Set(cells"))
+        XCTAssertFalse(keyedOnCells.contains("value: dealToken)"))
+
+        let keyedOnToken = ".animation(.easeOut(duration: DesignTokens.Motion.dealDuration), value: dealToken)"
+        XCTAssertFalse(keyedOnToken.contains("value: Set(cells"))
+        XCTAssertTrue(keyedOnToken.contains("value: dealToken)"))
+        XCTAssertEqual(BoardSource.matches(#"(\.animation\()"#, in: keyedOnToken + "\n" + keyedOnCells).count, 2)
+
+        // And the arrival gate: the regression is the view deciding for itself.
+        let handRolled = "@State private var arrivedToken = 0\nprivate var activeArriving: Set<UUID> { arrivalToken > arrivedToken ? arriving : [] }"
+        XCTAssertTrue(handRolled.contains("arrivedToken"))
+        XCTAssertFalse(BoardSource.matches(#"arrivalToken\s*([<>])"#, in: handRolled).isEmpty)
+
+        let gated = "@State private var arrival = BoardRender.ArrivalGate()\nprivate var activeArriving: Set<UUID> { arrival.active(arriving, token: arrivalToken) }"
+        XCTAssertFalse(gated.contains("arrivedToken"))
+        XCTAssertTrue(BoardSource.matches(#"arrivalToken\s*([<>])"#, in: gated).isEmpty)
+
+        // A guard that flies on any non-zero token is the exact bug: it passes
+        // a plain "mentions arrivalToken" check and fails the literal.
+        let reArming = "guard arrivalToken > 0, !arriving.isEmpty else { return }"
+        XCTAssertFalse(reArming.contains("guard arrival.begin(token: arrivalToken, arriving: arriving) else { return }"))
     }
 }

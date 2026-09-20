@@ -6,13 +6,13 @@ import WillagramsRules
 /// Every tile the host actually handed to a player, swap grants included and
 /// the returned tile excluded.
 ///
-/// Distinct from the shared `grants(in:)`, which only sees `.grant`, and from
+/// Distinct from the shared `grants(in:)`, which does not see a swap, and from
 /// `tileIDs(in:)`, which counts a swap's *returned* tile too — the opposite of
 /// what "was this tile handed out twice" needs.
 private func handedOut(in messages: [MatchMessage]) -> [(player: PlayerID, tiles: [Tile])] {
     messages.compactMap { (message) -> (player: PlayerID, tiles: [Tile])? in
         switch message {
-        case let .grant(player, tiles): return (player, tiles)
+        case let .grant(player, tiles), let .obligation(player, tiles): return (player, tiles)
         case let .swapGrant(player, tiles, _): return (player, tiles)
         default: return nil
         }
@@ -72,7 +72,7 @@ struct HostPoolStressTests {
         let produced = results.flatMap { $0 }
         let granted = grants(in: produced)
         #expect(granted.count == 8, "nine tiles serve four rounds of two, got \(granted.count) grants")
-        #expect(produced.filter { $0 == .poolExhausted }.count == 16, "wrong number of refusals: \(produced.count)")
+        #expect(produced.filter { $0 == .poolExhausted(requester: guestID) }.count == 16, "wrong number of refusals: \(produced.count)")
         #expect(granted.filter { $0.player == self.hostID }.count == 4, "the host was served a different number of times")
         #expect(granted.filter { $0.player == self.guestID }.count == 4, "the peer was served a different number of times")
         #expect(granted.allSatisfy { $0.tiles.count == 1 }, "a rack grew by more than one in a round")
@@ -94,7 +94,7 @@ struct HostPoolStressTests {
         let messages = try #require(await drain(host, guest), "no reply reached the peer")
         #expect(grants(in: messages).count == 4, "the wire should carry the peer's four grants, got \(messages.count) messages")
         #expect(grants(in: messages).allSatisfy { $0.player == self.guestID }, "the host's tiles reached the peer")
-        #expect(messages.filter { $0 == .poolExhausted }.count == 16, "the peer heard a different number of refusals")
+        #expect(messages.filter { $0 == .poolExhausted(requester: guestID) }.count == 16, "the peer heard a different number of refusals")
     }
 
     // MARK: - Draws and swaps at once
@@ -156,7 +156,7 @@ struct HostPoolStressTests {
         // to be served and some had to be refused however they interleaved.
         #expect(!handed.isEmpty, "nothing was served at all")
         #expect(
-            produced.contains { $0 == .poolExhausted || $0 == .rejected(reason: .notEnoughTilesToSwap) },
+            produced.contains { $0 == .poolExhausted(requester: guestID) || $0 == .rejected(reason: .notEnoughTilesToSwap) },
             "twenty requests against twelve tiles should have run it out"
         )
 
@@ -198,8 +198,11 @@ struct HostPoolStressTests {
             let mine = try #require(granted.first { $0.player == localID }?.tiles, "the pool holder was not granted a tile")
             let theirs = try #require(granted.first { $0.player == peerID }?.tiles, "the peer was not granted a tile")
 
-            // Half one, on the wire: the peer's grant and nothing else.
-            #expect(received == [.grant(player: peerID, tiles: theirs)], "the wire carried \(received)")
+            // Half one, on the wire: the peer's grant and the count, nothing else.
+            #expect(
+                received == [.grant(player: peerID, tiles: theirs), .poolCount(remaining: 4)],
+                "the wire carried \(received)"
+            )
 
             // Half two, in the return value: the host's grant moved real tiles
             // out of the one pool rather than naming tiles it still holds.

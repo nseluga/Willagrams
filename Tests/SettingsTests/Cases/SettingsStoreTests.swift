@@ -42,6 +42,30 @@ struct SettingsStoreTests {
         #expect(SettingsStore(defaults: suite.defaults).load() == options)
     }
 
+    @Test("a stale dictionary hash is refreshed from the bundled list")
+    func staleDictionaryHashIsRefreshed() {
+        let suite = TemporarySuite()
+        // What a build shipping the previous word list wrote. Replayed on
+        // `.start`, it makes `applyStart` refuse the match on both devices —
+        // silently — so the host lands on an empty board and the guest never
+        // joins. This is that regression.
+        let stale = MatchOptions(
+            minimumWordLength: 3,
+            swapEnabled: true,
+            dictionaryID: MatchOptions.standardDictionaryID,
+            dictionaryHash: "212ad761133bbe21fa93aefb59e03a5d012bc2f858816fd178b57fcd047832e1"
+        )
+
+        SettingsStore(defaults: suite.defaults).save(stale)
+        let loaded = SettingsStore(defaults: suite.defaults).load()
+
+        #expect(loaded.dictionaryHash == MatchOptions.standardDictionaryHash)
+        // Everything the host actually chose still survives the refresh.
+        #expect(loaded.minimumWordLength == stale.minimumWordLength)
+        #expect(loaded.swapEnabled == stale.swapEnabled)
+        #expect(loaded.dictionaryID == stale.dictionaryID)
+    }
+
     @Test("the shipped defaults round trip unchanged")
     func standardRoundTrips() {
         let suite = TemporarySuite()

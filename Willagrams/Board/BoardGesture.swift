@@ -128,7 +128,14 @@ public enum BoardGesture {
             // downstream deciding it again. Two fingers are untouched, so the
             // pinch stays live and the player can see what they are sweeping.
             guard !selection.isActive else {
-                if let hit, selection.contains(hit.coord) {
+                // Selection SIZE decides sweep or move, not membership alone.
+                // A double tap seeds the set with the one letter it landed on,
+                // and the player's next move from that letter is overwhelmingly
+                // "select more" — so a set of one always sweeps, and carrying
+                // the group only becomes possible once there is a group. Past
+                // one, a finger starting on a selected letter moves the whole
+                // set; starting anywhere else still sweeps and adds.
+                if let hit, selection.coords.count > 1, selection.contains(hit.coord) {
                     self.grab = .tile(hit.tile, at: hit.coord)
                 } else {
                     // The bare cell, since there is no tile to name one. A
@@ -143,6 +150,77 @@ public enum BoardGesture {
             self.grab = hit.map { .tile($0.tile, at: $0.coord) } ?? .pan
         }
 
+        /// How far, in points, a finger must travel before a hold that defers
+        /// — a TILE or a PAN — is actually taken.
+        ///
+        /// A tap is a drag of zero distance to `DragGesture(minimumDistance: 0)`
+        /// — which is load-bearing, since paint must start at touch-down
+        /// and a competing tap gesture loses every sequence to a zero-distance
+        /// drag. So the double tap that enters selection mode arrives only after
+        /// the first tap has already lifted a tile, buzzed, and dropped it back
+        /// where it was. Deferring the TILE and PAN holds past this distance is
+        /// what makes a tap write nothing at all. `.paint` still takes hold on
+        /// the very first frame, because a sweep must paint from the frame the
+        /// finger lands on.
+        ///
+        /// ABOVE UIKit's own ~10pt tap slop, which is the whole point. At 8 it
+        /// sat INSIDE the slop: a thumb tap that drifted 8-10pt was still a tap
+        /// to `TapGesture`, but already a hold here — so the first tap lifted
+        /// the letter, and the commit on its release rewrote `tileOffsets`,
+        /// `flashedInvalid` and `validation` on the owner's observed binding.
+        /// That churn tore down the view between the two taps and the pair
+        /// never completed, which is why double-tapping a LETTER did nothing
+        /// while double-tapping a bare cell — nothing to lift, nothing to
+        /// commit — worked every time.
+        ///
+        /// The same distance defers `.pan`, and for the same reason one device
+        /// away: a tap on bare board took the camera on its first frame, wrote
+        /// `camera` while the finger drifted, and rebuilt the board between the
+        /// double tap's two halves. That is why selection mode armed over a
+        /// letter but not over bare board on iPad, on the very build where the
+        /// letter case had just been fixed.
+        ///
+        /// A quarter of a cell at the default zoom. A finger that means to drag
+        /// has not perceptibly waited; a finger that means to tap no longer
+        /// lifts anything or moves the board.
+        public static let holdThreshold: CGFloat = 12
+
+        /// Whether `BoardModel.began` should run on THIS frame.
+        ///
+        /// `began` fires a pickup and must run at most once per gesture.
+        /// `begun` is that fact and nothing else — whether this gesture has
+        /// already begun — and the caller must keep it as a fact rather than
+        /// infer it. Inferring it from the model still CARRYING tiles reads
+        /// false again the moment something cancels the hold mid-gesture: a
+        /// second finger landing (`BoardView.pinched`) and a lock landing both
+        /// call `BoardModel.cancel`, and either would then re-fire a pickup and
+        /// re-lift the tile partway through one touch.
+        ///
+        /// `.paint` begins at touch-down and never again — `firstFrame` is a
+        /// `Drag` built this very frame. `.tile` and `.pan` both defer until the
+        /// finger has cleared `holdThreshold`, which is what makes a tap write
+        /// nothing, over a letter and over bare board alike.
+        public func shouldBegin(firstFrame: Bool, begun: Bool, after translation: CGSize) -> Bool {
+            // `begun` gates the DEFERRED arms only. Paint begins on the frame
+            // its `Drag` was built and never again, so `firstFrame` is already
+            // the whole answer for it — and asking `begun` first would let a
+            // hold disowned at one point silently swallow a LATER paint that
+            // happened to start at the same point.
+            if case .paint = grab { return firstFrame }
+            guard !begun else { return false }
+            return Self.clears(translation)
+        }
+
+        /// Whether a cumulative `translation` has carried the finger past
+        /// ``holdThreshold``. Asked per frame and never remembered: it is
+        /// monotone in the distance travelled, so an arm that has taken hold
+        /// cannot un-take it later in the same gesture.
+        public static func clears(_ translation: CGSize) -> Bool {
+            let distance = (translation.width * translation.width
+                            + translation.height * translation.height).squareRoot()
+            return distance >= holdThreshold
+        }
+
         /// `camera` after a cumulative `translation`: the LIVE camera with its
         /// pan moved one-to-one with the finger, or the live camera untouched
         /// for a tile grab — moving the tile is the next item's job, not the
@@ -153,10 +231,71 @@ public enum BoardGesture {
         /// ever written, and it is written through `BoardCamera.panned(by:)`
         /// so the one non-finite guard covers this path too.
         public func camera(_ camera: BoardCamera, translatedBy translation: CGSize) -> BoardCamera {
-            guard grab == .pan else { return camera }
+            // The threshold again, because `shouldBegin` does not gate this
+            // call: `BoardView` writes `camera` on every frame a drag reports,
+            // begun or not. A tap on bare board that wrote even a clamped pan
+            // was enough churn to tear the view down between the double tap's
+            // two halves.
+            //
+            // ponytail: the pan therefore opens with a `holdThreshold` hop,
+            // since `translation` is cumulative from touch-down and nothing
+            // here discounts the travel already spent. A quarter of a cell,
+            // once, at the start of a pan. Upgrade if it reads wrong in play:
+            // give `Drag` the translation at which the arm took hold, and
+            // subtract it here.
+            guard grab == .pan, Self.clears(translation) else { return camera }
             var moved = camera
             moved.pan = startPan
             return moved.panned(by: translation)
+        }
+    }
+
+    /// Which gesture has already begun — and equally, which one has been
+    /// DISOWNED, because from `shouldBegin`'s side those are one fact.
+    ///
+    /// The fact is the gesture's `startLocation`, so it identifies the touch it
+    /// belongs to rather than being a bare flag a later touch could inherit.
+    ///
+    /// It lives here rather than as bookkeeping inside `BoardView` because a
+    /// pinch arriving is the one thing that makes the rule subtle, and the
+    /// gesture graph it arrives through cannot be reached from a test. `Drag`
+    /// decides whether a frame begins; this decides whether there is anything
+    /// left to begin. Both are ordinary values, so both can be replayed.
+    public struct Begun: Equatable, Sendable {
+
+        private var startLocation: CGPoint?
+
+        public init() {}
+
+        /// This gesture has begun — or has been taken away from the finger and
+        /// must never begin, which is recorded the same way.
+        ///
+        /// A pinch owns the touches outright: its frames are dropped, and the
+        /// finger under them is disowned, or it begins the instant the pinch
+        /// ends — with the whole of the pinch's travel arriving in one frame,
+        /// which teleports the tile and commits it there. Disowning is
+        /// unconditional on a dropped frame: the pinch may already have been
+        /// live when the drag's FIRST frame arrived, so there is no drag in
+        /// flight to recognise, and the frame's own `startLocation` is the only
+        /// thing that identifies the finger.
+        ///
+        /// `nil` is "there is no gesture to disown" — the pinch ending with
+        /// nothing in flight — and does nothing.
+        public mutating func mark(_ startLocation: CGPoint?) {
+            guard let startLocation else { return }
+            self.startLocation = startLocation
+        }
+
+        /// The gesture ended. The next touch is owed a fresh decision, whatever
+        /// point it happens to start from.
+        public mutating func clear() {
+            startLocation = nil
+        }
+
+        /// Whether the gesture starting at this point has begun or been
+        /// disowned.
+        public func has(_ startLocation: CGPoint) -> Bool {
+            self.startLocation == startLocation
         }
     }
 

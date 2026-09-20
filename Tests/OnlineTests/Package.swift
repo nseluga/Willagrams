@@ -7,14 +7,28 @@ import PackageDescription
 let package = Package(
     name: "OnlineTests",
     platforms: [.macOS(.v14)],
-    dependencies: [.package(path: "../..")],
+    dependencies: [
+        .package(path: "../.."),
+        // Pinned exactly to what `Willagrams.xcodeproj` resolves, so the app and
+        // this package never compile the same file against two SDK versions.
+        .package(url: "https://github.com/supabase/supabase-swift.git", exact: "2.55.1"),
+    ],
     targets: [
         .target(
             name: "Online",
-            dependencies: [.product(name: "WillagramsRules", package: "Willagrams")],
+            dependencies: [
+                .product(name: "WillagramsRules", package: "Willagrams"),
+                .product(name: "Auth", package: "supabase-swift"),
+                .product(name: "PostgREST", package: "supabase-swift"),
+                .product(name: "Realtime", package: "supabase-swift"),
+            ],
             path: ".",
             sources: ["MatchSrc", "OnlineSrc"]
         ),
-        .testTarget(name: "OnlineTests", dependencies: ["Online"], path: "Cases"),
+        .testTarget(
+            name: "OnlineTests",
+            dependencies: ["Online", .product(name: "Auth", package: "supabase-swift")],
+            path: "Cases"
+        ),
     ]
 )

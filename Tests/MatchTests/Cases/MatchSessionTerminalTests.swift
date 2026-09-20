@@ -188,6 +188,22 @@ struct MatchSessionTerminalTests {
         }
     }
 
+    /// Runs out the countdown a peer returning mid-match starts, leaving the
+    /// session `.playing`.
+    ///
+    /// For the cases that are about the freeze and not about the resume: a
+    /// returning peer now covers both boards for
+    /// ``MatchSession/resumeCountdownSeconds``, which parks a one-second
+    /// sleeper on the clock and holds `status` at `.countdown`. Those cases
+    /// assert against a `.playing` session, so they crank it out first rather
+    /// than each re-deriving the same three seconds.
+    @MainActor
+    static func resume(_ session: MatchSession, on clock: HandCrankedClock) async throws {
+        try await crank(clock, releasing: .seconds(1), until: "the resume countdown") {
+            session.state.status == .playing
+        }
+    }
+
     /// Long enough for anything the session had already enqueued to have run.
     /// Used only before asserting that nothing happened.
     static func settle() async throws {
@@ -251,7 +267,9 @@ struct MatchSessionTerminalTests {
     @discardableResult
     static func stock(_ guest: MatchSession, _ wire: PresenceTransport) async throws -> [Tile] {
         let tiles = [Tile(letter: "W"), Tile(letter: "I"), Tile(letter: "N")]
-        wire.deliver(.grant(player: bob, tiles: tiles))
+        // `obligation`, not `grant`: these are tiles the peer's draws owe this
+        // device, which is what puts them behind the Draw gate.
+        wire.deliver(.obligation(player: bob, tiles: tiles))
         try await waitUntil("the tiles to be offered") { guest.pendingDrawTiles.count == 3 }
         // One tile per press, so three tiles is three presses. The board stays
         // shut until the last of them is taken.
@@ -385,8 +403,8 @@ struct MatchSessionTerminalTests {
         #expect(guest.resign() == false)
 
         // And what the peer said before it left cannot move the game either.
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "X")]))
-        wire.deliver(.poolExhausted)
+        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "X")]))
+        wire.deliver(.poolExhausted(requester: Self.bob))
         wire.deliver(.start(version: WireFormat.current, seed: 9, startingHandSize: 0, countdownSeconds: 5, options: .standard, roster: [Self.alice, Self.bob]))
         try await Self.settle()
 
@@ -445,46 +463,59 @@ struct MatchSessionTerminalTests {
     func workEnqueuedBeforeTheDropNeverReachesTheWire() async throws {
         let clock = HandCrankedClock()
         let (guest, wire) = try await Self.playingGuest(clock: clock)
+        let tiles = try await Self.stock(guest, wire)
+        #expect(await wire.count == 0)
 
         // The gate parks the first send *inside* the transport, so the second is
         // still on the session's chain when the peer goes. No sleep, no race.
+        //
+        // A swap leads rather than a draw: `draw()` refuses a second request
+        // while one is unanswered, so two draws can no longer both enqueue. The
+        // draw is the one behind the gate on purpose — it is the request whose
+        // credit has to come back.
         await wire.closeGate()
-        #expect(guest.draw())
-        #expect(guest.draw())
+        #expect(guest.swap(tiles[1]))
         try await Self.waitUntil("the first send to be handed over") { await wire.parkedCount == 1 }
+        #expect(guest.draw())
 
         wire.drop(Self.alice)
         try await Self.waitUntil("the session to freeze") { guest.peerPresence != .present }
         await wire.releaseAll()
         try await Self.settle()
 
-        // The first was already in the transport's hands and lands. The second
-        // was not, and never does — the freeze is re-checked when the enqueued
-        // work runs, not only when it was enqueued.
-        #expect(await wire.drawRequests == 1)
+        // The swap was already in the transport's hands and lands. The draw was
+        // not, and never does — the freeze is re-checked when the enqueued work
+        // runs, not only when it was enqueued.
+        #expect(await wire.drawRequests == 0)
         #expect(await wire.count == 1)
 
-        // The peer comes back to a match exactly where it was.
+        // The peer comes back to a match exactly where it was: the swap was
+        // never granted, so both tiles are still in the rack.
         wire.restore(Self.alice)
         try await Self.waitUntil("the peer to return") { guest.peerPresence == .present }
-        #expect(guest.state.hand.isEmpty)
+        // The return puts the resume countdown up before play is live again.
+        // This case is about what crossed the wire during the freeze, not about
+        // the cover, so it runs the count out and asserts against a live match.
+        try await Self.resume(guest, on: clock)
+        #expect(guest.state.hand.count == 2)
         #expect(guest.pendingDrawTiles.isEmpty)
         #expect(guest.state.status == .playing)
 
-        // One request really left, so the first grant answers it and goes
-        // straight to the rack. The second was never asked for, so it is the
-        // opponent's round and becomes an obligation. A credit left over from
-        // the request that never left would take that one too, and the board
-        // would never freeze again.
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "A")]))
-        try await Self.waitUntil("the answer to the request that left") { guest.state.hand.count == 1 }
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "B")]))
+        // No request ever left, so the grant is the opponent's round and becomes
+        // an obligation rather than being swallowed as an answer this device
+        // never earned. Now that only one request may be in flight at a time, a
+        // credit left standing here would latch Draw shut for the rest of the
+        // match rather than merely skipping one freeze.
+        //
+        // Note this no longer isolates the credit's *return*: `peerReturned`
+        // also zeroes the counter, so the reset above would mask a leak. The
+        // return is pinned on its own in "Draw refuses a second request".
+        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "A")]))
         try await Self.waitUntil("the opponent's round") { guest.hasPendingDraw }
 
-        #expect(guest.state.hand.count == 1)
+        #expect(guest.state.hand.count == 2)
         #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand[0].letter == "A")
-        #expect(guest.pendingDrawTiles[0].letter == "B")
+        #expect(guest.pendingDrawTiles[0].letter == "A")
 
         clock.releaseAll()
         try await Self.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

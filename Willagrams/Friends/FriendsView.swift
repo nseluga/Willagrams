@@ -1,0 +1,406 @@
+import SwiftUI
+
+/// The friends list: who you play with, who has asked, and who you have asked.
+///
+/// It knows nothing about routes. The way out is the `onBack` closure its owner
+/// hands it, exactly as `ProfileView` takes one — `Willagrams/Friends` holds no
+/// navigation and the shell owns every transition.
+///
+/// Three sections, drawn from the three the model publishes. No filtering and no
+/// status check happens here: a view that decided which section a row belonged
+/// in would be a second copy of the rule `FriendsModel.load()` already owns.
+///
+/// Must stay listed in the `Friends` target's `exclude:` in
+/// `Tests/FriendsTests/Package.swift` and in `Tests/ShellTests/Package.swift` —
+/// `SourceGuardrailTests` says so in both.
+struct FriendsView: View {
+
+    let model: FriendsModel
+    let onBack: () -> Void
+
+    /// Where a tap on an accepted friend goes. The screen reports it and the
+    /// shell decides what it means, exactly as `onBack` works.
+    let onOpen: (FriendEntry) -> Void
+
+    /// "Invite to play" on an accepted row. Reported like `onOpen`: hosting a
+    /// lobby and sending the invite are both the shell's, and this screen learns
+    /// neither. It is passed only to the accepted section, so a pending row has
+    /// no way to draw the button at all.
+    let onInvite: (FriendEntry) -> Void
+
+    /// The code field, written through the model so the `A–Z0–9` clamp is the
+    /// model's one rule rather than a second copy of it here.
+    private var code: Binding<String> {
+        Binding(get: { model.lookupCode }, set: { model.setLookupCode($0) })
+    }
+
+    /// Tracks the add-by-code field so its container can be scrolled into
+    /// view the moment the keyboard covers it — see `addByCode`.
+    @FocusState private var codeFieldFocused: Bool
+
+    /// The friend an Unfriend tap is asking about; non-nil shows the confirm.
+    @State private var unfriending: FriendEntry?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+            header
+
+            if let message = model.message {
+                Text(message)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+                        yourCode
+
+                        addByCode
+                            .id(Self.codeFieldID)
+
+                    // Requests first: the only rows on this screen that are
+                    // waiting on the player are the ones they can answer.
+                    section(FriendsModel.incomingSectionTitle, model.incoming) { entry in
+                        rowActions(.incoming, entry: entry)
+                    }
+
+                    // Said before the tap, not after it: the two buttons above
+                    // do different and unequal things.
+                    if !model.incoming.isEmpty {
+                        Text(FriendsModel.declineFootnote)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    section(
+                        FriendsModel.acceptedSectionTitle,
+                        model.accepted,
+                        onOpen: onOpen
+                    ) { entry in
+                        rowActions(.accepted, entry: entry)
+                    }
+
+                    // Nothing to do to a request nobody has answered — it is
+                    // here so the player knows it was sent, not so they can
+                    // poke it.
+                    section(FriendsModel.outgoingSectionTitle, model.outgoing) { _ in }
+
+                    if model.isEmpty && !model.isLoading {
+                        emptyState
+                    }
+                    }
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: codeFieldFocused) { _, isFocused in
+                    guard isFocused else { return }
+                    withAnimation {
+                        proxy.scrollTo(Self.codeFieldID, anchor: .center)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .screenPadding()
+        .background {
+            LinearGradient(
+                colors: [DesignTokens.Palette.canvasTop, DesignTokens.Palette.canvasBottom],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        }
+        .task { await model.load() }
+        .confirmationDialog(
+            FriendsModel.unfriendConfirmTitle(unfriending?.profile.displayName ?? ""),
+            isPresented: Binding(get: { unfriending != nil }, set: { if !$0 { unfriending = nil } }),
+            titleVisibility: .visible,
+            presenting: unfriending
+        ) { entry in
+            Button(FriendsModel.unfriendLabel, role: .destructive) {
+                Task { await model.unfriend(entry) }
+            }
+        }
+    }
+
+    /// The comp's large title on the left, Done at the far edge — drawn to
+    /// this screen's own layout rather than the shared `ScreenHeader` (which
+    /// other screens still use unchanged), but reporting through the same
+    /// `onBack` closure every screen does.
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.m) {
+            Text(FriendsModel.title)
+                .font(DesignTokens.Typography.title)
+                .foregroundStyle(DesignTokens.Palette.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+
+            Spacer(minLength: DesignTokens.Space.m)
+
+            doneButton(onBack: onBack)
+        }
+    }
+
+    /// Named so the call site reads `onBack: onBack` — the same closure every
+    /// screen takes and hands straight to its way out, not a route this view
+    /// picked for itself.
+    private func doneButton(onBack: @escaping () -> Void) -> some View {
+        Button(FriendsModel.backLabel, action: onBack)
+            .buttonStyle(.brandText)
+    }
+
+    /// This player's own code, front and center, with the one-tap way to send
+    /// it to somebody who isn't looking at this screen.
+    private var yourCode: some View {
+        HStack(spacing: DesignTokens.Space.m) {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+                Text(FriendsModel.yourCodeLabel).monoLabel()
+
+                Text(model.myFriendCode)
+                    .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    .lineLimit(ButtonLabelFit.lineLimit)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .textSelection(.enabled)
+                    .accessibilityLabel(
+                        Text(model.myFriendCode.map(String.init).joined(separator: " "))
+                    )
+            }
+
+            Spacer(minLength: DesignTokens.Space.m)
+
+            ShareLink(item: model.shareMessage) {
+                Text(FriendsModel.shareCodeLabel)
+            }
+            .buttonStyle(.brandPrimary)
+        }
+        .padding(DesignTokens.Space.l)
+        .brandCard()
+    }
+
+    /// Adding a friend by the code they gave you. One field and one button, plus
+    /// a hint tracking progress toward the eight characters, plus the row the
+    /// lookup found — every decision on it (is the code long enough, is it
+    /// mine, did it match anyone) is the model's.
+    @ViewBuilder private var addByCode: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+            Text(FriendsModel.addSectionTitle).monoLabel()
+
+            HStack(spacing: DesignTokens.Space.m) {
+                TextField(FriendsModel.codeFieldPrompt, text: code)
+                    .textFieldStyle(.plain)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .accessibilityLabel(FriendsModel.codeFieldLabel)
+                    .focused($codeFieldFocused)
+                    .onSubmit {
+                        guard model.canLookup else { return }
+                        Task { await model.lookup(code: model.lookupCode) }
+                    }
+
+                Button(FriendsModel.lookupLabel) {
+                    Task { await model.lookup(code: model.lookupCode) }
+                }
+                .buttonStyle(.brandQuiet)
+                .disabled(!model.canLookup || model.isLoading)
+            }
+
+            Text(model.lookupHint)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+
+            if let found = model.lookupResult {
+                HStack(spacing: DesignTokens.Space.m) {
+                    Text(found.displayName)
+                        .font(DesignTokens.Typography.body)
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
+
+                    Spacer(minLength: DesignTokens.Space.m)
+
+                    Button(FriendsModel.requestLabel) {
+                        Task { await model.request(found) }
+                    }
+                    .buttonStyle(.brandPrimary)
+                }
+                .disabled(model.isLoading)
+            }
+        }
+    }
+
+    /// Three tiles spelling ADD over the model's own empty-state line — drawn
+    /// only when every section above came back with nothing at all.
+    private var emptyState: some View {
+        VStack(spacing: DesignTokens.Space.m) {
+            HStack(spacing: DesignTokens.Space.xs) {
+                ForEach(Array("ADD".enumerated()), id: \.offset) { _, letter in
+                    avatarTile(String(letter), size: Self.emptyTileSize)
+                }
+            }
+            .accessibilityHidden(true)
+
+            Text(FriendsModel.emptyMessage)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(DesignTokens.Space.l)
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous)
+                .strokeBorder(
+                    DesignTokens.Palette.hairline,
+                    style: StrokeStyle(lineWidth: DesignTokens.Stroke.hairline, dash: [4])
+                )
+        }
+    }
+
+    /// One titled section, or nothing at all when it is empty — an empty heading
+    /// is a promise of rows that are not there.
+    @ViewBuilder private func section<Actions: View>(
+        _ title: String,
+        _ entries: [FriendEntry],
+        onOpen: ((FriendEntry) -> Void)? = nil,
+        @ViewBuilder actions: @escaping (FriendEntry) -> Actions
+    ) -> some View {
+        if !entries.isEmpty {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.s) {
+                Text(title).monoLabel()
+
+                ForEach(entries) { entry in
+                    row(entry, onOpen: onOpen, actions: actions)
+                }
+            }
+        }
+    }
+
+    /// One friend, drawn as a tile: an avatar, their name and code, and
+    /// whatever actions this section offers.
+    private func row<Actions: View>(
+        _ entry: FriendEntry,
+        onOpen: ((FriendEntry) -> Void)?,
+        @ViewBuilder actions: (FriendEntry) -> Actions
+    ) -> some View {
+        HStack(spacing: DesignTokens.Space.m) {
+            avatarTile(initial(entry), size: Self.rowTileSize)
+
+            VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
+                if let onOpen {
+                    Button { onOpen(entry) } label: {
+                        Text(entry.profile.displayName)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(entry.profile.displayName)
+                        .font(DesignTokens.Typography.body)
+                        .foregroundStyle(DesignTokens.Palette.textPrimary)
+                }
+
+                Text(entry.profile.friendCode)
+                    .font(DesignTokens.Typography.monoLabel)
+                    .tracking(DesignTokens.Typography.monoLabelTracking)
+                    .lineLimit(ButtonLabelFit.lineLimit)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .foregroundStyle(DesignTokens.Palette.textSecondary)
+            }
+
+            Spacer(minLength: DesignTokens.Space.m)
+
+            actions(entry)
+        }
+        .padding(DesignTokens.Space.m)
+        .brandCard()
+        .disabled(model.isLoading)
+    }
+
+    /// A row's actions, rendered from `FriendRowSection` rather than a second
+    /// hard-coded list: the primary action stays a visible labelled button,
+    /// everything else moves into the overflow menu so a ~310pt card never
+    /// has to fit three vertical bars.
+    @ViewBuilder
+    private func rowActions(_ section: FriendRowSection, entry: FriendEntry) -> some View {
+        if let primary = section.primaryAction {
+            primaryRowButton(primary, entry: entry)
+        }
+
+        if !section.overflowActions.isEmpty {
+            BrandMenu {
+                ForEach(section.overflowActions, id: \.self) { action in
+                    overflowRowButton(action, entry: entry)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .accessibilityLabel(FriendsModel.moreActionsLabel)
+        }
+    }
+
+    @ViewBuilder
+    private func primaryRowButton(_ action: FriendRowAction, entry: FriendEntry) -> some View {
+        switch action {
+        case .accept:
+            Button(FriendsModel.acceptLabel) {
+                Task { await model.accept(entry) }
+            }
+            .buttonStyle(.brandPrimary)
+        case .invitePlay:
+            Button(FriendsModel.invitePlayLabel) { onInvite(entry) }
+                .buttonStyle(.brandPrimary)
+        case .decline, .block, .unfriend:
+            EmptyView()
+        }
+    }
+
+    /// One row inside the overflow menu. `BrandMenuRow` carries the row chrome
+    /// the system popup used to draw, and dismisses the menu before it acts.
+    @ViewBuilder
+    private func overflowRowButton(_ action: FriendRowAction, entry: FriendEntry) -> some View {
+        switch action {
+        case .decline:
+            BrandMenuRow(FriendsModel.declineLabel) {
+                Task { await model.decline(entry) }
+            }
+        case .block:
+            // Declining no longer blocks, so refusing someone for good needs
+            // its own action on the row that asked.
+            BrandMenuRow(FriendsModel.blockLabel, role: .destructive) {
+                Task { await model.block(entry) }
+            }
+        case .unfriend:
+            // Routes through the existing confirmation dialog below — this
+            // only asks for the entry, it never unfriends directly.
+            BrandMenuRow(FriendsModel.unfriendLabel, role: .destructive) { unfriending = entry }
+        case .accept, .invitePlay:
+            EmptyView()
+        }
+    }
+
+    /// A small square tile carrying one initial — the same face and ink the
+    /// board's own tiles use, standing in for a friend's avatar.
+    private func avatarTile(_ letter: String, size: CGFloat) -> some View {
+        Text(letter)
+            .font(DesignTokens.Typography.body)
+            .foregroundStyle(DesignTokens.Palette.tileLetter)
+            .frame(width: size, height: size)
+            .background(DesignTokens.Palette.tileFace)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.tile, style: .continuous))
+    }
+
+    private func initial(_ entry: FriendEntry) -> String {
+        let trimmed = entry.profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "" : String(trimmed.prefix(1)).uppercased()
+    }
+
+    private static let contentMaxWidth: CGFloat = 620
+    private static let codeFieldID = "friends.codeField"
+    private static let rowTileSize: CGFloat = 42
+    private static let emptyTileSize: CGFloat = 40
+}

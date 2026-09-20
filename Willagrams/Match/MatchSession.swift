@@ -93,7 +93,7 @@ public enum PeerPresence: Sendable, Equatable {
 /// once the peer is back and the session is no longer frozen.
 @MainActor
 @Observable
-public final class MatchSession {
+public final class MatchSession: AppActivityListener {
 
     // MARK: - Observed state
 
@@ -184,20 +184,21 @@ public final class MatchSession {
     // Before adding observed state here, re-run `swift test --package-path
     // Tests/MatchTests`. A green engine suite does not cover this.
 
-    /// The last count read back from ``HostPool/pool``, or `nil` on a device
-    /// that runs no pool. `@ObservationIgnored` for the reason above; observers
+    /// The last count read back from ``HostPool/pool`` or received as
+    /// `.poolCount`, or `nil` before either. `@ObservationIgnored` for the reason above; observers
     /// are driven through ``poolRemaining`` and ``setPoolRemaining(_:)``, which
     /// register and fire on that computed key path directly rather than
     /// borrowing another property's code path.
     @ObservationIgnored private var storedPoolRemaining: Int?
 
-    /// How many tiles the host's pool still holds, or `nil` on a device that
-    /// does not run one — a guest cannot know this number, and no guess is made
-    /// for it.
+    /// How many tiles the host's pool still holds, or `nil` until the number is
+    /// known.
     ///
-    /// Never a tally of grants: the value is read back from ``HostPool/pool``
-    /// itself after every movement of it, so it cannot drift from the pool it
-    /// describes.
+    /// Never a tally of grants. On the pool's device it is read back from
+    /// ``HostPool/pool`` itself after every movement of it. A guest knows it
+    /// too: the host broadcasts `.poolCount` after the deal, every round and
+    /// every swap, and the guest keeps the smallest count it has received —
+    /// `nil` only before the first one lands.
     public var poolRemaining: Int? {
         access(keyPath: \.poolRemaining)
         return storedPoolRemaining
@@ -273,11 +274,28 @@ public final class MatchSession {
         return winner
     }
 
+    /// How long both boards stay covered after a peer comes back mid-match.
+    ///
+    /// Computed, not a `static let`: a stored static added to this class walks
+    /// MatchTests into the `swift_task_dealloc` abort `docs/amendment-wire-v2.md`
+    /// records against adding stored properties here. Bisected, not guessed —
+    /// the same diff with this one line stored aborts and passes without it.
+    ///
+    /// ponytail: each device counts its own three seconds from its own
+    /// `.connected`, not from a shared clock. `SelfJoinGate` is what keeps
+    /// those two moments together — it holds the returning device's
+    /// `.connected` until that device sees its own presence join, which is the
+    /// same server fan-out that tells its peer. Aligned to the fan-out, so
+    /// tens of milliseconds; without the gate it was a full round trip and
+    /// showed on device as one player counting a second ahead. A `.resume` on
+    /// the wire would make it exact, and is a wire-version bump.
+    public static var resumeCountdownSeconds: Int { 3 }
+
     /// How long a dropped peer has to come back.
     ///
     /// Public so the shell can size its banner, and so a test can name the same
     /// number the session does.
-    public static let reconnectGraceSeconds = 30
+    public static let reconnectGraceSeconds = 45
 
     // MARK: - Fixed for the life of the match
 
@@ -330,6 +348,18 @@ public final class MatchSession {
     /// compared or trusted, because two devices' clocks disagree.
     private let sleepFor: @MainActor @Sendable (Duration) async throws -> Void
 
+    /// The other half of that same clock: what time it is *on it*.
+    ///
+    /// Injected together with ``sleepFor`` and never separately, because the
+    /// reconnect window is armed from both at once — the `Date` the banner
+    /// counts down to is `now() + seconds` and the wait is `sleepFor(seconds)`.
+    /// Reading the wall clock here while the wait ran on an injected one is
+    /// what used to make a partial spend unobservable: a test could run a
+    /// thirty-second window to its end in 300ms and the deadline would still
+    /// say thirty seconds were owed, so a resume that topped the budget back up
+    /// looked exactly like one that banked it. One clock, both halves.
+    private let now: @Sendable () -> Date
+
     // MARK: - Plumbing
 
     @ObservationIgnored private var hostPool: HostPool?
@@ -342,10 +372,9 @@ public final class MatchSession {
 
     /// The opening deal has not happened yet on this device.
     ///
-    /// On the host it stops a second deal — a peer returning restarts the
-    /// countdown, and that would hand out two hands. On the guest it is half of
-    /// how an opening grant is told from a peer's draw; see
-    /// ``takeOpeningDeal(_:)``.
+    /// Host-side only: it stops a second deal, because a peer returning restarts
+    /// the countdown and that would hand out two hands. A guest has no pool, so
+    /// it reads this nowhere — the deal simply arrives as a `.grant`.
     @ObservationIgnored private var awaitingOpeningDeal = false
 
     /// The countdown the freeze interrupted, held so a peer that comes back
@@ -354,17 +383,21 @@ public final class MatchSession {
 
     /// Draw requests this device has sent and not yet seen answered.
     ///
-    /// The *wire* cannot tell the two kinds of grant apart — both read
-    /// `.grant(player: me, …)` — so this counts the answers this device is owed.
-    /// A grant with nothing outstanding is the opponent's draw, and becomes an
-    /// obligation. Every request produces exactly one of a grant, a
-    /// `.poolExhausted` or a `.rejected`, so any of the three clears one — and a
-    /// request that never reached the wire clears its own.
+    /// Nothing reads this to work out what an inbound message *means* — the
+    /// wire says so: `.grant` answers this device's own request, `.obligation`
+    /// is the tile it owes for somebody else's. This is only the in-flight
+    /// count, and ``draw()`` refuses a second request while it is non-zero.
     ///
-    /// Only the inbound path guesses from this count. The host answers itself
-    /// and knows which request each message it produced belongs to, so
-    /// ``applyProduced(_:answering:)`` passes that answer down rather than
-    /// reading this.
+    /// Every request produces exactly one of a `.grant`, a `.poolExhausted`
+    /// naming this device or a `.rejected`, so any of the three clears one —
+    /// and a request that never reached the wire clears its own.
+    ///
+    /// ponytail: one way out is not covered — a request that reaches the host
+    /// and is dropped there by ``receive(_:)``'s `state.status == .playing`
+    /// guard is never answered and never times out, and the credit it opened
+    /// latches Draw shut. Unreachable at two players, who run the same status
+    /// machine off the same `.start`; give the credit a deadline if a larger
+    /// match ever makes the statuses diverge.
     @ObservationIgnored private var outstandingDrawRequests = 0
 
     /// This device's own `.win`/`.resign` was caught by the freeze and still
@@ -391,6 +424,38 @@ public final class MatchSession {
     /// property and independent of this fix. Store the message when that lands.
     @ObservationIgnored private var owesTerminalMessage = false
 
+    /// Seconds of reconnect grace not yet spent *on screen*.
+    ///
+    /// Non-nil exactly while somebody is inside their window. It is what makes
+    /// the window survivable across a screen lock: the budget is banked when the
+    /// app goes away and re-armed from the same number when it comes back, so a
+    /// suspended minute costs the peer nothing and a peer that never returns
+    /// still runs out of it. An `Int` rather than a `Duration` — see the
+    /// toolchain note on ``owesTerminalMessage``.
+    @ObservationIgnored private var reconnectSecondsOwed: Int?
+
+    /// The app is off screen.
+    ///
+    /// Nothing arms a reconnect window here. A suspended process gives the peer
+    /// no chance to come back, and both clocks this session could use — `Date()`
+    /// and `ContinuousClock` behind `Task.sleep` — keep running through the
+    /// suspension, so an un-paused window is spent entirely on time in which
+    /// nothing could possibly have happened.
+    @ObservationIgnored private var isAway = false
+
+    /// ``leave()`` has run. A `Bool` beside ``isAway``, for the same toolchain
+    /// reason — see the note on ``owesTerminalMessage``.
+    ///
+    /// ponytail: defence-in-depth, not load-bearing — every reachable path is
+    /// already covered by `peerDropped`'s `.present` guard and `peerReturned`'s
+    /// `.reconnecting` guard, so deleting this flag alone changes no behaviour
+    /// and no single mutation kills it. `PresenceHandoffTests`'
+    /// "A state forwarded after leave() cannot bring a left match back" is the
+    /// real pin. Delete the flag if either absorbing guard is ever made
+    /// unconditional — at that point this one stops being redundant, or the
+    /// test stops passing, and you want to notice which.
+    @ObservationIgnored private var hasLeft = false
+
     /// - Parameters:
     ///   - transport: the wire. This session becomes the sole consumer of its
     ///     inbound stream immediately.
@@ -408,6 +473,16 @@ public final class MatchSession {
     ///     ``MatchOptions/standardDictionaryHash``, which is the default.
     ///   - sleepFor: one countdown tick, and the reconnect window. Defaults to
     ///     real time.
+    ///   - observesPeerConnections: whether this session subscribes to
+    ///     `peerConnectionStates` itself. False where something upstream is
+    ///     already the stream's one consumer and forwards each state in through
+    ///     ``receive(peerConnection:)`` — `OnlineMatch`, whose lobby pump took
+    ///     that stream first. `peerConnectionStates` allows exactly one
+    ///     consumer per endpoint, so a session that subscribed anyway would be
+    ///     opening a second iterator on a stream the lobby pump had already
+    ///     finished, and no drop would ever reach it. Not stored: it is read
+    ///     once, here, and `MatchSession` is at the toolchain's stored-property
+    ///     limit.
     public init(
         transport: any MatchTransport,
         roster: [PlayerID],
@@ -415,7 +490,9 @@ public final class MatchSession {
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
-        }
+        },
+        now: @escaping @Sendable () -> Date = Date.init,
+        observesPeerConnections: Bool = true
     ) {
         // Trapping, not refusing: none of this came off the wire. A caller that
         // built a roster this way has a bug, and a session that quietly played
@@ -439,7 +516,8 @@ public final class MatchSession {
         self.dictionary = dictionary
         self.localDictionaryHash = dictionaryHash
         self.sleepFor = sleepFor
-        beginReceiving()
+        self.now = now
+        beginReceiving(observingPeerConnections: observesPeerConnections)
     }
 
     /// The two-player case: the only lobby this release ships.
@@ -453,7 +531,8 @@ public final class MatchSession {
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
         sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
-        }
+        },
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.init(
             transport: transport,
@@ -461,7 +540,8 @@ public final class MatchSession {
                 .sorted { $0.rawValue < $1.rawValue },
             dictionary: dictionary,
             dictionaryHash: dictionaryHash,
-            sleepFor: sleepFor
+            sleepFor: sleepFor,
+            now: now
         )
     }
 
@@ -477,7 +557,7 @@ public final class MatchSession {
     /// reading either property twice and iterating both would divide its
     /// elements between the two iterators rather than fail, and the symptom is
     /// a message that never arrives.
-    private func beginReceiving() {
+    private func beginReceiving(observingPeerConnections: Bool) {
         let inbound = transport.inboundMessages
         pump = Task { @MainActor [weak self] in
             for await message in inbound {
@@ -485,6 +565,7 @@ public final class MatchSession {
                 self.receive(message)
             }
         }
+        guard observingPeerConnections else { return }
         let connections = transport.peerConnectionStates
         presencePump = Task { @MainActor [weak self] in
             for await connection in connections {
@@ -492,6 +573,26 @@ public final class MatchSession {
                 self.apply(connection)
             }
         }
+    }
+
+    /// Hands this session one connection-state change from whoever owns the
+    /// stream.
+    ///
+    /// The other half of `observesPeerConnections: false`: a session that does
+    /// not subscribe learns about drops and returns only through here. Applied
+    /// by exactly the same code a self-subscribed session runs, so the two
+    /// ownership arrangements cannot drift.
+    ///
+    /// Refused after ``leave()``. A self-subscribed session stops hearing when
+    /// its own pump is cancelled; a forwarded one is fed by somebody else's
+    /// pump, which keeps running until that owner is torn down too — one line
+    /// later in `OnlineOpponent.leave()`, but not zero. This is what makes
+    /// "a left session takes no more presence" true by construction rather than
+    /// by the two absorbing guards in `peerDropped` and `peerReturned` that
+    /// happen to cover it today.
+    public func receive(peerConnection: PeerConnectionState) {
+        guard !hasLeft else { return }
+        apply(peerConnection)
     }
 
     /// Applies one connection-state change for one peer.
@@ -537,19 +638,41 @@ public final class MatchSession {
             return
         }
 
-        // A `Date` for the shell to count down to. The wait itself is timed by
-        // the injected clock below, never by comparing this against `Date()`:
-        // it is a display value, and the clock is the seam a test drives.
-        peerPresences[player] = .reconnecting(
-            deadline: Date().addingTimeInterval(TimeInterval(Self.reconnectGraceSeconds))
-        )
+        // Puts the peer in the state ``armReconnectWait(seconds:)`` looks for.
+        // The deadline it stamps a line below is the real one — both the
+        // banner's `Date` and the wait come from that one call, so they cannot
+        // be derived from two different instants.
+        peerPresences[player] = .reconnecting(deadline: now())
+        armReconnectWait(seconds: Self.reconnectGraceSeconds)
+    }
+
+    /// Stamps the reconnect deadline and arms the wait for it, from one number
+    /// and one instant.
+    ///
+    /// One clock, not two. The `Date` the shell counts down to and the
+    /// `sleepFor` the window actually runs on are both derived here, in the same
+    /// synchronous call: the deadline is `now + seconds` and the sleep is
+    /// exactly `seconds`. Every path that pauses or resumes the window comes
+    /// back through here, so the two can never drift apart by a suspension —
+    /// which is precisely what they used to do.
+    ///
+    /// Arms nothing while the app is away; ``appCameBack()`` arms it then.
+    private func armReconnectWait(seconds: Int) {
+        reconnectSecondsOwed = seconds
         reconnectTask?.cancel()
+        reconnectTask = nil
+        let deadline = now().addingTimeInterval(TimeInterval(seconds))
+        for player in roster {
+            guard case .reconnecting = presence(of: player) else { continue }
+            peerPresences[player] = .reconnecting(deadline: deadline)
+        }
+        guard !isAway else { return }
         reconnectTask = Task { @MainActor [weak self] in
             // The closure, not `self`: holding the session across the whole
             // window would keep a dropped session alive for it.
             guard let sleepFor = self?.sleepFor else { return }
             do {
-                try await sleepFor(.seconds(Self.reconnectGraceSeconds))
+                try await sleepFor(.seconds(seconds))
             } catch {
                 return  // cancelled
             }
@@ -557,13 +680,92 @@ public final class MatchSession {
             // observe cancellation, and a peer that came back must not have the
             // match ended out from under it.
             guard !Task.isCancelled else { return }
+            self?.reconnectSecondsOwed = nil
             self?.awayPeersAreGone()
         }
+    }
+
+    // MARK: - The app leaving the screen
+
+    /// The app's scene phase changed.
+    ///
+    /// `nonisolated`, and it hops rather than assuming: this is called from
+    /// ``AppActivity``, which is driven by a UIKit notification, and a
+    /// `@MainActor` callback UIKit ever delivers off the main queue traps.
+    /// Still `nonisolated` — see above; a `@MainActor` conformance traps. What
+    /// it does *not* do any more is always hop: a hop is a queued block, and the
+    /// suspension that follows a lock can land before it runs. The window is
+    /// then banked from a deadline already in the past, which banks zero and
+    /// ends the match on resume — the exact failure this item exists to fix.
+    /// On the main thread, which is where UIKit posts from, the bank is taken
+    /// synchronously, inside the notification, before anything can suspend.
+    public nonisolated func appActivityChanged(to phase: AppActivity.Phase) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                switch phase {
+                case .away: appWentAway()
+                case .active: appCameBack()
+                }
+            }
+            return
+        }
+        Task { @MainActor [weak self] in
+            switch phase {
+            case .away: self?.appWentAway()
+            case .active: self?.appCameBack()
+            }
+        }
+    }
+
+    /// Seconds still owed to a reconnecting peer, or nil where no window is
+    /// running. Read by value so a test can assert the budget only ever
+    /// *shrinks* across a lock/unlock loop — a window topped back up by any
+    /// amount hangs a dead match for as long as somebody keeps locking, and that
+    /// is a comparison, not a timing bound.
+    public var reconnectSecondsOwedForTesting: Int? { reconnectSecondsOwed }
+
+    /// Banks whatever is left of the reconnect window.
+    ///
+    /// Only the part of it that ran on screen is spent. The stamped deadline is
+    /// the authority for how much that was, because on screen it and the wait
+    /// were armed from the same instant.
+    public func appWentAway() {
+        guard !isAway else { return }
+        isAway = true
+        guard reconnectSecondsOwed != nil else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        let furthest = peerPlayerIDs.compactMap { player -> Date? in
+            guard case let .reconnecting(deadline) = presence(of: player) else { return nil }
+            return deadline
+        }.max()
+        guard let furthest else { return }
+        // DOWN, never up. Ceiling refunds every spend shorter than a second, so
+        // a lock/unlock loop with a sub-second stretch on screen holds the
+        // budget at thirty for ever while the transport's exact 35s still
+        // finishes the streams — a frozen board behind a banner nothing
+        // resolves. Flooring over-charges by under a second, which is the safe
+        // direction: the grace stays honest and still runs out.
+        reconnectSecondsOwed = max(0, Int(furthest.timeIntervalSince(now()).rounded(.down)))
+    }
+
+    /// Resumes the window with what was left of it, re-stamped so the banner
+    /// and the wait start from this instant rather than the one before the
+    /// suspension.
+    ///
+    /// Not a reset: a peer that is genuinely gone keeps whatever it had already
+    /// spent, so a lock/unlock loop cannot hold a dead match open for ever.
+    public func appCameBack() {
+        guard isAway else { return }
+        isAway = false
+        guard let owed = reconnectSecondsOwed else { return }
+        armReconnectWait(seconds: owed)
     }
 
     /// The deadline passed. Every peer still away has left for good, and if
     /// that leaves fewer than two players the match is over with nobody named.
     private func awayPeersAreGone() {
+        reconnectSecondsOwed = nil
         var anyLeft = false
         for player in roster {
             guard case .reconnecting = presence(of: player) else { continue }
@@ -609,18 +811,41 @@ public final class MatchSession {
         }
         guard case .reconnecting = presence(of: player) else { return }
         peerPresences[player] = .present
+        // Nothing can legitimately be in flight across a freeze — `blockedByLock`
+        // already drops outbound sends — so a credit still standing here is one
+        // the host will never answer. Left at 1 it latches Draw shut for the
+        // rest of the match, and the next grant meant for somebody else is
+        // mistaken for this device's own answer and goes straight into the hand.
+        outstandingDrawRequests = 0
         // Another peer still away keeps the match frozen, and its window keeps
         // running: resuming the countdown now would move game state nobody is
         // playing through.
         guard !isFrozen else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
+        // The second gate on the same window. Cancelling the task alone would
+        // leave a budget behind that `appCameBack()` would happily re-arm, and
+        // a peer that is back would be waited out all over again.
+        reconnectSecondsOwed = nil
         guard let seconds = heldCountdownSeconds else {
             // A freeze that landed on the moment of the deal bailed out of it and
             // re-armed it. The countdown is already spent, so this is the only
             // place left to deal: without it both racks stay empty for the rest
             // of the match and nothing says why.
-            dealOpeningHands()
+            //
+            // `awaitingOpeningDeal`, not the status, is what tells that case
+            // apart: the deal is enqueued ahead of the flip to `.playing`, so a
+            // freeze on that exact moment leaves a session that is `.playing`
+            // and still owes two hands.
+            guard !awaitingOpeningDeal else {
+                dealOpeningHands()
+                return
+            }
+            // Mid-match. The deal is long done, and what a returning peer owes
+            // the two players is a moment to look at the board before it is
+            // live again — not a board that snaps back under their thumbs.
+            guard case .playing = state.status else { return }
+            beginCountdown(seconds: Self.resumeCountdownSeconds)
             return
         }
         heldCountdownSeconds = nil
@@ -638,11 +863,11 @@ public final class MatchSession {
         countdownSeconds: Int,
         options: MatchOptions = .standard
     ) {
-        // The same election that hands out the pool decides who opens. Both
-        // devices calling this would each honour their own seed and countdown
-        // and ignore the other's, and reach play at different moments.
-        guard HostPool.host(of: roster) == localPlayerID else {
-            lastNote = "only the host opens the match"
+        // Any player in the match may send the `.start` — online, that is the
+        // lobby creator, which need not be `roster[0]`. The pool still goes to
+        // `roster[0]` in `applyStart`, and a second start is ignored there.
+        guard roster.contains(localPlayerID) else {
+            lastNote = "only a player in this match opens it"
             return
         }
         guard !isLocked else { return }
@@ -674,9 +899,14 @@ public final class MatchSession {
         // The whole roster, not just this device: leaving ends the match here,
         // and every banner, lock and end screen reads presence to find that out.
         for player in roster { peerPresences[player] = .gone }
-        // A `.connected` already buffered when the pump is cancelled can still
-        // be delivered, and the flush would put a message on the wire from a
-        // device that has left.
+        // Shuts ``receive(peerConnection:)``, which is the only way presence
+        // still reaches a session fed by a façade's pump: `presencePump` below
+        // is nil on every session built with `observesPeerConnections: false`,
+        // so cancelling it stops nothing on the path that ships.
+        hasLeft = true
+        // A `.connected` already buffered when a self-subscribed session's pump
+        // is cancelled can still be delivered, and the flush would put a message
+        // on the wire from a device that has left.
         owesTerminalMessage = false
         pump?.cancel()
         presencePump?.cancel()
@@ -725,6 +955,18 @@ public final class MatchSession {
             state.hand.append(pendingDrawTiles.removeFirst())
             return true
         }
+        // One request at a time. The board stays complete and the hand stays
+        // empty for the whole round trip, so `canDraw` — the button's own gate
+        // — is still true while a request is in flight. Without this, a player
+        // pressing Draw N times fast sends N `.drawRequest`s: each one drains a
+        // full round from the pool all-or-nothing and hands every opponent
+        // another obligation, and the N grants land together, so nothing
+        // appears and then everything does.
+        //
+        // Below the `pendingDrawTiles` branch on purpose: taking a waiting tile
+        // is local, touches no wire, and must stay unguarded, because accepting
+        // an obligation is how the board reopens.
+        guard outstandingDrawRequests == 0 else { return false }
         // An empty pool can only answer with the same broadcast again, and each
         // one clears a credit on the device that did not ask. Taking a waiting
         // tile above is never suppressed: accepting an obligation is how the
@@ -899,25 +1141,30 @@ public final class MatchSession {
             submitToHost(message)
 
         case let .grant(player, tiles):
-            // The host is the sole authority for the three cases below: it mints
+            // The host is the sole authority for the four cases below: it mints
             // them and applies its own half from `handle`'s return value, so one
             // arriving here is a modified peer minting tiles into the host's
             // rack, desyncing it from the pool, or latching exhaustion.
             guard hostPool == nil, player == localPlayerID else { break }
-            // `nil`: only ``applyGrant(_:requestedByLocal:)`` can tell whether
-            // this is the opening deal, and a credit must not be spent on one.
-            applyGrant(tiles, requestedByLocal: nil)
+            applyGrant(tiles)
+
+        case let .obligation(player, tiles):
+            guard hostPool == nil, player == localPlayerID else { break }
+            applyObligation(tiles)
 
         case let .swapGrant(player, tiles, returned):
             guard hostPool == nil, player == localPlayerID else { break }
             applySwapGrant(tiles: tiles, returned: returned)
 
-        case .poolExhausted:
+        case let .poolExhausted(requester):
             // A latch, not an end. A grant that arrives after this one — the
             // transport may reorder — is still applied above.
             guard hostPool == nil else { break }
             poolIsExhausted = true
-            clearOneOutstandingDraw()
+            // It reaches both devices, but it answers one request. Spending a
+            // credit on somebody else's refusal would reopen this device's Draw
+            // gate with its own request still in flight.
+            if requester == localPlayerID { clearOneOutstandingDraw() }
 
         case let .win(player, placements):
             // A device declares its own win. One naming this device as the
@@ -943,6 +1190,15 @@ public final class MatchSession {
                 reason,
                 answeredADraw: reason != .notEnoughTilesToSwap && reason != .swapDisabled
             )
+
+        case let .poolCount(remaining):
+            // Informational: the HUD's bag, nothing more. Exhaustion is still
+            // `poolExhausted`'s to latch. A device running the pool trusts only
+            // the pool; a count out of range came from a modified peer; and the
+            // pool never grows, so a larger count is a reordered, stale one.
+            guard hostPool == nil,
+                  (0...MatchLimits.poolSize).contains(remaining) else { break }
+            setPoolRemaining(min(storedPoolRemaining ?? remaining, remaining))
         }
     }
 
@@ -981,6 +1237,10 @@ public final class MatchSession {
         storedOptions = options
         // Wrap once, here, so the minimum reaches every existing reader of
         // `dictionary` — `canDraw` above included — instead of one call site.
+        // WILLA first, so a minimum above five still refuses it.
+        if !(dictionary is WillaWordList) {
+            dictionary = WillaWordList(base: dictionary)
+        }
         if options.minimumWordLength > MatchOptions.lengthRange.lowerBound {
             dictionary = MinimumLengthWordList(
                 base: dictionary,
@@ -996,7 +1256,14 @@ public final class MatchSession {
             max(0, start.startingHandSize),
             LetterDistribution.totalTiles / roster.count
         )
-        self.awaitingOpeningDeal = self.startingHandSize > 0
+        // Only the device holding the pool has a deal to owe: everyone else's
+        // opening hand arrives as a `.grant`. Armed on those devices too, and
+        // nothing ever cleared it — `dealOpeningHands()` returns at its
+        // `let hostPool` guard without reaching the line that does — so the
+        // flag stayed true for the whole match and `peerReturned` took the
+        // deal branch and returned before the resume countdown. Only the pool
+        // holder ever counted 3-2-1.
+        self.awaitingOpeningDeal = self.startingHandSize > 0 && start.host == localPlayerID
 
         if start.host == localPlayerID {
             let pool = Pool.standard(seed: start.seed)
@@ -1059,8 +1326,8 @@ public final class MatchSession {
     /// Deals both opening hands, once, from the host's pool.
     ///
     /// Only the host has a pool to deal from; the guest's hand arrives as a
-    /// `.grant` and lands through ``takeOpeningDeal(_:)``. Nothing happens on
-    /// the guest, and nothing happens twice.
+    /// `.grant` and lands through ``applyGrant(_:)``. Nothing happens on the
+    /// guest, and nothing happens twice.
     private func dealOpeningHands() {
         guard awaitingOpeningDeal, let hostPool else { return }
         // Closed synchronously, before the suspension: a peer returning restarts
@@ -1084,76 +1351,50 @@ public final class MatchSession {
                 // The grant addressed to the host never travels — this is where
                 // the host's own opening hand lands, as `applyProduced` does for
                 // a draw.
-                self.applyGrant(tiles, requestedByLocal: true)
+                self.applyGrant(tiles)
             }
         }
     }
 
-    /// Whether this grant is the opening deal, and closes the deal if it is.
+    /// Takes a granted tile into the rack.
     ///
-    /// ponytail: the phase carries what the wire cannot say, and it is a
-    /// heuristic. Wire v1 has one `.grant` case for both an opening deal and a
-    /// draw, and adding a second is a format break, so two triggers stand in for
-    /// the case that does not exist. Both can misfire:
+    /// A grant is only ever the answer to this device's own request or the
+    /// opening deal — the host addresses no other kind to it — and both land in
+    /// the rack, so there is nothing here to tell apart. Nobody requests the
+    /// deal, so the outstanding count decides the one thing that differs: a
+    /// deal spends no credit, because it answers nothing.
     ///
-    /// - **the phase trigger** takes the *first* grant arriving in `.countdown`
-    ///   as the deal, at any hand size. Sound only because the host gates
-    ///   `.drawRequest` on `state.status == .playing` and ``dealOpeningHands()``
-    ///   enqueues strictly before that flip, so on `.reliable` delivery the deal
-    ///   is always the first grant. Reorder or drop that one grant — a lossy
-    ///   link, a transport that does not keep order — and a one-tile round is
-    ///   read as a whole opening hand instead.
-    /// - **the count trigger** covers the two cases that leave no `.countdown`
-    ///   phase to read, by taking a first grant of exactly `startingHandSize`
-    ///   tiles: a zero-second countdown, and — the larger producer — a deal
-    ///   recovered from a freeze, which ``peerReturned()`` sends after the thaw
-    ///   at *any* countdown length, by which time the guest is already
-    ///   `.playing`. At `startingHandSize == 1` that is any round at all.
-    ///
-    /// `awaitingOpeningDeal` bounds either misfire to one grant, and the tiles
-    /// are real tiles from the real pool — the cost is one round taken into hand
-    /// instead of held behind the Draw button. Upgrade to the distinct `deal`
-    /// case at the pending wire v2 amendment, and delete all of this.
-    private func takeOpeningDeal(_ tiles: [Tile]) -> Bool {
-        guard awaitingOpeningDeal else { return false }
-        if case .countdown = state.status {
-            awaitingOpeningDeal = false
-            return true
-        }
-        guard tiles.count == startingHandSize else { return false }
-        awaitingOpeningDeal = false
-        return true
+    /// This replaced a heuristic that read the match phase and the tile count to
+    /// guess whether a grant was the deal. Both triggers had known misfires — a
+    /// dropped deal, or a hand size of one — and both are gone with the guess.
+    private func applyGrant(_ tiles: [Tile]) {
+        clearOneOutstandingDraw()
+
+        let fresh = unheld(tiles)
+        guard !fresh.isEmpty else { return }
+        state.hand.append(contentsOf: fresh)
     }
 
-    /// Takes a granted tile, or holds it behind the obligation.
+    /// Holds a tile behind the obligation.
     ///
-    /// A grant this device asked for goes straight to the rack. One it did not
-    /// means the opponent drew, so this device owes a tile for the same event
-    /// and the board freezes until the player presses Draw. The caller says
-    /// which: on the host it answered a request it can name, and only the wire
-    /// has to fall back on the outstanding-request count — pass `nil` for that,
-    /// and one credit is spent here on every grant that is not the opening deal.
-    private func applyGrant(_ tiles: [Tile], requestedByLocal: Bool?) {
-        // First, and whatever else is done with the grant: the deal is closed by
-        // the message that carried it, and it answers no request. A credit spent
-        // on it would leave the real answer uncredited, and the player owing a
-        // second press for a round they already took.
-        let isOpeningDeal = takeOpeningDeal(tiles)
-        let requested = requestedByLocal ?? (isOpeningDeal ? false : clearOneOutstandingDraw())
+    /// The opponent drew, so this device owes a tile for the same event and its
+    /// board stays frozen until the player presses Draw. Spends no credit: this
+    /// answers nothing this device asked for.
+    private func applyObligation(_ tiles: [Tile]) {
+        let fresh = unheld(tiles)
+        guard !fresh.isEmpty else { return }
+        pendingDrawTiles.append(contentsOf: fresh)
+    }
 
-        // A duplicated grant is peer input: taking it twice would double a tile
-        // into the rack and leave the two devices disagreeing about the pool.
+    /// The tiles of `tiles` this device is not already holding somewhere.
+    ///
+    /// A duplicated grant is peer input: taking it twice would double a tile
+    /// into the rack and leave the two devices disagreeing about the pool.
+    private func unheld(_ tiles: [Tile]) -> [Tile] {
         var held = Set(state.hand.map(\.id))
         held.formUnion(pendingDrawTiles.map(\.id))
         held.formUnion(state.board.placementList.map(\.tile.id))
-        let fresh = tiles.filter { !held.contains($0.id) }
-        guard !fresh.isEmpty else { return }
-
-        if requested || isOpeningDeal {
-            state.hand.append(contentsOf: fresh)
-        } else {
-            pendingDrawTiles.append(contentsOf: fresh)
-        }
+        return tiles.filter { !held.contains($0.id) }
     }
 
     /// Notes a refusal, and closes the request it answered.
@@ -1194,6 +1435,7 @@ public final class MatchSession {
         countdownTask?.cancel()
         heldCountdownSeconds = nil
         reconnectTask?.cancel()
+        reconnectSecondsOwed = nil
         // The window that cancel just closed will never resolve, so a presence
         // left at `.reconnecting` puts a banner and a countdown to a deadline
         // nothing reaches over an end screen — the same lie `peerDropped()`
@@ -1293,17 +1535,16 @@ public final class MatchSession {
         for message in produced {
             switch message {
             case let .grant(player, tiles) where player == localPlayerID:
-                // Closed, not consulted: a peer-initiated grant landing while
-                // this device has a Draw outstanding is still an obligation.
-                if requestedByLocal { clearOneOutstandingDraw() }
-                applyGrant(tiles, requestedByLocal: requestedByLocal)
+                applyGrant(tiles)
+            case let .obligation(player, tiles) where player == localPlayerID:
+                applyObligation(tiles)
             case let .swapGrant(player, tiles, returned) where player == localPlayerID:
                 applySwapGrant(tiles: tiles, returned: returned)
-            case .poolExhausted:
+            case let .poolExhausted(requester):
                 poolIsExhausted = true
-                // The broadcast names no requester; only the device that asked
-                // is owed an answer by it.
-                if requestedByLocal { clearOneOutstandingDraw() }
+                // The broadcast reaches both; only the device that asked is
+                // owed an answer by it.
+                if requester == localPlayerID { clearOneOutstandingDraw() }
             case let .rejected(reason) where requestedByLocal:
                 applyRejection(reason, answeredADraw: wasDrawRequest)
             default:

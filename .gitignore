@@ -9,3 +9,4 @@ xcuserdata/
 
 # Supabase credentials — never commit
 .env
+Config/Secrets.local.xcconfig

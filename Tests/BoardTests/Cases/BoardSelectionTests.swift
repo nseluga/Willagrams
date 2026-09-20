@@ -531,4 +531,179 @@ final class BoardSelectionTests: XCTestCase {
         XCTAssertTrue(model.selection.isEmpty, "an unindexable sample swept up the origin tile")
         XCTAssertTrue(model.selection.isActive, "an unindexable sample dropped the mode")
     }
+
+    // MARK: - The double tap seeds the set, and the set's SIZE decides the grab
+
+    func testADoubleTapOnALetterSelectsThatLetterAndNothingElse() throws {
+        // The bug this closes: entering with an empty set drew identically to
+        // being OUT of the mode, so a player who double-tapped a letter had no
+        // way to tell whether it took.
+        let row = (0...2).map { Coord(row: 0, col: $0) }
+        let board = board(row)
+        let before = board.placementList
+        var model = BoardModel()
+
+        model.enterSelection(at: centre(row[1]), on: board, camera: Self.camera)
+
+        XCTAssertTrue(model.selection.isActive, "a double tap on a letter did not enter selection mode")
+        XCTAssertEqual(model.selection.coords, [row[1]], "a double tap on a letter seeded \(model.selection.coords)")
+        XCTAssertEqual(rendersSelected(model, on: board), [row[1]], "the tapped letter does not render selected")
+        XCTAssertEqual(board.placementList, before, "a double tap moved a tile")
+    }
+
+    func testADoubleTapOnBareSurfaceEntersTheModeHoldingNothing() throws {
+        // The entry that already worked, kept: empty space must not become a
+        // second way to fail.
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel()
+
+        model.enterSelection(at: centre(Coord(row: 6, col: 6)), on: board, camera: Self.camera)
+
+        XCTAssertTrue(model.selection.isActive, "a double tap on bare surface did not enter selection mode")
+        XCTAssertTrue(model.selection.isEmpty, "a double tap on bare surface selected \(model.selection.coords)")
+    }
+
+    func testTheModeIsVisibleEvenWhenItHoldsNothing() throws {
+        // `selected` is empty both when the mode is off and when it was entered
+        // on bare surface, so the surface drew those two states identically and
+        // a double tap on empty space read as "nothing happened". `isSelecting`
+        // is the difference the border renders.
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel()
+        XCTAssertFalse(model.isSelecting, "a fresh model is already in selection mode")
+
+        model.enterSelection(at: centre(Coord(row: 6, col: 6)), on: board, camera: Self.camera)
+
+        XCTAssertTrue(model.isSelecting, "bare-surface entry left the mode invisible")
+        XCTAssertTrue(model.selected.isEmpty, "bare-surface entry selected \(model.selected)")
+    }
+
+    func testADoubleTapReplacesWhateverWasAlreadySweptUp() throws {
+        // A double tap is how a player starts over, which doubles as the way
+        // back from a sweep that took too much.
+        let row = (0...3).map { Coord(row: 0, col: $0) }
+        let board = board(row)
+        var model = swept([centre(row[0]), centre(row[3])], on: board)
+        XCTAssertEqual(model.selection.coords.count, 4, "the fixture swept \(model.selection.coords.count)")
+
+        model.enterSelection(at: centre(row[2]), on: board, camera: Self.camera)
+
+        XCTAssertEqual(model.selection.coords, [row[2]], "a double tap added to the sweep instead of replacing it")
+    }
+
+    func testASelectionOfOneSweepsFromItsOwnLetterRatherThanMovingIt() throws {
+        // The reported defect: after double-tapping a letter, starting the drag
+        // ON that letter moved it instead of selecting more.
+        let row = (0...2).map { Coord(row: 0, col: $0) }
+        let board = board(row)
+        let before = board.placementList
+        var model = BoardModel()
+        model.enterSelection(at: centre(row[0]), on: board, camera: Self.camera)
+
+        let grab = BoardGesture.Drag(
+            at: centre(row[0]), in: board, selection: model.selection, camera: Self.camera
+        ).grab
+        guard case .paint = grab else {
+            return XCTFail("a drag from the one seeded letter is \(grab), so it moves rather than sweeps")
+        }
+
+        // And it really does sweep: the seed plus everything the finger crosses.
+        sweep(&model, [centre(row[0]), centre(row[2])], on: board)
+        XCTAssertEqual(model.selection.coords, Set(row), "sweeping from the seed selected \(model.selection.coords)")
+        XCTAssertEqual(board.placementList, before, "sweeping from the seed moved a tile")
+    }
+
+    func testPastOneTheGrabMovesFromAMemberAndStillSweepsFromAnywhereElse() throws {
+        let row = (0...2).map { Coord(row: 0, col: $0) }
+        let loose = Coord(row: 3, col: 3)
+        let board = board(row + [loose])
+        var model = BoardModel()
+        model.enterSelection(at: centre(row[0]), on: board, camera: Self.camera)
+        sweep(&model, [centre(row[0]), centre(row[2])], on: board)
+        XCTAssertEqual(model.selection.coords.count, 3, "the fixture holds \(model.selection.coords.count)")
+
+        // A member, now that there IS a group: the group moves.
+        let held = BoardGesture.Drag(
+            at: centre(row[1]), in: board, selection: model.selection, camera: Self.camera
+        ).grab
+        guard case .tile(_, let coord) = held else {
+            return XCTFail("a member of a group of three is \(held), so the group cannot be moved")
+        }
+        XCTAssertEqual(coord, row[1])
+
+        // A letter outside the set, and bare surface: both still sweep.
+        for point in [centre(loose), centre(Coord(row: 8, col: 8))] {
+            let grab = BoardGesture.Drag(
+                at: point, in: board, selection: model.selection, camera: Self.camera
+            ).grab
+            guard case .paint = grab else { return XCTFail("a sweep outside the set is \(grab)") }
+        }
+    }
+
+    // MARK: - The entry touch is not its own exit
+
+    /// The iPad bug. The double tap and the drag under it are ONE touch, and on
+    /// iPad the tap recognizer fires first — so the drag is built with the mode
+    /// already active, takes the `.paint` arm, and its release, having crossed
+    /// nothing, runs the tap-on-empty-space exit. The border appeared and
+    /// vanished inside one gesture.
+    func testTheTouchThatEnteredTheModeDoesNotAlsoLeaveIt() throws {
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel(board: board, against: Self.dictionary)
+        let bare = centre(Coord(row: 8, col: 8))
+
+        model.enterSelection(at: bare, on: board, camera: Self.camera)
+        XCTAssertTrue(model.selection.isActive, "the double tap did not enter the mode")
+
+        // The same touch's drag, which crossed no tile because it never moved.
+        model.endedPainting(startedAt: bare)
+
+        XCTAssertTrue(
+            model.selection.isActive,
+            "the touch that entered selection mode immediately left it again"
+        )
+    }
+
+    /// And the way out still works: a LATER tap on empty space is a different
+    /// touch, so it clears — which is the only way a player leaves the mode.
+    func testAnExitTapAfterTheEntryTouchStillLeavesTheMode() throws {
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel(board: board, against: Self.dictionary)
+        let bare = centre(Coord(row: 8, col: 8))
+
+        model.enterSelection(at: bare, on: board, camera: Self.camera)
+        // The entry touch ends, exactly as `BoardView` reports it.
+        model.endedPainting(startedAt: bare)
+        model.endedSelectionEntryTouch()
+
+        // A second tap, on that very same spot.
+        model.endedPainting(startedAt: bare)
+
+        XCTAssertFalse(model.selection.isActive, "a tap on empty space no longer leaves the mode")
+    }
+
+    /// A tap somewhere else is a different touch on its face, so it leaves the
+    /// mode even while the entry point is still held.
+    func testATapAwayFromTheEntryPointLeavesTheModeAtOnce() throws {
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel(board: board, against: Self.dictionary)
+
+        model.enterSelection(at: centre(Coord(row: 8, col: 8)), on: board, camera: Self.camera)
+        model.endedPainting(startedAt: centre(Coord(row: 2, col: 2)))
+
+        XCTAssertFalse(model.selection.isActive, "a tap elsewhere did not leave the mode")
+    }
+
+    func testALockedSurfaceRefusesASeededEntryToo() throws {
+        // The spatial entry is a second door into the mode, so it needs the
+        // same lock the plain one has.
+        let board = board([Coord(row: 0, col: 0)])
+        var model = BoardModel(inputLocked: true)
+
+        model.enterSelection(at: centre(Coord(row: 0, col: 0)), on: board, camera: Self.camera)
+
+        XCTAssertFalse(model.selection.isActive, "a locked surface entered selection mode through a double tap")
+        XCTAssertTrue(model.selection.isEmpty, "a locked surface seeded \(model.selection.coords)")
+    }
 }
+

@@ -228,9 +228,9 @@ struct MatchSessionTests {
         let mostInFlight = await probe.mostInFlight
 
         #expect(mostInFlight == 1)
-        // The start, then one grant per round to the peer. The grant addressed
-        // to the host never travels.
-        #expect(sent.count == rounds + 1)
+        // The start, then per round the peer's grant and the pool count. The
+        // grant addressed to the host never travels.
+        #expect(sent.count == 2 * rounds + 1)
     }
 
     @Test("A start on an unknown wire version is ignored rather than trusted")
@@ -271,14 +271,14 @@ struct MatchSessionTests {
         )
         try await Self.waitUntil("the guest to start playing") { guest.state.status == .playing }
 
-        try await first.send(.poolExhausted, delivery: .reliable)
+        try await first.send(.poolExhausted(requester: PlayerID(rawValue: "bob")), delivery: .reliable)
         try await Self.waitUntil("the exhaustion latch") { guest.poolIsExhausted }
         #expect(guest.state.status == .playing)
 
         // Reordered behind the latch. It is still this device's tile.
         let late = Tile(letter: "Q")
         try await first.send(
-            .grant(player: PlayerID(rawValue: "bob"), tiles: [late]),
+            .obligation(player: PlayerID(rawValue: "bob"), tiles: [late]),
             delivery: .reliable
         )
         try await Self.waitUntil("the late grant") { guest.hasPendingDraw }

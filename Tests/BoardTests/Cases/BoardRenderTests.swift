@@ -347,4 +347,131 @@ final class BoardRenderTests: XCTestCase {
             XCTAssertEqual(camera.coord(at: CGPoint(x: entry.point.x + size / 2, y: entry.point.y + size / 2)), entry.coord)
         }
     }
+
+    // MARK: - Arrival transition: only an id actually arriving flies in
+
+    /// A pan changes which coords `cells(board:camera:in:)` returns, so a tile
+    /// already on the board can be re-inserted into `BoardView`'s ForEach just
+    /// by scrolling back into view. That must not replay the bag flight — only
+    /// an id the caller names as `arriving` gets it, whether or not it also
+    /// happens to be newly visible.
+    func testArrivalTransitionIsFromBagOnlyForArrivingIDs() {
+        let arriving = UUID()
+        let onlyNewlyVisible = UUID()
+
+        XCTAssertEqual(
+            BoardRender.arrivalTransition(for: arriving, arriving: [arriving]),
+            .fromBag,
+            "an id in arriving must fly in from the bag"
+        )
+        XCTAssertEqual(
+            BoardRender.arrivalTransition(for: onlyNewlyVisible, arriving: [arriving]),
+            .none,
+            "a tile that merely scrolled back into view, and is not in arriving, must not fly in"
+        )
+    }
+
+    /// Real culling, not a bare id: two tiles start culled and a pan brings
+    /// both into view. The arriving one still flies (arriving beats
+    /// visibility); the old one does not; once the arrival has expired
+    /// (caller passes an empty set) neither does.
+    func testPanIntoViewArrivingStillFliesOldTileAndExpiredArrivalDoNot() {
+        var board = Board()
+        let arrivingTile = Tile(letter: "N")
+        let oldTile = Tile(letter: "O")
+        try? board.place(arrivingTile, at: Coord(row: 0, col: 20))
+        try? board.place(oldTile, at: Coord(row: 1, col: 20))
+        let rect = Self.viewport
+
+        let before = Set(BoardRender.cells(board: board, camera: Self.camera(framing: 0, 0), in: rect).compactMap { $0.tile?.id })
+        let after = Set(BoardRender.cells(board: board, camera: Self.camera(framing: 0, 10), in: rect).compactMap { $0.tile?.id })
+        let newlyVisible = after.subtracting(before)
+        XCTAssertEqual(newlyVisible, [arrivingTile.id, oldTile.id], "fixture: both tiles must be culled first, then panned into view")
+
+        XCTAssertEqual(BoardRender.arrivalTransition(for: arrivingTile.id, arriving: [arrivingTile.id]), .fromBag,
+                       "an arriving tile that is also newly visible must still fly in")
+        XCTAssertEqual(BoardRender.arrivalTransition(for: oldTile.id, arriving: [arrivingTile.id]), .none,
+                       "an old tile panned into view must not fly in")
+        XCTAssertEqual(BoardRender.arrivalTransition(for: arrivingTile.id, arriving: []), .none,
+                       "an expired arrival panned into view later must not fly in")
+    }
+
+    // MARK: - Deal animation trigger: never the culled draw list
+
+    /// Why `BoardSurface` cannot key its deal animation on the tiles it is
+    /// drawing: the board here never changes, yet a pan changes the id set
+    /// `cells(board:camera:in:)` returns, so an `.animation(value:)` over that
+    /// set restarts a `dealDuration` ease over every tile's offset on every
+    /// pan, pinch, recenter and the opening framing — the letters trailing the
+    /// grid. The trigger the surface actually uses is the owner's delivery
+    /// token, which this fixture shows is the only one of the two that holds
+    /// still while the camera moves; that it is the value wired in is pinned in
+    /// `BoardSourceTests`.
+    func testCulledDrawListIsNotUsableAsAnAnimationTrigger() {
+        var board = Board()
+        let near = Tile(id: UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!, letter: "A")
+        let far = Tile(id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B2")!, letter: "B")
+        try? board.place(near, at: Coord(row: 0, col: 0))
+        try? board.place(far, at: Coord(row: 1, col: 20))
+        let rect = Self.viewport
+
+        let drawnHere = Set(BoardRender.cells(board: board, camera: Self.camera(framing: 0, 0), in: rect).compactMap { $0.tile?.id })
+        let drawnPanned = Set(BoardRender.cells(board: board, camera: Self.camera(framing: 0, 10), in: rect).compactMap { $0.tile?.id })
+
+        XCTAssertNotEqual(
+            drawnHere, drawnPanned,
+            "a pan alone changes the drawn id set, so it cannot be the deal animation's trigger"
+        )
+        XCTAssertFalse(drawnHere.contains(far.id), "fixture: the far tile starts culled")
+        XCTAssertTrue(drawnPanned.contains(far.id), "fixture: the pan brings it into view")
+    }
+
+    // MARK: - Arrival gate: a fresh view does not re-fly a delivered hand
+
+    /// `ShellRootView` builds the match screen's `BoardView` fresh, after the
+    /// countdown arm already delivered the opening hand, so a gate that starts
+    /// at "nothing delivered" re-flies the whole hand from the bag corner. A
+    /// freshly built gate seeded from an owner already at token N owes N
+    /// nothing; N+1 is a real draw and still flies.
+    func testFreshGateDoesNotReFlyAnAlreadyDeliveredBatch() {
+        let hand: Set<UUID> = [UUID(), UUID()]
+        var gate = BoardRender.ArrivalGate()
+
+        XCTAssertEqual(gate.active(hand, token: 3), [],
+                       "before it is seeded, a fresh gate flies nothing at all")
+        XCTAssertFalse(gate.begin(token: 3, arriving: hand),
+                       "the first token a fresh gate sees was delivered before it existed")
+        XCTAssertEqual(gate.active(hand, token: 3), [],
+                       "and that same token must stay grounded once seeded")
+
+        XCTAssertTrue(gate.begin(token: 4, arriving: hand),
+                      "the next delivery is a real draw and must fly")
+        XCTAssertEqual(gate.active(hand, token: 4), hand,
+                       "its ids are the ones handed to the surface as arriving")
+    }
+
+    /// The batch expires as a whole, so an id culled for the entire flight does
+    /// not fly in later when a pan re-inserts it.
+    func testGateExpiresTheWholeBatchOnFinish() {
+        let hand: Set<UUID> = [UUID()]
+        var gate = BoardRender.ArrivalGate()
+        _ = gate.begin(token: 0, arriving: [])
+        XCTAssertTrue(gate.begin(token: 1, arriving: hand))
+        gate.finish(token: 1)
+        XCTAssertEqual(gate.active(hand, token: 1), [],
+                       "a spent batch must not fly again on a pan")
+        XCTAssertFalse(gate.begin(token: 1, arriving: hand),
+                       "and a re-run of the same token must not restart it")
+    }
+
+    /// An empty delivery is not a flight, and must not leave the gate behind
+    /// where a later token would look like two deliveries.
+    func testEmptyDeliveryDoesNotFlyAndStillAdvancesTheGate() {
+        var gate = BoardRender.ArrivalGate()
+        _ = gate.begin(token: 1, arriving: [])
+        XCTAssertFalse(gate.begin(token: 2, arriving: []), "an empty batch has nothing to fly")
+        let hand: Set<UUID> = [UUID()]
+        XCTAssertFalse(gate.begin(token: 2, arriving: hand), "token 2 is already spent")
+        XCTAssertTrue(gate.begin(token: 3, arriving: hand), "token 3 is the next real delivery")
+    }
 }

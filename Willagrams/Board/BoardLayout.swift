@@ -42,19 +42,112 @@ public enum BoardLayout {
         laid(tiles, on: Board(), from: Coord(row: 0, col: 0), across: openingWidth(for: tiles.count))
     }
 
-    /// Tiles delivered by a Draw, landing in free cells below whatever is
-    /// currently on screen so the player sees them without moving the camera.
+    /// Tiles delivered by a Draw, landing in the free cells nearest the
+    /// player's largest connected cluster: directly below it first, then
+    /// beside it, then outward. While the cluster is on screen, cells inside
+    /// `rect` minus `insets` (the chrome) are preferred over every other.
+    ///
+    /// A board with no cluster of two or more tiles — empty, or the loose
+    /// opening deal — keeps the viewport rule in ``viewportDelivered``.
+    /// Never overwrites, never refuses, never throws.
+    public static func delivered(
+        _ tiles: [Tile],
+        onto board: Board,
+        camera: BoardCamera,
+        in rect: CGRect,
+        insets: BoardInsets = .zero
+    ) -> Board {
+        guard !tiles.isEmpty else { return board }
+        guard let cluster = largestCluster(on: board), cluster.count > 1 else {
+            return viewportDelivered(tiles, onto: board, camera: camera, in: rect)
+        }
+
+        let minRow = cluster.map(\.row).min()!, maxRow = cluster.map(\.row).max()!
+        let minCol = cluster.map(\.col).min()!, maxCol = cluster.map(\.col).max()!
+        // Rows and columns off the bounding box, 0 inside its span.
+        func rowGap(_ c: Coord) -> Int { c.row > maxRow ? c.row - maxRow : max(0, minRow - c.row) }
+        func colGap(_ c: Coord) -> Int { c.col > maxCol ? c.col - maxCol : max(0, minCol - c.col) }
+        // Below the box (0), beside it (1), anything else (2); then nearest,
+        // then reading order — a total order, so the answer is deterministic.
+        func rank(_ c: Coord) -> (Int, Int, Int, Int) {
+            let tier = c.row > maxRow && colGap(c) == 0 ? 0 : (rowGap(c) == 0 ? 1 : 2)
+            return (tier, rowGap(c) + colGap(c), c.row, c.col)
+        }
+
+        let clear = insets.inset(rect)
+        let size = camera.cellSize
+        func onScreen(_ c: Coord) -> Bool {
+            clear.contains(CGRect(origin: camera.point(for: c), size: CGSize(width: size, height: size)))
+        }
+        // ponytail: a fixed ring of `step * (count + 1)` cells round the box
+        // is searched, O(box area) per delivery — the fallback below still
+        // places anything it could not. Widen when deliveries grow past a few.
+        let reach = step * (tiles.count + 1)
+        var candidates: [Coord] = []
+        for row in (minRow - reach)...(maxRow + reach) {
+            for col in (minCol - reach)...(maxCol + reach) { candidates.append(Coord(row: row, col: col)) }
+        }
+        candidates.sort { rank($0) < rank($1) }
+        if cluster.contains(where: onScreen) {
+            // Stable partition: cells the player can see first, each half
+            // keeping its below/beside/outward order.
+            candidates = candidates.filter(onScreen) + candidates.filter { !onScreen($0) }
+        }
+
+        var next = board
+        var index = 0
+        for coord in candidates where index < tiles.count {
+            guard isVacant(coord, on: next), (try? next.place(tiles[index], at: coord)) != nil else { continue }
+            index += 1
+        }
+        guard index < tiles.count else { return next }
+        // Every nearby cell was blocked: carry on down from under the box,
+        // where the board is unbounded and so always has another free row.
+        return laid(
+            Array(tiles[index...]), on: next,
+            from: Coord(row: maxRow + reach + step, col: minCol),
+            across: (maxCol - minCol) / step + 1
+        )
+    }
+
+    /// The largest connected group of tiles (edge neighbours), ties going to
+    /// the group whose topmost-leftmost tile comes first in reading order.
+    /// Nil on an empty board.
+    static func largestCluster(on board: Board) -> [Coord]? {
+        var unseen = Set(board.placementList.map(\.coord))
+        var best: [Coord]?
+        func first(_ group: [Coord]) -> Coord { group.min { ($0.row, $0.col) < ($1.row, $1.col) }! }
+        while let seed = unseen.first {
+            var group: [Coord] = []
+            var frontier = [seed]
+            unseen.remove(seed)
+            while let coord = frontier.popLast() {
+                group.append(coord)
+                for n in coord.neighbors where unseen.remove(n) != nil { frontier.append(n) }
+            }
+            if let current = best {
+                let a = first(group), b = first(current)
+                if group.count > current.count
+                    || (group.count == current.count && (a.row, a.col) < (b.row, b.col)) { best = group }
+            } else {
+                best = group
+            }
+        }
+        return best
+    }
+
+    /// The rule for a board with no cluster yet: free cells below whatever is
+    /// currently on screen, so the player sees them without moving the camera.
     ///
     /// Prefers the rows still inside `rect` and carries on below it only once
-    /// those are used up. Never overwrites, never refuses, never throws: the
-    /// board is unbounded downward, so there is always another free row.
-    public static func delivered(
+    /// those are used up. The board is unbounded downward, so there is always
+    /// another free row.
+    static func viewportDelivered(
         _ tiles: [Tile],
         onto board: Board,
         camera: BoardCamera,
         in rect: CGRect
     ) -> Board {
-        guard !tiles.isEmpty else { return board }
 
         let visible = Array(camera.visibleCoords(in: rect))
         // A degenerate frame (a `GeometryReader`'s first zero-size pass) has no
@@ -88,8 +181,9 @@ public enum BoardLayout {
 
     // MARK: - Framing
 
-    /// `camera` framing every tile on `board` with `margin` points of clear
-    /// viewport around the block.
+    /// `camera` framing every tile on `board` inside `rect` minus `insets` (the
+    /// chrome drawn over the board), with `margin` points of clear viewport
+    /// around the block. Never zooms in past the camera's default cell size.
     ///
     /// The framing itself is `BoardCamera.recenter` — this only hands it an
     /// inset rect, so there is no second implementation of fitting content to
@@ -98,9 +192,14 @@ public enum BoardLayout {
         _ board: Board,
         in rect: CGRect,
         camera: BoardCamera,
-        margin: CGFloat = openingMargin
+        margin: CGFloat = openingMargin,
+        insets: BoardInsets = .zero
     ) -> BoardCamera {
-        camera.recenter(over: board.placementList.map(\.coord), in: rect.insetBy(dx: margin, dy: margin))
+        camera.recenter(
+            over: board.placementList.map(\.coord),
+            in: insets.inset(rect).insetBy(dx: margin, dy: margin),
+            ceiling: camera.baseCellSize
+        )
     }
 
     // MARK: - The one free-cell search
@@ -155,5 +254,33 @@ public enum BoardLayout {
     /// Lattice columns wide enough to hold `count` tiles in `openingRows` rows.
     private static func openingWidth(for count: Int) -> Int {
         max(1, Int((Double(count) / Double(openingRows)).rounded(.up)))
+    }
+}
+
+/// Points of the viewport covered by chrome on each edge. SwiftUI-free
+/// stand-in for `EdgeInsets`, so framing stays host-testable.
+public struct BoardInsets: Equatable, Sendable {
+    public var top: CGFloat
+    public var leading: CGFloat
+    public var bottom: CGFloat
+    public var trailing: CGFloat
+
+    public init(top: CGFloat = 0, leading: CGFloat = 0, bottom: CGFloat = 0, trailing: CGFloat = 0) {
+        self.top = top
+        self.leading = leading
+        self.bottom = bottom
+        self.trailing = trailing
+    }
+
+    public static let zero = BoardInsets()
+
+    /// `rect` with these edges taken off (left-to-right layout).
+    public func inset(_ rect: CGRect) -> CGRect {
+        CGRect(
+            x: rect.minX + leading,
+            y: rect.minY + top,
+            width: rect.width - leading - trailing,
+            height: rect.height - top - bottom
+        )
     }
 }

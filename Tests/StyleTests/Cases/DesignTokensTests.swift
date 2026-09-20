@@ -21,8 +21,9 @@ struct DesignTokensTests {
     static let added: [String: [String]] = [
         "Palette": ["canvasTop", "canvasBottom", "surface", "ink", "onInk",
                     "onAccent", "accentPressed", "hairline", "cellEmpty"],
+        "Space": ["screenMargin", "screenMarginCompact", "screenMarginPhone"],
         "Radius": ["cell", "pill"],
-        "Typography": ["display", "button", "monoLabel"],
+        "Typography": ["display", "button", "buttonCompact", "monoLabel"],
         "Motion": ["tileLift"],
     ]
 
@@ -99,6 +100,21 @@ struct DesignTokensTests {
         for line in typography.split(separator: "\n") where line.contains("= Font.") {
             #expect(line.contains("Font.brand") || line.contains("Font.mono"), "unbundled face: \(line.trimmingCharacters(in: .whitespaces))")
         }
+    }
+
+    @Test("The compact screen margin is smaller than the regular one")
+    func compactScreenMarginIsSmaller() {
+        let space = Self.group("Space")
+
+        func literal(_ key: String) -> Double? {
+            StyleRepo.matches(#"static let \#(key): CGFloat = ([0-9.]+)"#, in: space).first.flatMap(Double.init)
+        }
+
+        guard let margin = literal("screenMargin"), let compact = literal("screenMarginCompact") else {
+            Issue.record("screenMargin / screenMarginCompact literal not found")
+            return
+        }
+        #expect(compact < margin)
     }
 
     @Test("No style source carries a raw hex literal")

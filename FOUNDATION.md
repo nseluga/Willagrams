@@ -390,3 +390,247 @@ What it means for each remaining lane, stated here so no lane discovers it:
 `Willagrams.entitlements` therefore stays empty this round, and its comment
 already says why. Adding the key is a one-line Reviewer edit the day the
 membership is active — not an amendment, because this entry is the amendment.
+
+## Amendment — join by invite code (written and applied live 2026-09-01)
+
+Found during `/lane online`, before any item ran. `matches` is readable only by
+its host or a row in `match_players`, and joining is what creates that row — so
+a player holding a six-character invite code cannot resolve it to a match and
+cannot join. `docs/schema.md` said "the invite code is the capability" and
+nothing let a non-participant spend it. `BackendClient.joinMatch(inviteCode:)`
+was unimplementable against the schema as frozen.
+
+Nothing in the frozen shape moves. No table, column, constraint or row type
+changes; `BackendContracts.swift` is untouched. One policy does change:
+`match_players_insert_self` is tightened so a direct insert is only the host
+seating itself in its own lobby — as `0001` wrote it, any signed-in player
+could seat themselves in any match by id and walk around `join_match`'s
+lobby and cap guards. The `0002` guardrail —
+"this is the **only** `security definer` function" — is widened to two, each
+narrowly scoped: one boolean about the caller, and one join that reads a match
+by code only after seating the caller in it.
+
+- task: Let a non-participant join a lobby match by its invite code
+  done when:
+    - `supabase/migrations/0003_join_match.sql` declares
+      `public.join_match(code text) returns public.matches`, `language plpgsql`,
+      `security definer`, `set search_path = public, pg_temp`; execute revoked
+      from `public`, granted to `authenticated`
+    - it raises `42501` with no signed-in caller, `P0002` when no `lobby` match
+      carries `upper(code)` (a started match and a nonexistent code are
+      deliberately indistinguishable), `P0005` when six players are already
+      seated; otherwise it inserts the caller's `match_players` row and returns
+      the match, and a repeat call returns the same row without a second insert
+    - `match_players_insert_self` is recreated with `auth.uid() = player_id`
+      and the target match hosted by the caller, in `lobby`, holding fewer than
+      six players; a non-host self-insert into any match raises, and so does a
+      host self-insert once its match is `playing`
+    - the lobby row is locked `for update` so two callers racing for the last
+      seat cannot both count five
+    - `supabase/tests/rls_behavior.sql` asserts all of the above as a stranger
+      (33 assertions), and both SQL fixtures run twice in either order leaving
+      `public` clean — verified locally against the runbook in `docs/schema.md`
+    - the migration is applied to the live project and both fixtures pass there
+  guardrails:
+    - this function is the only thing in the schema that reads `matches` by
+      `invite_code`; no policy does, and none is to be added — a readable
+      six-character space is an oracle the anon key can walk
+    - the literal `6` is `MatchLimits.players.upperBound` duplicated on purpose,
+      in both the function and the insert policy; the three move together or
+      not at all
+    - `P0004` is `assert_failure`, which a plpgsql `when others` does not catch,
+      so it is never used as a contract code
+  risk: without this, the `online` lane ships a host nobody can reach — every
+        `FakeBackend` test stays green and the first real invite returns
+        `notFound`
+  difficulty: low — the `0002` pattern, one function
+  status: done — applied to `ynkayuwwrifluhhqnrjc` by psql over the us-west-2 session pooler (the project has no `supabase_migrations` ledger; 0001 and 0002 were applied the same way), both fixtures pass there five runs alternating; `join_match` also revoked from `anon`, which Supabase's default privileges had granted
+
+The error contract the Swift client maps: `42501` → `notAuthenticated`,
+`P0002` → `notFound`, `P0005` → `matchFull`.
+
+## Amendment — the stats bump is a delta, not a value (written 2026-09-02)
+
+Found reviewing the outcome recorder after the first live online run. Nothing in
+the frozen shape moves: no table, column, constraint, row type or policy
+changes, and `BackendContracts.swift` is untouched. What changes is one protocol
+inside `Willagrams/Online/**`, which no other lane implements.
+
+`MatchOutcomeRecorder` recorded a finished match by reading the player's
+`profiles` row, computing the four counters from it in Swift, and PATCHing the
+whole value back. That is a read-modify-write across two round trips. The
+counters are a tally nothing recomputes — `0001_init.sql` says so in as many
+words — so a player finishing two matches inside that window has both writes
+computed from the same `before` row, and the second silently erases the first.
+Nothing raises, no test against a double notices, and the match is gone for
+good. This is the same false-negative shape the recorder's own header names.
+
+The `0002` guardrail — the definer functions in this schema are few and each
+narrowly scoped — is widened from two to three. The reasoning is in the
+migration's header and is not the obvious one: the first draft was `security
+invoker`, on the grounds that `profiles_update_self` already grants a player
+their own row, and it was run before it was believed. It fails twice. As
+invoker the body executes with the caller's privileges, so `auth.uid()` becomes
+a grant on the `auth` schema the `authenticated` role must hold rather than a
+given — against the stub in `docs/schema.md` it raises `permission denied for
+schema auth` before reaching the update. And under a policy, a row the caller
+may not update is zero rows rather than an error, so the function's `not found`
+branch could not tell "you have no profile row" from "the policy hid it" and
+would report the second as `P0002` → `notFound`. Definer removes both.
+
+- task: Make one finished match one atomic increment on the player's own row
+  done when:
+    - `supabase/migrations/0004_record_outcome.sql` declares
+      `public.record_outcome(won boolean, tiles integer, elapsed_seconds integer)
+      returns public.profiles`, `language plpgsql`, `security definer`, with
+      `set search_path = public, pg_temp`; execute revoked from `public` and
+      from `anon`, granted to `authenticated`
+    - it takes **no player id** — the row is `auth.uid()` — and raises `42501`
+      with no signed-in caller, `P0002` when that caller has no `profiles` row
+    - every counter is written as `column + n` inside one UPDATE, so the row the
+      increment reads is the row it writes
+    - `fastest_win_seconds` moves only on a win and only downwards, via
+      `least`, which ignores nulls and so covers the first win with no branch;
+      elapsed floors at 1 and tiles floor at 0, both because the column's own
+      check says so
+    - `MatchOutcomeStore` drops `updateProfile(_:_:)` for
+      `recordOutcome(_:won:tilesPlaced:elapsedSeconds:) -> Profile`, and
+      `SupabaseOutcomeQueries` implements it as one `rpc("record_outcome")`
+    - `supabase/tests/rls_behavior.sql` asserts the five rules, the caller's own
+      row, another player's row untouched, and both error codes — 45 assertions
+      in total, up from 33 — and both SQL fixtures run twice in either order
+      leaving `public` clean
+    - OnlineTests is green offline
+  guardrails:
+    - `ProfileStats.after` stays, and stays tested. It is now the offline model
+      of what the function does rather than production code, duplicated on
+      purpose the way `0003`'s `6` is: every offline `MatchOutcomeStore` double
+      applies it, the migration states the same five rules in SQL, and the two
+      move together or not at all. `MatchOutcomeRecorderLiveTests` is the only
+      crossing that can prove they still agree — a Swift-only run cannot
+    - the function touches four columns and no others. `display_name` and
+      `friend_code` stay reachable only through `profiles_update_self`
+    - the client keeps its `didRecordStats` latch. Atomic is not idempotent —
+      calling this twice records two matches, correctly. "Exactly once" is still
+      the recorder's, and a failed write is still not retried
+  risk: the failure this removes writes nothing to any log and raises nothing.
+        A counter that is one short looks exactly like a player who played one
+        fewer match, on the one table the schema deliberately never recomputes
+  difficulty: low to write; the invoker-first draft is the part worth reading
+  status: **done, and live on `ynkayuwwrifluhhqnrjc` as of 2026-09-02.** Proven
+        first on a scratch database — 45 assertions, both fixtures twice in
+        either order, nine mutations of the function each confirmed to turn the
+        suite red — then applied to the project, where `record_outcome` stands
+        alongside the other two definer functions with `search_path` pinned. The
+        live OnlineTests run green, including `MatchOutcomeRecorderLiveTests`,
+        which is the only crossing that can prove `ProfileStats.after` and the
+        SQL still agree. The database password is in the `fnd` worktree's
+        `.env`, written there by `scripts/supabase-setup.sh`; `scripts/apply-0004-live.sh`
+        is the runner and `scripts/scratch-verify.sh` the offline one
+
+
+## Open risk — Realtime broadcast is not ordered (found 2026-09-02)
+
+  task: give `WireEnvelope` a per-sender sequence number and have the receiving
+        transport deliver in that order, holding a gap briefly before giving up
+        on it
+  why:  `RealtimeMatchTransportLiveTests` sent twenty messages each way, awaiting
+        each send before the next, and they arrived transposed — `host-0` behind
+        `host-3` — on roughly one live run in two. The sends are sequential, so
+        the reordering is the server's fan-out. Supabase Realtime broadcast is
+        best-effort ordered and makes no sequencing promise across a fan-out
+  found by: the assertion that used to demand strict order. It was narrowed to a
+        multiset comparison, which is what the platform actually guarantees, so
+        the suite no longer flakes — and no longer covers this. That is why the
+        risk is written here rather than left in a comment
+  risk: **this is a real defect, not a test artifact.** The match protocol
+        applies moves in the order they arrive. Two moves that cross put the two
+        devices in different board states with nothing raised, which is the same
+        silent-divergence shape `0004` was written to remove from the stats
+  guardrails:
+    - the fix belongs to whichever lane owns the wire format, not to a test
+    - a sequence number is not a delivery guarantee. Exactly-once is already
+      covered; ordering is the missing half
+    - the offline stub channel delivers in send order, so no offline case can
+      fail on this. It needs a live case, or a stub that deliberately transposes
+  difficulty: medium — the buffering-and-timeout policy is the whole of it
+  status: open. Not scheduled to a lane yet
+
+
+## Amendment — wire v4, the pool count reaches every player (2026-09-14)
+
+Found in the two-device hand test: the guest's bag shows no number for the whole
+match. `MatchSession.poolRemaining` is `nil` off-host by design, and no message
+carries the count. MAP.md's pool-count grant deferred exactly this as a v4 break.
+There are no users yet, so the break is free now and gets costly later.
+
+- task: Bump the wire to v4 and carry the host's pool count
+  done when:
+    - `WireFormat.current == 4`; `MatchMessage` gains one trailing case
+      `poolCount(remaining: Int)`; no other case changes shape or position
+    - `Tests/WillagramsRulesTests/Fixtures/wire-v4.json` replaces the v3 fixture
+      and decodes into all 14 messages, the last `{"poolCount":{"remaining":98}}`.
+      Both `MatchMessageTests` and `MatchCodecTrustBoundaryTests` assert it
+      against hand-built literals
+    - `MatchCodec.decode` still refuses any start whose version is not current,
+      so a v3 build meeting a v4 start refuses it at the lobby, never mid-match
+    - `MatchSession.receive` accepts the case and does nothing with it yet.
+      Engine 53, MatchTests 125 and OnlineTests offline stay green
+  guardrails:
+    - informational only: the host's pool stays the one authority. A guest never
+      draws, swaps or latches exhaustion from this value; `poolExhausted` still
+      does that
+    - untrusted on receipt: a receiver drops `remaining < 0` or
+      `> MatchLimits.poolSize`, and a device that runs the pool ignores it
+    - the count never rises inside a match (a draw takes one per player; a swap
+      takes three and returns one), so a receiver keeps the lowest count it has
+      seen. Realtime broadcast is not ordered (the open risk above), and this
+      makes a late message harmless rather than a jump upward
+  risk: a case added or reordered after a build ships breaks decode between two
+        app versions — silent, surfacing as a match that just stops
+  difficulty: low — one case and a fixture regeneration
+  status: done — the shape. Sending it (`HostPool`, after the deal, every grant
+        round and every swap) and showing it on the guest is the `polish` lane's
+
+
+## Amendment — wire v5, the host says which tiles were asked for (2026-09-18)
+
+Found in two-device play: hammering Draw late in a match hands out a burst of
+tiles and forces the opponent to draw over and over until the bag empties. The
+in-flight guard added on `lane/final-polish` fixes the pure-latency half; this
+is the other half, and it is a wire defect.
+
+A draw gives *every* player a tile, so a device received tiles for two different
+reasons and both arrived as `.grant(player: me, …)` — byte-identical. The
+receiver told them apart by guessing from its own count of unanswered requests.
+The guess is wrong whenever the two cross on the wire, which is both players
+drawing at once — routine once the rack is full and the bag is low, which is why
+it read as "only near the bottom of the bag". Being wrong spends the credit on
+the opponent's round, drops that tile into the rack instead of behind the Draw
+gate, and reopens the gate with a real request still in flight.
+
+- task: Bump the wire to v5 and name the requester
+  done when:
+    - `WireFormat.current == 5`; `MatchMessage` gains a trailing
+      `obligation(player:tiles:)`, and `poolExhausted` gains
+      `requester: PlayerID`; no other case changes shape or position
+    - `Tests/WillagramsRulesTests/Fixtures/wire-v5.json` replaces the v4 fixture
+      and decodes into all 15 messages. `MatchMessageTests` and
+      `MatchCodecTrustBoundaryTests` assert it against hand-built literals
+    - `HostPool.answer` is the only minting site: the asker gets `.grant`,
+      everybody else `.obligation`. `deal(handSize:)` still grants to all —
+      an opening hand goes to the rack
+    - `MatchSession` reads nothing from the phase or the tile count to decide
+      where a tile lands. `takeOpeningDeal` and its two documented misfires are
+      deleted
+  guardrails:
+    - `outstandingDrawRequests` no longer classifies anything. It is the
+      in-flight count and only `draw()` reads it
+    - `poolExhausted` reaches both devices — both boards need the latch — but
+      only the named requester spends a credit on it
+    - a duplicate of either case is still dropped by id (`unheld`), so a
+      replayed message cannot double a tile into the rack
+  risk: same as v4 — a case added or reordered after a build ships breaks decode
+        between two app versions, silently
+  difficulty: low — one case, one associated value, a fixture regeneration
+  status: done on `lane/final-polish`

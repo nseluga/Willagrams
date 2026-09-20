@@ -99,3 +99,51 @@ public enum HowToPlay {
         ),
     ]
 }
+
+/// Paging state for the rules screen, one rule per page. A plain value rather
+/// than an `@Observable` model: it holds nothing but a page number, so
+/// `HowToPlayView` keeps it in a `@State` and the logic is reachable from
+/// `swift test` without SwiftUI in the picture.
+///
+/// 1-indexed throughout — ``page`` and ``pageLabel`` both count the way the
+/// comp's "N OF M" label does, so nothing has to add 1 to display it.
+public struct HowToPlayPager: Hashable, Sendable {
+
+    /// How many rules there are to page through.
+    public let count: Int
+
+    /// The page on screen, 1...``count``.
+    public private(set) var page: Int
+
+    /// Starts on page 1 — the first rule, before any ``next()``.
+    public init(count: Int) {
+        self.count = max(count, 1)
+        self.page = 1
+    }
+
+    /// The rule this page shows.
+    public var index: Int { page - 1 }
+
+    public var isLastPage: Bool { page == count }
+
+    /// What the primary button at the bottom reads: "Next" until the last
+    /// page, then "Done".
+    public var primaryLabel: String { isLastPage ? "Done" : "Next" }
+
+    /// The mono label at the top, e.g. "1 OF 6".
+    public var pageLabel: String { "\(page) OF \(count)" }
+
+    /// Advances one page. Does nothing past the last page — the view reads
+    /// ``isLastPage`` and leaves the screen instead of calling this.
+    public mutating func next() {
+        guard page < count else { return }
+        page += 1
+    }
+
+    /// Steps back one page. Clamped at page 1 — there is nowhere to go back
+    /// to from the first rule.
+    public mutating func back() {
+        guard page > 1 else { return }
+        page -= 1
+    }
+}

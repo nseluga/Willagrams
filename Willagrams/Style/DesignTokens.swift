@@ -23,6 +23,9 @@ public enum DesignTokens {
         public static let surface = Color("surface")
         /// An empty grid cell.
         public static let cellEmpty = Color("cellEmpty")
+        /// The loading screen's ground. Fixed in both appearances — the loader
+        /// draws itself dark whatever the system theme is.
+        public static let launchGround = Color("launchGround")
 
         // MARK: Ink
 
@@ -77,6 +80,23 @@ public enum DesignTokens {
         public static let m: CGFloat = 16
         public static let l: CGFloat = 24
         public static let xl: CGFloat = 40
+
+        /// The screen edge margin on an iPad / landscape-regular device.
+        /// Equal to `xl` today — a named token rather than a second spelling
+        /// of the same number, so `.screenPadding()` can read one pair.
+        public static let screenMargin: CGFloat = 40
+        /// The screen edge margin on a landscape phone. Small enough to use
+        /// the phone's edges — the safe area still applies on top of this,
+        /// SwiftUI adds its insets separately.
+        public static let screenMarginCompact: CGFloat = 12
+        /// The screen edge margin on a portrait phone (compact width, regular
+        /// height): between the landscape-phone and iPad margins.
+        public static let screenMarginPhone: CGFloat = 16
+
+        /// The gap between the six code tiles on the Two Player screen — comp
+        /// screen 03's `gap:7px`, tighter than every other named gap so six
+        /// tiles plus their gaps fit a portrait phone's width.
+        public static let codeTileGap: CGFloat = 7
     }
 
     /// Line weights. Small and deliberate — the direction leans on edges, not fills.
@@ -86,6 +106,10 @@ public enum DesignTokens {
         public static let bevel: CGFloat = 3
         /// The selected-tile ring.
         public static let selectedRing: CGFloat = 2.5
+        /// The board-edge ring that marks selection mode. Its own token rather
+        /// than `selectedRing`: that one is tile art, which the board surface
+        /// is forbidden to re-implement.
+        public static let selectionBorder: CGFloat = 2
     }
 
     public enum Radius {
@@ -109,6 +133,10 @@ public enum DesignTokens {
         /// take their font from here, so the size of a button is one number
         /// rather than three.
         public static let button = Font.brand(weight: .semibold, size: 20)
+        /// The same control, read small — every button style switches to this
+        /// under a compact vertical size class, so the whole app's buttons
+        /// shrink on a landscape phone with no per-screen edit.
+        public static let buttonCompact = Font.brand(weight: .semibold, size: 15)
         public static let tileLetter = Font.brand(weight: .semibold, size: 28)
 
         /// Fragment Mono, for uppercase metadata labels.
@@ -181,5 +209,31 @@ public extension View {
     /// Applies one of the shadow recipes.
     func brandShadow(_ recipe: DesignTokens.Shadow.Recipe) -> some View {
         shadow(color: recipe.color, radius: recipe.radius, x: recipe.x, y: recipe.y)
+    }
+
+    /// The screen's edge margin, chosen by `ScreenMargin.value`. The one place
+    /// a screen spells its own margin; every screen reads this instead of
+    /// padding to a raw token.
+    func screenPadding() -> some View {
+        modifier(ScreenPadding())
+    }
+}
+
+/// Picks the screen edge margin from the two size classes. A plain function so
+/// StyleTests can run it. A nil size class counts as not compact.
+public enum ScreenMargin {
+    public static func value(horizontal: UserInterfaceSizeClass?, vertical: UserInterfaceSizeClass?) -> CGFloat {
+        if vertical == .compact { return DesignTokens.Space.screenMarginCompact }  // landscape phone
+        if horizontal == .compact { return DesignTokens.Space.screenMarginPhone }  // portrait phone
+        return DesignTokens.Space.screenMargin                                     // iPad, or unknown
+    }
+}
+
+private struct ScreenPadding: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    func body(content: Content) -> some View {
+        content.padding(ScreenMargin.value(horizontal: horizontalSizeClass, vertical: verticalSizeClass))
     }
 }

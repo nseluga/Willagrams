@@ -1,0 +1,553 @@
+import Foundation
+import Testing
+import WillagramsRules
+@testable import Match
+import Settings
+@testable import Shell
+
+/// Hosting a match from the menu: the code, the roster, Start and Cancel.
+///
+/// Everything here drives the real entry points — `ShellModel.playAFriend()`,
+/// `HostLobbyModel.start()`, `HostLobbyModel.cancel()` — rather than
+/// re-deriving what they would have done from the façade underneath. A cancel
+/// that abandoned the row only because the test called `leave()` itself would
+/// prove nothing about the button.
+@MainActor
+@Suite("Host lobby")
+struct HostLobbyTests {
+
+    typealias EveryWordIsReal = SoloMatchTests.EveryWordIsReal
+
+    /// A wire whose presence stream the test drives, and which records that it
+    /// was left.
+    ///
+    /// `FakeTransport.pair` cannot stand in here: it buffers a `.connected` for
+    /// the peer on both endpoints before it returns, so a lobby built over it
+    /// holds two players from the first frame and "canStart flips only after a
+    /// second player arrives" is unfalsifiable.
+    final class LobbyWire: MatchTransport, @unchecked Sendable {
+
+        let localPlayerID: PlayerID
+        let inboundMessages: AsyncStream<MatchMessage>
+        let peerConnectionStates: AsyncStream<PeerConnectionState>
+
+        private let inbound: AsyncStream<MatchMessage>.Continuation
+        private let states: AsyncStream<PeerConnectionState>.Continuation
+        private let lock = NSLock()
+        private var leaves = 0
+        private var outbound: [MatchMessage] = []
+
+        /// Whether the channel has been torn down, and what went out on it.
+        var hasLeft: Bool { lock.withLock { leaves > 0 } }
+        var sent: [MatchMessage] { lock.withLock { outbound } }
+
+        init(localPlayerID: PlayerID) {
+            self.localPlayerID = localPlayerID
+            let messages = AsyncStream.makeStream(
+                of: MatchMessage.self, bufferingPolicy: .unbounded)
+            let presence = AsyncStream.makeStream(
+                of: PeerConnectionState.self, bufferingPolicy: .unbounded)
+            inboundMessages = messages.stream
+            inbound = messages.continuation
+            peerConnectionStates = presence.stream
+            states = presence.continuation
+        }
+
+        /// The other device's endpoint, when a test needs the two to actually
+        /// talk — `JoinTests` does, because the host's `.start` has to reach the
+        /// guest. Nil here: the host lobby's own cases never deliver a message,
+        /// and a link they did not ask for would be a second thing to explain.
+        var peer: LobbyWire?
+
+        /// The test's hand on the lobby: a peer arriving, or going.
+        func announce(_ state: PeerConnectionState) { states.yield(state) }
+
+        /// Hands `message` to this endpoint's consumer, as if it arrived.
+        func deliver(_ message: MatchMessage) { inbound.yield(message) }
+
+        func send(_ message: MatchMessage, delivery: MatchDelivery) async throws {
+            lock.withLock { outbound.append(message) }
+            peer?.deliver(message)
+        }
+
+        func leave() {
+            lock.withLock { leaves += 1 }
+            inbound.finish()
+            states.finish()
+        }
+    }
+
+    /// A shell signed in as the host, over a fake backend whose one transport is
+    /// ``LobbyWire``.
+    struct Fixture {
+        let backend: FakeBackend
+        let shell: ShellModel
+        let wire: LobbyWire
+        let host: Profile
+        let guest: Profile
+    }
+
+    /// The token `FakeBackend: ShellSignIn` signs the shell in with. Declared
+    /// here so the fixture can create that profile before the model exists.
+    static let hostToken = "shell-tests"
+
+    /// Builds the two profiles, then the model.
+    ///
+    /// The guest is chosen so its id sorts *after* the host's: `OnlineMatch`
+    /// elects `roster[0]`, so this is what makes "the local player is host" a
+    /// real assertion rather than a coin toss. `FakeBackend` derives a stable
+    /// id from the token, so the search is deterministic run to run.
+    static func make(
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in },
+        settings: SettingsStore? = nil
+    ) async throws -> Fixture {
+        let backend = FakeBackend()
+        let host = try await backend.signInWithApple(idToken: hostToken, nonce: hostToken)
+
+        var found: Profile?
+        for index in 0..<64 where found == nil {
+            let candidate = try await backend.signInWithApple(
+                idToken: "zz-lobby-guest-\(index)", nonce: "n")
+            if candidate.playerID.rawValue > host.playerID.rawValue { found = candidate }
+        }
+        let guest = try #require(found, "no fake token sorted after the host's")
+
+        let wire = LobbyWire(localPlayerID: host.playerID)
+        await backend.setTransportFactory { _, _ in wire }
+
+        let shell = ShellModel(
+            dictionary: { EveryWordIsReal() },
+            sleepFor: sleepFor,
+            services: ShellServices(backend: backend, settings: settings, signIn: backend)
+        )
+        await shell.signInTask?.value
+        #expect(shell.currentProfile?.id == host.id)
+        return Fixture(backend: backend, shell: shell, wire: wire, host: host, guest: guest)
+    }
+
+    /// Yields until `condition` holds. Scheduler turns, never a clock.
+    static func until(
+        _ label: String, _ condition: @MainActor () async -> Bool
+    ) async {
+        for _ in 0..<20_000 {
+            if await condition() { return }
+            await Task.yield()
+        }
+        Issue.record("timed out waiting for: \(label)")
+    }
+
+    // MARK: - done when 1
+
+    @Test("Play a Friend opens a lobby, shows a six-character code, and waits for a second player")
+    func hostingPublishesACodeAndWaitsForASecondPlayer() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.canPlayOnline)
+        #expect(f.shell.playAFriend())
+        #expect(f.shell.route == .hostLobby)
+
+        let lobby = try #require(f.shell.hostLobby)
+        #expect(lobby.phase == .creating)
+
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+        let code = try #require(lobby.inviteCode)
+        #expect(code.count == 6)
+        #expect(code.allSatisfy { $0.isUppercase || $0.isNumber })
+
+        // One player, who is this device, named from the profile already in hand.
+        #expect(lobby.roster == [f.host.displayName])
+        #expect(lobby.canStart == false)
+        #expect(lobby.message == nil)
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("the guest is in the lobby") { lobby.canStart }
+        await Self.until("the guest is named") { lobby.roster.count == 2 && !lobby.roster.contains(HostLobbyModel.pendingName) }
+        #expect(lobby.roster == [f.host.displayName, f.guest.displayName])
+
+        f.shell.returnToMenu()
+    }
+
+    @Test("Play a Friend is refused with no signed-in profile")
+    func hostingNeedsAProfile() async throws {
+        let shell = ShellModel(sleepFor: { _ in })
+        #expect(shell.canPlayOnline == false)
+        #expect(shell.playAFriend() == false)
+        #expect(shell.route == .menu)
+        #expect(shell.hostLobby == nil)
+    }
+
+    // MARK: - done when 2
+
+    @Test("Start on a two-player lobby moves to the countdown over a two-player session")
+    func startingOpensTheMatch() async throws {
+        // A countdown that is still running when the route is read: with an
+        // instant tick the session can reach `.playing` between `install` and
+        // the assertion, and `.countdown` is what this criterion is about. The
+        // teardown at the end cancels it, so nothing outlives the test.
+        let f = try await Self.make(sleepFor: { _ in try await Task.sleep(for: .milliseconds(500)) })
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+
+        lobby.start()
+        await Self.until("the run is installed") { f.shell.run != nil }
+
+        guard case .countdown(let setup) = f.shell.route else {
+            Issue.record("route is \(f.shell.route), not the countdown")
+            return
+        }
+        #expect(setup.startingHandSize == OnlineMatch.startingHandSize)
+        #expect(setup.countdownSeconds == OnlineMatch.countdownSeconds)
+
+        let run = try #require(f.shell.run)
+        let roster = run.session.roster
+        #expect(roster.count == 2)
+        #expect(roster == [f.host.playerID, f.guest.playerID])
+        #expect(run.session.localPlayerID == f.host.playerID)
+        // The election `OnlineMatch` ran, read back off the session it built:
+        // the shell never picked a host.
+        #expect(HostPool.host(of: roster) == f.host.playerID)
+        // And it really is the online opponent, not a solo run.
+        #expect(run.opponent is OnlineOpponent)
+
+        // The lobby handed the façade over rather than keeping it: a teardown
+        // here must not end the match that just began.
+        #expect(lobby.match === nil)
+
+        f.shell.returnToMenu()
+        #expect(f.wire.hasLeft)
+    }
+
+    // MARK: - The host's match settings
+
+    /// The gear closes at Start and what it held is written back.
+    ///
+    /// Both halves in one case on purpose: "unavailable after Start" and "the
+    /// values survived" are the same guarantee read from either end — the
+    /// settings that travelled are the last ones editable, and there is no
+    /// third state where the sheet is shut but the store holds something else.
+    /// Item 10, the host half. Same hole as the guest's, same shape, same cover:
+    /// `HostLobbyModel.create()` passes `shell.services.activity`, and a `nil`
+    /// there is a one-word edit that ships a host whose match dies on a lock.
+    /// Read back off the shell's own observer, after a real start.
+    @Test("A hosted match registers its session with the shell's own observer")
+    func theHostLobbyRegistersWithTheShellsObserver() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+        lobby.start()
+        await Self.until("the run is installed") { f.shell.run != nil }
+
+        let session = try #require(f.shell.run).session
+        #expect(
+            f.shell.services.activity.listenerIdentitiesForTesting
+                .contains(ObjectIdentifier(session)))
+
+        f.shell.services.activity.send(.away)
+        f.shell.services.activity.send(.active)
+    }
+
+    @Test("Start closes the match settings, and what they held reaches the next lobby")
+    func settingsCloseAtStartAndPersistToTheNextLobby() async throws {
+        let suite = "host-lobby-settings-tests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+
+        let f = try await Self.make(settings: settings)
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        // The gear is live while the lobby is, and the sheet's two controls
+        // write straight through to the model.
+        #expect(lobby.canEditSettings)
+        lobby.loadOptions()  // what the gear does on the way into the sheet
+        lobby.handSize = 10
+        lobby.optionsForm?.swapEnabled = false
+        #expect(lobby.handSize == 10)
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+
+        lobby.start()
+        #expect(lobby.canEditSettings == false, "the gear is still live after Start")
+        await Self.until("the run is installed") { f.shell.run != nil }
+        #expect(lobby.canEditSettings == false)
+
+        // Spelled out, not read back off the model that was just told: the
+        // countdown carries ten because ten is what was chosen.
+        guard case .countdown(let setup) = f.shell.route else {
+            Issue.record("route is \(f.shell.route), not the countdown")
+            return
+        }
+        #expect(setup.startingHandSize == 10)
+        #expect(setup.options.swapEnabled == false)
+
+        // The store, read through a second lobby rather than directly — that is
+        // the thing the next visit actually opens on.
+        f.shell.returnToMenu()
+        #expect(f.shell.playAFriend())
+        let next = try #require(f.shell.hostLobby)
+        #expect(next.handSize == 10)
+        // Nil until the gear is touched — the hash is not paid for a visit that
+        // never opens the sheet.
+        #expect(next.optionsForm == nil)
+        next.loadOptions()
+        #expect(next.optionsForm?.swapEnabled == false)
+        // Read once the second lobby is up, not while its row is still being
+        // written: `canEditSettings` is derived from the phase now, and a lobby
+        // that does not exist yet has nothing to configure.
+        await Self.until("the second lobby exists") { next.phase != .creating }
+        #expect(next.canEditSettings)
+        f.shell.returnToMenu()
+    }
+
+    /// A start that fails hands the screen back, gear and all.
+    ///
+    /// `canStart` stays true after a throw so the host may press Start again —
+    /// a retry offered with a permanently dead gear was the bug. Nothing was
+    /// sent, so the settings are still only this device's to change.
+    @Test("A start that throws re-opens the match settings")
+    func aFailedStartReopensTheSettings() async throws {
+        let f = try await Self.make()
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+        #expect(lobby.canEditSettings)
+
+        // The seat empties between the press and the open: `start()`'s own
+        // guard has already passed, and `OnlineMatch.start` refuses a lobby
+        // that no longer holds two. That is the throw, from the real path.
+        //
+        // Nothing here waits for that window — the press happens *inside* it.
+        // `onChange` runs synchronously on the presence pump's own turn, before
+        // the lobby's mutation completes: the model's observer has only been
+        // enqueued, so `canStart` is still true and the press goes through,
+        // and by the time the queued work reads the façade the seat is gone.
+        // Both orderings after that land in the same place, so there is no
+        // scheduling guess anywhere in this case.
+        let match = try #require(lobby.match)
+        withObservationTracking {
+            _ = match.lobby
+        } onChange: {
+            MainActor.assumeIsolated {
+                #expect(lobby.canStart, "the model's observer ran first")
+                lobby.start()
+                #expect(lobby.canEditSettings == false, "the gear is live during the start")
+            }
+        }
+        f.wire.announce(.disconnected(f.guest.playerID))
+
+        await Self.until("the failed start came back") { lobby.message != nil }
+        #expect(lobby.work == nil)
+        #expect(f.shell.run == nil, "the start was supposed to fail")
+        #expect(lobby.message != nil)
+        #expect(lobby.phase == .waiting)
+        #expect(lobby.canEditSettings, "the retry is offered with a dead gear")
+
+        f.shell.returnToMenu()
+    }
+
+    // MARK: - done when 3
+
+    @Test("Cancel leaves the channel, abandons the row and returns to the menu")
+    func cancellingAbandonsTheRow() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        let matchID = try #require(lobby.match?.record.id)
+        #expect(await f.backend.matchRecord(matchID)?.status == .lobby)
+
+        lobby.cancel()
+
+        // Synchronously, before anything else: no live channel survives a cancel.
+        #expect(f.wire.hasLeft)
+        #expect(f.shell.route == .menu)
+        #expect(f.shell.hostLobby == nil)
+
+        await Self.until("the row is abandoned") {
+            await f.backend.matchRecord(matchID)?.status == .abandoned
+        }
+    }
+
+    /// The guardrail's *ordering* half, which the cancel case above cannot see:
+    /// both halves land in one main-actor turn, so only an observer woken by the
+    /// route change can tell whether the channel was already gone when it moved.
+    ///
+    /// `withObservationTracking`'s `onChange` fires on `willSet` — the instant
+    /// before `route` becomes `.menu` — so a teardown that ran after the route
+    /// assignment would be caught here with `hasLeft` still false.
+    @Test("The channel is gone before the route leaves the lobby")
+    func teardownPrecedesTheRouteMove() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+
+        nonisolated(unsafe) var leftWhenTheRouteMoved: Bool?
+        nonisolated(unsafe) var lobbyWhenTheRouteMoved: HostLobbyModel?
+        let wire = f.wire
+        let shell = f.shell
+        withObservationTracking {
+            _ = shell.route
+        } onChange: {
+            leftWhenTheRouteMoved = wire.hasLeft
+            lobbyWhenTheRouteMoved = MainActor.assumeIsolated { shell.hostLobby }
+        }
+
+        lobby.cancel()
+
+        #expect(leftWhenTheRouteMoved == true)
+        #expect(lobbyWhenTheRouteMoved == nil)
+        #expect(f.shell.route == .menu)
+    }
+
+    // MARK: - No cycle through the observation registrar
+
+    /// `watchLobby`'s registration is armed the whole time a lobby sits waiting,
+    /// and a `withObservationTracking` registration is released only when it
+    /// *fires*. So a strong `match` in its `onChange` closes match → registrar →
+    /// closure → match, and a lobby nobody ever joins strands the `OnlineMatch`,
+    /// its transport and its session for the life of the process.
+    ///
+    /// The roster is deliberately never changed again after the lobby opens:
+    /// a second change would fire the registration and break the cycle by
+    /// accident, which is precisely the case this guard must not be green for.
+    @Test("A lobby left without another roster change leaks neither the model nor its match")
+    func aDroppedLobbyLeaksNothing() async throws {
+        let f = try await Self.make()
+        weak var weakLobby: HostLobbyModel?
+        weak var weakMatch: OnlineMatch?
+        do {
+            #expect(f.shell.playAFriend())
+            let lobby = try #require(f.shell.hostLobby)
+            await Self.until("the lobby exists") { lobby.phase == .waiting }
+            weakLobby = lobby
+            weakMatch = try #require(lobby.match)
+        }
+        f.shell.returnToMenu()
+
+        for _ in 0..<50 { await Task.yield() }
+        #expect(weakLobby == nil, "the lobby model was held after the screen closed")
+        #expect(weakMatch == nil, "the OnlineMatch was stranded by an armed observer")
+    }
+
+    /// The retention this lane's presence-ownership fix made load-bearing.
+    ///
+    /// The façade's lobby pump is the *single* consumer of
+    /// `peerConnectionStates` — the session is fed by forwarding — so the
+    /// `OnlineMatch` must outlive the handover or no peer is ever reported
+    /// gone. `HostLobbyModel.start()` sets its own `match` to nil at handover
+    /// and the shell clears the lobby, which leaves `OnlineOpponent.match` as
+    /// the only strong reference for the life of the match. Weaken or drop it
+    /// and the façade deallocates, `deinit` cancels the pump, cancelling the
+    /// task iterating the stream finishes the stream, and a genuinely gone peer
+    /// is held `.present` for ever.
+    ///
+    /// Fail-OPEN, which is why it is asserted by value rather than inferred: a
+    /// dead match that hangs looks exactly like a clean run to every other case
+    /// in this suite. Driven through the real buttons — `playAFriend()` then
+    /// `HostLobbyModel.start()` — because the retention only exists on the path
+    /// the app actually takes.
+    @Test("After the handover the opponent alone keeps the façade alive, and a peer still goes")
+    func theOpponentsRetentionIsWhatKeepsPresenceAlive() async throws {
+        let f = try await Self.make()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+        weak var weakMatch = try #require(lobby.match)
+
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+        lobby.start()
+        await Self.until("the run is installed") { f.shell.run != nil }
+
+        let run = try #require(f.shell.run)
+        #expect(run.opponent is OnlineOpponent)
+        // Every other reference is gone: the lobby released it at handover and
+        // the shell left the screen. Whatever is still holding it is the
+        // opponent.
+        #expect(lobby.match === nil)
+        #expect(f.shell.hostLobby == nil)
+
+        // A collection point. Anything the handover's own `Task` still captured
+        // is released here, so the assertion below is about the opponent's
+        // retention and not about a closure that had not finished yet.
+        for _ in 0..<50 { await Task.yield() }
+        #expect(weakMatch != nil, "nothing kept the façade alive past the handover")
+
+        // The consequence, stated as behaviour: the presence pump the façade
+        // owns is still running, so a drop reaches the session it forwards to.
+        f.wire.announce(.disconnected(f.guest.playerID))
+        await Self.until("the session reports the peer gone") {
+            run.session.presence(of: f.guest.playerID) == .gone
+        }
+        #expect(run.session.presence(of: f.guest.playerID) == .gone)
+    }
+
+    // MARK: - The error copy
+
+    @Test("Every lobby failure is one line of copy, never an error and never a silent exit")
+    func failuresBecomeCopy() {
+        let errors: [any Error] = [
+            OnlineMatchError.lobbyNotReady(1),
+            OnlineMatchError.notAuthenticated,
+            BackendError.offline,
+            BackendError.notFound,
+            BackendError.matchFull,
+            BackendError.permissionDenied,
+            BackendError.notAuthenticated,
+            BackendError.alreadyExists,
+            BackendError.blocked,
+        ]
+        var seen: Set<String> = []
+        for error in errors {
+            let message = HostLobbyModel.message(for: error)
+            #expect(!message.isEmpty, "\(error) mapped to nothing")
+            #expect(!message.contains("Error"), "\(error) leaked its case name")
+            seen.insert(message)
+        }
+        // Not one line for everything: a screen that says the same thing about
+        // an empty lobby and a dead network is not saying anything.
+        #expect(seen.count >= 4)
+    }
+
+    @Test("A backend that refuses to create leaves the lobby failed, with copy, on the screen")
+    func aRefusedCreateStaysOnTheScreen() async throws {
+        let f = try await Self.make()
+        // Signed out from under the model: `createMatch` then throws
+        // the façade turns that into `OnlineMatchError.notAuthenticated`, which
+        // is the shape a refused create reaches this model in.
+        try await f.backend.signOut()
+
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the create failed") { lobby.phase == .failed }
+
+        #expect(lobby.inviteCode == nil)
+        #expect(lobby.canStart == false)
+        #expect(lobby.message == HostLobbyModel.message(for: OnlineMatchError.notAuthenticated))
+        // Never a silent return to the menu.
+        #expect(f.shell.route == .hostLobby)
+
+        f.shell.returnToMenu()
+    }
+}

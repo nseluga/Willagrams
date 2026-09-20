@@ -87,8 +87,16 @@ struct MatchSessionOrderingTests {
             }
         }
 
+        /// Draw answers of either kind: a round puts a `grant` on the wire for
+        /// the asker and an `obligation` for everyone else, and this counts how
+        /// many answers travelled, not which sort they were.
         func grantCount() -> Int {
-            wire.filter { if case .grant = $0 { return true } else { return false } }.count
+            wire.filter {
+                switch $0 {
+                case .grant, .obligation: return true
+                default: return false
+                }
+            }.count
         }
     }
 
@@ -133,11 +141,16 @@ struct MatchSessionOrderingTests {
         // answer on the wire names the request that produced it. Draw answers
         // are indistinguishable from each other, so they ride along as traffic.
         let tagged = (0..<12).map { _ in Tile(letter: "S") }
+        var ownDraws = 0
         for (index, tile) in tagged.enumerated() {
             wire.deliver(.swapRequest(player: bob, returning: tile))
             wire.deliver(.drawRequest(player: bob))
             // The second call site: this device's own presses, racing the pump.
-            if index.isMultiple(of: 3) { host.draw() }
+            // Counted rather than assumed: `draw()` refuses while its own
+            // request is still unanswered, and whether the pump has cleared the
+            // credit by the next press is a race. The subject of this test is
+            // the ORDER answers reach the wire in, not how many presses land.
+            if index.isMultiple(of: 3), host.draw() { ownDraws += 1 }
             await Task.yield()
         }
 
@@ -154,9 +167,11 @@ struct MatchSessionOrderingTests {
         let mostInFlight = await wire.mostInFlight
         #expect(mostInFlight == 1)
 
-        // 12 peer draws plus 4 of this device's own, each answered to the peer.
+        // 12 peer draws plus this device's own that were accepted, each
+        // answered to the peer.
+        #expect(ownDraws > 0)
         try await Self.waitUntil("every draw to be answered") {
-            await wire.grantCount() == 16
+            await wire.grantCount() == 12 + ownDraws
         }
     }
 
@@ -219,8 +234,8 @@ struct MatchSessionOrderingTests {
 
         // Reordered in flight: the exhaustion notice overtook the grant.
         let late = Tile(letter: "Q")
-        wire.deliver(.poolExhausted)
-        wire.deliver(.grant(player: bob, tiles: [late]))
+        wire.deliver(.poolExhausted(requester: bob))
+        wire.deliver(.obligation(player: bob, tiles: [late]))
         try await Self.waitUntil("the reordered grant to land") { guest.hasPendingDraw }
 
         #expect(guest.poolIsExhausted)
@@ -280,8 +295,10 @@ struct MatchSessionOrderingTests {
         let grantCount = await wire.grantCount()
         #expect(grantCount == 2)
         let addressedHere = landed.contains { message in
-            if case let .grant(player, _) = message { return player == alice }
-            return false
+            switch message {
+            case let .grant(player, _), let .obligation(player, _): return player == alice
+            default: return false
+            }
         }
         #expect(addressedHere == false)
 
@@ -291,7 +308,8 @@ struct MatchSessionOrderingTests {
         // devices would then be holding the same tile.
         let travelled = Set(landed.flatMap { message -> [UUID] in
             switch message {
-            case let .grant(_, tiles), let .swapGrant(_, tiles, _): return tiles.map(\.id)
+            case let .grant(_, tiles), let .obligation(_, tiles), let .swapGrant(_, tiles, _):
+                return tiles.map(\.id)
             default: return []
             }
         })

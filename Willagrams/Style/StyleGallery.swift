@@ -86,6 +86,7 @@ public struct StyleGallery: View {
         ("boardSurface", DesignTokens.Palette.boardSurface),
         ("surface", DesignTokens.Palette.surface),
         ("cellEmpty", DesignTokens.Palette.cellEmpty),
+        ("launchGround", DesignTokens.Palette.launchGround),
         ("ink", DesignTokens.Palette.ink),
         ("onInk", DesignTokens.Palette.onInk),
         ("textPrimary", DesignTokens.Palette.textPrimary),
@@ -118,6 +119,7 @@ public struct StyleGallery: View {
                 ramp("title", DesignTokens.Typography.title)
                 ramp("body", DesignTokens.Typography.body)
                 ramp("button", DesignTokens.Typography.button)
+                ramp("buttonCompact", DesignTokens.Typography.buttonCompact)
                 ramp("tileLetter", DesignTokens.Typography.tileLetter)
                 ramp("caption", DesignTokens.Typography.caption)
             }
@@ -239,6 +241,10 @@ public struct StyleGallery: View {
                     ("xs", DesignTokens.Space.xs), ("s", DesignTokens.Space.s),
                     ("m", DesignTokens.Space.m), ("l", DesignTokens.Space.l),
                     ("xl", DesignTokens.Space.xl),
+                    ("screenMarginCompact", DesignTokens.Space.screenMarginCompact),
+                    ("screenMarginPhone", DesignTokens.Space.screenMarginPhone),
+                    ("screenMargin", DesignTokens.Space.screenMargin),
+                    ("codeTileGap", DesignTokens.Space.codeTileGap),
                 ]) { width in
                     DesignTokens.Palette.accent.frame(width: width, height: DesignTokens.Space.s)
                 }
@@ -255,6 +261,7 @@ public struct StyleGallery: View {
                 ruler("Stroke", [
                     ("hairline", DesignTokens.Stroke.hairline), ("bevel", DesignTokens.Stroke.bevel),
                     ("selectedRing", DesignTokens.Stroke.selectedRing),
+                    ("selectionBorder", DesignTokens.Stroke.selectionBorder),
                 ]) { width in
                     DesignTokens.Palette.ink.frame(width: DesignTokens.Space.xl, height: width)
                 }

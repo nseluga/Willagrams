@@ -23,7 +23,10 @@ struct ShellModelTests {
     /// The menu's one action, asserted on the model — no view is instantiated.
     @Test("Solo Practice moves the route off .menu")
     func soloPracticeLeavesMenu() {
-        let shell = ShellModel()
+        // `sleepFor` injected as every other solo test does: every assertion
+        // below runs before the first suspension, and a default `ShellModel`
+        // would leave a wall-clock countdown ticking past the end of the test.
+        let shell = ShellModel(sleepFor: { _ in })
         shell.startSoloPractice(seed: 7)
 
         #expect(shell.route != .menu)

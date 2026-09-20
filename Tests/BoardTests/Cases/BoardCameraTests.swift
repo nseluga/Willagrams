@@ -156,8 +156,8 @@ final class BoardCameraTests: XCTestCase {
     }
 
     func testRecenterSpansNegativeAndPositiveQuadrants() {
-        // Span sized to fit within `rect` even at the 24pt cell-size floor
-        // (1200/24=50 cols, 900/24=37 rows available) — a sprawl too big to
+        // Span sized to fit within `rect` even at the 16pt cell-size floor
+        // (1200/16=75 cols, 900/16=56 rows available) — a sprawl too big to
         // fit at minCellSize is a separate, engineer-flagged degenerate case
         // (see Not Verifiable in the report), not what this check targets.
         let camera = BoardCamera(pan: CGSize(width: -50, height: 300), zoom: 0.6, baseCellSize: 48)

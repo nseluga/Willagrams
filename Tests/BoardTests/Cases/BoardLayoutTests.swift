@@ -97,6 +97,53 @@ final class BoardLayoutTests: XCTestCase {
         }
     }
 
+    // MARK: - Recenter under the HUD
+
+    /// iPhone 13 mini, landscape, with the HUD footprint `MatchView` passes.
+    private let mini = CGRect(x: 0, y: 0, width: 812, height: 375)
+    private var miniHUD: BoardInsets { MatchHUDLayout(isCompact: true).boardInsets }
+
+    /// Tiles at every cell of a `cols` x `rows` block from the origin.
+    private func spread(cols: Int, rows: Int) throws -> Board {
+        var board = Board()
+        for r in 0..<rows { for c in 0..<cols { try board.place(Tile(letter: "A"), at: Coord(row: r, col: c)) } }
+        return board
+    }
+
+    func testFramingKeepsATwentyByTwelveSpreadClearOfTheHUD() throws {
+        let board = try spread(cols: 20, rows: 12)
+        let camera = BoardLayout.framing(board, in: mini, camera: BoardCamera(), insets: miniHUD)
+        let clear = miniHUD.inset(mini)
+        let size = camera.cellSize
+        for placement in board.placementList {
+            let p = camera.point(for: placement.coord)
+            let cell = CGRect(x: p.x, y: p.y, width: size, height: size)
+            XCTAssertTrue(clear.contains(cell), "\(placement.coord) at \(cell) is under the HUD, outside \(clear)")
+        }
+    }
+
+    func testFramingASpreadTooWideForTheFloorClampsAndCenters() throws {
+        let board = try spread(cols: 80, rows: 3)
+        let camera = BoardLayout.framing(board, in: mini, camera: BoardCamera(), insets: miniHUD)
+        XCTAssertEqual(camera.cellSize, BoardCamera.minCellSize, accuracy: 1e-9)
+        XCTAssertEqual(camera.cellSize, 16, accuracy: 1e-9)
+
+        let size = camera.cellSize
+        let first = camera.point(for: Coord(row: 0, col: 0))
+        let last = camera.point(for: Coord(row: 2, col: 79))
+        let clear = miniHUD.inset(mini)
+        XCTAssertEqual((first.x + last.x + size) / 2, clear.midX, accuracy: 1e-6, "not horizontally centered")
+        XCTAssertEqual((first.y + last.y + size) / 2, clear.midY, accuracy: 1e-6, "not vertically centered")
+    }
+
+    func testFramingASmallBoardNeverZoomsInPastTheDefaultCellSize() throws {
+        let board = try spread(cols: 1, rows: 1)
+        for rect in [iPad, iPhone, mini] {
+            let camera = BoardLayout.framing(board, in: rect, camera: BoardCamera(), insets: miniHUD)
+            XCTAssertLessThanOrEqual(camera.cellSize, BoardCamera().baseCellSize, "\(rect) zoomed in past default")
+        }
+    }
+
     // MARK: - Draw landing
 
     /// Delivered tiles are visible without moving the camera.
@@ -198,6 +245,111 @@ final class BoardLayoutTests: XCTestCase {
         let next = BoardLayout.delivered(tiles(4), onto: board, camera: BoardCamera(), in: .zero)
         XCTAssertEqual(next.placementList.count, board.placementList.count + 4)
         assertNoneAdjacent(next, "delivery into a degenerate viewport")
+    }
+
+    // MARK: - Draw lands by the cluster
+
+    /// Landed cells touch nothing on the board (cluster tiles touch each other by design).
+    private func assertLandedClear(_ cells: [Coord], on next: Board, line: UInt = #line) {
+        for coord in cells {
+            XCTAssertFalse(coord.neighbors.contains { next.tile(at: $0) != nil }, "\(coord) touches a tile", line: line)
+        }
+    }
+
+    private func landed(_ next: Board, over before: Board) -> [Coord] {
+        let old = Set(before.placementList.map(\.coord))
+        return next.placementList.map(\.coord).filter { !old.contains($0) }
+    }
+
+    /// The anchor is the cluster, not the camera: a camera looking at the
+    /// origin still gets tiles just under the block at rows 10-12, cols 30-35.
+    func testDeliveryLandsJustBelowTheLargestClusterWhereverTheCameraLooks() throws {
+        var board = Board()
+        for r in 10...12 { for c in 30...35 { try board.place(Tile(letter: "A"), at: Coord(row: r, col: c)) } }
+        try board.place(Tile(letter: "B"), at: Coord(row: 0, col: 0))   // a loose tile elsewhere
+        let drawn = tiles(3)
+
+        let next = BoardLayout.delivered(drawn, onto: board, camera: BoardCamera(), in: iPad)
+        let cells = landed(next, over: board)
+
+        XCTAssertEqual(cells.count, drawn.count, "not every tile landed")
+        for coord in cells {
+            XCTAssertNil(board.tile(at: coord), "\(coord) was not empty")
+            XCTAssertTrue((13...14).contains(coord.row), "\(coord) is not within two rows below the cluster")
+            XCTAssertTrue((30...35).contains(coord.col), "\(coord) is not under the cluster")
+        }
+        assertLandedClear(cells, on: next)
+    }
+
+    /// Most tiles wins however far down it sits; equal sizes go to the one whose
+    /// topmost-leftmost tile reads first.
+    func testTheLargestClusterIsMostTilesThenTopmostLeftmost() throws {
+        var board = Board()
+        for c in 5...6 { try board.place(Tile(letter: "A"), at: Coord(row: 5, col: c)) }
+        for c in 20...21 { try board.place(Tile(letter: "A"), at: Coord(row: 2, col: c)) }
+        XCTAssertEqual(BoardLayout.largestCluster(on: board)?.count, 2)
+        XCTAssertTrue(BoardLayout.largestCluster(on: board)!.contains(Coord(row: 2, col: 20)), "tie not topmost")
+
+        let tie = landed(BoardLayout.delivered(tiles(1), onto: board, camera: BoardCamera(), in: iPad), over: board)
+        XCTAssertEqual(tie, [Coord(row: 4, col: 20)])
+
+        for c in 5...7 { try board.place(Tile(letter: "A"), at: Coord(row: 40, col: c)) }
+        XCTAssertTrue(BoardLayout.largestCluster(on: board)!.contains(Coord(row: 40, col: 5)), "size lost to position")
+        XCTAssertNil(BoardLayout.largestCluster(on: Board()))
+    }
+
+    /// Below, beside and every ring nearby blocked by a checkerboard of loose
+    /// tiles: the delivery still lands every tile, on empty cells, touching none.
+    func testDeliveryWithEveryNearbyCellBlockedStillLandsClear() throws {
+        var board = Board()
+        let pair = [Coord(row: 10, col: 30), Coord(row: 10, col: 31)]
+        for coord in pair { try board.place(Tile(letter: "A"), at: coord) }
+        let near = Set(pair.flatMap(\.neighbors))
+        for r in 2...18 {
+            for c in 22...39 where (r + c) % 2 == 0 && !pair.contains(Coord(row: r, col: c))
+                && !near.contains(Coord(row: r, col: c)) {
+                try board.place(Tile(letter: "Z"), at: Coord(row: r, col: c))
+            }
+        }
+        let drawn = tiles(2)
+
+        let next = BoardLayout.delivered(drawn, onto: board, camera: BoardCamera(), in: iPad)
+        let cells = landed(next, over: board)
+
+        XCTAssertEqual(cells.count, drawn.count, "a tile was lost")
+        XCTAssertEqual(next.placementList.count, board.placementList.count + drawn.count)
+        for coord in cells {
+            XCTAssertNil(board.tile(at: coord), "\(coord) was written over")
+            XCTAssertGreaterThan(coord.row, 18, "\(coord) landed inside the blocked area")
+        }
+        assertLandedClear(cells, on: next)
+    }
+
+    /// A loose tile sits in the first free-looking cell under the cluster: the
+    /// delivery must step around it, never write over it or any placed tile.
+    func testDeliveryNeverWritesOverAPlacedTile() throws {
+        var board = Board()
+        for r in 10...11 { for c in 30...31 { try board.place(Tile(letter: "A"), at: Coord(row: r, col: c)) } }
+        try board.place(Tile(letter: "Q"), at: Coord(row: 13, col: 30))
+        let drawn = tiles(3)
+
+        let next = BoardLayout.delivered(drawn, onto: board, camera: BoardCamera(), in: iPad)
+
+        XCTAssertEqual(next.placementList.count, board.placementList.count + drawn.count, "a tile was overwritten or lost")
+        for placement in board.placementList {
+            XCTAssertEqual(next.tile(at: placement.coord), placement.tile, "\(placement.coord) was written over")
+        }
+    }
+
+    /// The guardrail: with no cluster yet — an empty board, or the loose
+    /// opening deal — delivery is exactly today's viewport rule.
+    func testWithNoClusterDeliveryKeepsTheViewportLayout() {
+        let opening = BoardLayout.opening(tiles(21))
+        let afterOpening = BoardLayout.delivered(tiles(5), onto: opening, camera: BoardCamera(), in: iPad)
+        XCTAssertEqual(landed(afterOpening, over: opening), (0..<5).map { Coord(row: 6, col: $0 * 2) })
+
+        let empty = BoardLayout.delivered(tiles(3), onto: Board(), camera: BoardCamera(), in: iPad)
+        XCTAssertEqual(empty.placementList.map(\.coord), (0..<3).map { Coord(row: 0, col: $0 * 2) })
     }
 
     func testDeliveringNothingLeavesTheBoardAlone() {

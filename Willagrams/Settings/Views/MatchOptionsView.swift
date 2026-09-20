@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The host's options screen.
+/// The match options screen, and the rows behind the host lobby's gear.
 ///
 /// Deliberately dumb: every control writes straight to ``MatchOptionsForm``,
 /// which owns the bounds. The stepper carries no range of its own — the clamp
@@ -13,39 +13,59 @@ public struct MatchOptionsView: View {
 
     @Binding private var form: MatchOptionsForm
 
-    public init(form: Binding<MatchOptionsForm>) {
+    /// Whether this is a screen of its own or rows inside someone else's.
+    ///
+    /// Embedded drops the header, the card, the page padding and the ground —
+    /// the rows only, for a container that brings its own. Defaulted to the
+    /// screen it has always been, so the solo setup call site is untouched.
+    private let embedded: Bool
+
+    public init(form: Binding<MatchOptionsForm>, embedded: Bool = false) {
         self._form = form
+        self.embedded = embedded
     }
 
-    public var body: some View {
+    @ViewBuilder public var body: some View {
+        if embedded {
+            rows
+        } else {
+            screen
+        }
+    }
+
+    private var screen: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
             VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
-                Text(verbatim: "HOST")
-                    .monoLabel()
-
+                // No eyebrow: the only non-embedded caller is solo setup, which
+                // has no host. The host lobby brings its own eyebrow and embeds
+                // the rows, so it never saw this one.
                 Text(verbatim: "Match options")
                     .font(DesignTokens.Typography.title)
                     .foregroundStyle(DesignTokens.Palette.textPrimary)
                     .accessibilityAddTraits(.isHeader)
             }
 
-            VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
-                minimumLength
-                divider
-                swap
-                divider
-                wordList
-            }
-            .padding(DesignTokens.Space.l)
-            .brandCard()
-            // The card is a settings panel, not a page: at iPad width a
-            // full-bleed one puts the toggle a foot from its label.
-            .frame(maxWidth: Self.panelWidth, alignment: .leading)
+            rows
+                .padding(DesignTokens.Space.l)
+                .brandCard()
+                // The card is a settings panel, not a page: at iPad width a
+                // full-bleed one puts the toggle a foot from its label.
+                .frame(maxWidth: Self.panelWidth, alignment: .leading)
         }
         .padding(.leading, DesignTokens.Space.xl + DesignTokens.Space.l)
         .padding([.top, .trailing, .bottom], DesignTokens.Space.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(canvas)
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
+            minimumLength
+            divider
+            swap
+            divider
+            wordList
+        }
     }
 
     // MARK: - Ground

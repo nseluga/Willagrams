@@ -37,6 +37,12 @@ public struct BoardView: View {
 
     @State private var drag: BoardGesture.Drag?
 
+    /// Which gesture `BoardModel.began` has already run for, or been disowned
+    /// by a pinch. The rule itself is `BoardGesture.Begun`; this is only where
+    /// the value is kept, and it is cleared wherever `drag` is — a released
+    /// gesture and a cancelled one both end it.
+    @State private var begun = BoardGesture.Begun()
+
     /// The pinch midpoint at touch-down and the camera as it stood there.
     /// `MagnifyGesture` reports a magnification cumulative from that moment, so
     /// it has to be applied to that camera rather than to the live one — and
@@ -96,16 +102,39 @@ public struct BoardView: View {
     /// The tiles that just arrived, and a token that changes with each delivery.
     ///
     /// Both come straight from the owner. This view decides nothing about them:
-    /// it flies exactly the ids it is given in from ``arrivalCorner``, and the
+    /// it flies exactly the ids it is given in from the bag corner, and the
     /// token is what restarts the flight — two deliveries of the same tiles
     /// would compare equal and restart nothing.
     private let arriving: Set<UUID>
     private let arrivalToken: Int
 
-    /// How far along the flight is: 0 at the bag, 1 in the cell. Held here
-    /// because it is drawing, not state — nothing outside this view can see it
-    /// and no decision turns on it.
-    @State private var arrivalProgress: CGFloat = 1
+    /// Points of the surface the owner's chrome covers (a HUD). Recenter
+    /// frames tiles clear of them; zero for surfaces with nothing on top.
+    private let chromeInsets: EdgeInsets
+
+    /// Told where the camera came to rest: once when a pan or pinch ends and
+    /// after a recenter or the first framing — never per gesture frame. The
+    /// owner reads it to land arrivals where the player is looking.
+    private let onCameraSettled: ((BoardCamera) -> Void)?
+
+    /// Which deliveries still owe a flight. Every decision lives in
+    /// `BoardRender.ArrivalGate`, including the seeding one: this used to be a
+    /// plain `Int` starting at 0, and because the root builds the play screen's
+    /// `BoardView` fresh — the countdown and the board live in separate
+    /// `switch` arms — an owner already at token 1 read as a brand-new
+    /// delivery and the whole opening hand re-flew from the bag corner.
+    @State private var arrival = BoardRender.ArrivalGate()
+
+    /// The WILLA sparkle: 0 just fired, 1 spent. Rests at 1, so a tile
+    /// re-inserted by a pan draws it fully faded — nothing replays.
+    @State private var sparkle: CGFloat = 1
+
+    /// What `BoardSurface` is actually told is "arriving" this frame. A pan
+    /// after the batch has expired re-inserts a culled tile's view with this
+    /// empty, so `BoardRender.arrivalTransition` answers `.none` for it.
+    private var activeArriving: Set<UUID> {
+        arrival.active(arriving, token: arrivalToken)
+    }
 
     public init(
         board: Binding<Board>,
@@ -115,8 +144,12 @@ public struct BoardView: View {
         inputLocked: Bool = false,
         completionAttempts: Int = 0,
         arriving: Set<UUID> = [],
-        arrivalToken: Int = 0
+        arrivalToken: Int = 0,
+        chromeInsets: EdgeInsets = EdgeInsets(),
+        onCameraSettled: ((BoardCamera) -> Void)? = nil
     ) {
+        self.chromeInsets = chromeInsets
+        self.onCameraSettled = onCameraSettled
         _board = board
         // The owner builds the model with the CHEAP init, not the seeding one:
         // nothing here re-checks the board on a re-init, and `.onAppear` below
@@ -145,8 +178,10 @@ public struct BoardView: View {
                 dragTranslation: model.dragTranslation,
                 invalid: model.flashedInvalid,
                 offsets: model.tileOffsets,
-                arriving: arriving,
-                arrivalProgress: arrivalProgress
+                arriving: activeArriving,
+                dealToken: arrivalToken,
+                willa: Set(model.willaRuns.joined()),
+                sparkle: sparkle
             )
                 // The surface is a color and a Canvas, both of which are
                 // already hit-testable, but the empty cells between tiles have
@@ -166,6 +201,23 @@ public struct BoardView: View {
                 // which is checked state rather than an inferred recognizer
                 // outcome.
                 .gesture(dragGesture)
+                // A cancelled DragGesture skips `onEnded` but always resets
+                // its GestureState — the one signal the drag was interrupted.
+                // `drag` is cleared too, or a later touch with the identical
+                // start point would carry the stale grab and never `began`.
+                //
+                // The selection entry point is dropped here rather than in
+                // `onEnded` for that same reason: a cancelled drag never
+                // reaches `onEnded`, and that is exactly when a stale point
+                // most needs dropping. The reset lands AFTER `onEnded`, which
+                // is where the point still has to be readable.
+                .onChange(of: touching) { _, now in
+                    if !now { landInterrupted(); settledIfPanned(); drag = nil; begun.clear(); model.endedSelectionEntryTouch() }
+                }
+                // Edge swipes (home indicator, Control Center) need a second
+                // swipe over the board, so they stop stealing tile drags —
+                // only while input is live, so locked boards leave them alone.
+                .defersSystemGestures(on: inputLocked ? [] : .all)
                 // The pinch is a UIKit recognizer, not a SwiftUI gesture:
                 // `MagnifyGesture` freezes its midpoint at the instant the
                 // second finger lands, so a pinch could only ever zoom about
@@ -175,7 +227,11 @@ public struct BoardView: View {
                 .overlay(
                     BoardPinchReporter(
                         onChange: { scale, midpoint in pinched(scale: scale, midpoint: midpoint) },
-                        onEnd: { pinch = nil }
+                        // Disowning again as the pinch ENDS, not only on the
+                        // frames it swallowed: a pinch can begin and end without
+                        // one drag frame arriving in between, and then nothing
+                        // ever marked the finger still down under it.
+                        onEnd: { pinch = nil; begun.mark(drag?.startLocation); onCameraSettled?(camera) }
                     )
                 )
                 // Attached AFTER the camera gestures on purpose: the later
@@ -203,13 +259,53 @@ public struct BoardView: View {
                 // the double-tap timeout, which is ~0.3s of dead time on every
                 // single pickup. Removing that dead time is the whole reason
                 // `minimumDistance: 0` is there.
-                .simultaneousGesture(TapGesture(count: 2).onEnded { model.enterSelection() })
+                //
+                // `SpatialTapGesture` rather than `TapGesture` purely for the
+                // location: the tap has to name the letter it landed on so the
+                // selection can be seeded with it, and `TapGesture` carries no
+                // point. Same `.local` space the drag reports in, so the hit
+                // test below asks the same question as the one at touch-down.
+                .simultaneousGesture(
+                    SpatialTapGesture(count: 2).onEnded { tap in
+                        model.enterSelection(at: tap.location, on: board, camera: camera)
+                    }
+                )
+                // Selection mode entered on BARE surface has nothing to seed,
+                // so `selected` stays empty and the board drew exactly as it
+                // does out of the mode: the double tap read as "nothing
+                // happened". The seed at `enterSelection(at:)` marks the mode
+                // only when the tap landed on a letter; this marks it the rest
+                // of the time, and keeps marking it after a sweep so the player
+                // can see the mode is still live and has to be tapped away.
+                // Its own stroke token: the tile-art tokens are off-limits to
+                // the surface. No `.allowsHitTesting(false)` either — the
+                // surface must never spend the lock, and a stroke this thin
+                // sits on the board edge where `recenterControl` already
+                // overlays.
+                .overlay {
+                    if model.isSelecting {
+                        Rectangle().strokeBorder(
+                            DesignTokens.Palette.accent,
+                            lineWidth: DesignTokens.Stroke.selectionBorder
+                        )
+                    }
+                }
                 .overlay(alignment: .topTrailing) { recenterControl(in: rect) }
                 // The lock is a plain assignment: `BoardModel` cancels an
                 // in-flight hold on its own when it lands, so there is no
                 // second call here to forget. `initial: true` because a view
                 // reconstructed around a live lock must not come back unlocked.
                 .onChange(of: inputLocked, initial: true) { model.inputLocked = inputLocked }
+                // Keyed on the model's count of new WILLA runs, never `initial`:
+                // an appearance is not a new run. Two turns for the same reason
+                // as the flight below — one turn would interpolate nothing.
+                .onChange(of: model.willaSparkles) {
+                    sparkle = 0
+                    Task {
+                        try? await Task.sleep(for: .seconds(Self.flightPause))
+                        withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) { sparkle = 1 }
+                    }
+                }
                 // The first and only unforced check: the starting board has
                 // never been committed here, so without this a board that
                 // arrives already refused would draw untinted until the player
@@ -240,8 +336,9 @@ public struct BoardView: View {
                     guard !hasFramed, rect.width > 0, board != Board() else { return }
                     hasFramed = true
                     withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
-                        camera = BoardGesture.recentered(camera, over: board, in: rect)
+                        camera = recentered(in: rect)
                     }
+                    onCameraSettled?(camera)
                 }
                 // The flash, and the only place tint is turned on. `.task(id:)`
                 // rather than a stored timer: a second press cancels the first
@@ -259,16 +356,22 @@ public struct BoardView: View {
                 // reason: a second delivery landing mid-flight cancels the
                 // first and starts over rather than leaving tiles stranded.
                 //
-                // The frame between the two writes is not optional — set to 0
-                // and animated to 1 in one turn, SwiftUI sees only the final
-                // value and there is no flight to interpolate.
+                // This branches on nothing itself. `begin` owns both answers —
+                // is this a real delivery, and is this gate seeing its first
+                // token — so the seeding cannot drift out of step with the
+                // expiry. `.task(id:)` rather than `.onAppear` so there is no
+                // ordering race between the two: the same call that seeds is
+                // the call that would have flown.
                 .task(id: arrivalToken) {
-                    guard arrivalToken > 0, !arriving.isEmpty else { return }
-                    arrivalProgress = 0
-                    try? await Task.sleep(for: .seconds(Self.flightPause))
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.dealDuration)) {
-                        arrivalProgress = 1
-                    }
+                    guard arrival.begin(token: arrivalToken, arriving: arriving) else { return }
+                    // The flight is run by the insertion transition at
+                    // `BoardSurface`; all this owes it is long enough with the
+                    // batch still live to play, then the batch expires as a
+                    // whole so a later pan cannot replay it.
+                    try? await Task.sleep(
+                        for: .seconds(Self.flightPause + DesignTokens.Motion.dealDuration)
+                    )
+                    arrival.finish(token: arrivalToken)
                 }
         }
     }
@@ -295,15 +398,45 @@ public struct BoardView: View {
     /// a tile lifts it, and at the default the selection, the `tileLift` offset
     /// and the pickup feel all wait for 10pt of travel — a fifth of a cell of
     /// dead movement before the board admits the finger landed.
+    /// True while a finger is down. SwiftUI resets it on end AND on cancel.
+    @GestureState private var touching = false
+
+    /// Lands a hold whose `onEnded` never arrived at its last reported spot.
+    /// A no-op after a normal release, which has already cleared the hold.
+    private func landInterrupted() {
+        guard !model.dragging.isEmpty else { return }
+        withAnimation(DesignTokens.Motion.snap) {
+            board = model.interrupted(
+                on: board, camera: camera, lift: DesignTokens.Motion.tileLift, against: dictionary
+            )
+        }
+    }
+
+    /// Reports the camera once a one-finger pan ends, released or cancelled.
+    /// `drag` is cleared right after, so the second caller finds nil.
+    private func settledIfPanned() {
+        if case .some(.pan) = drag?.grab { onCameraSettled?(camera) }
+    }
+
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
+            .updating($touching) { _, state, _ in state = true }
             .onChanged { value in
                 // The other half of dropping `.exclusively(before:)`: while two
                 // fingers are down the pinch owns the camera outright, so the
                 // drag frames a second finger produces are dropped rather than
                 // writing a pan from a stale snapshot. Checked state, not a
                 // recognizer failing.
-                guard pinch == nil else { return }
+                guard pinch == nil else {
+                    // Dropping the frames is not enough now that a tile hold
+                    // waits for travel: the finger under them is disowned too,
+                    // or it begins the moment the pinch ends. Unconditionally —
+                    // the pinch may already have been live when this, the
+                    // drag's first frame, arrived, and then there is no `drag`
+                    // in flight to recognise the finger by.
+                    begun.mark(value.startLocation)
+                    return
+                }
                 // ponytail: a lock landing mid-gesture leaves the carried grab
                 // `.tile`, so that finger neither drags nor pans until it lifts
                 // — the next touch down pans normally. Rebuilding the `Drag`
@@ -315,6 +448,11 @@ public struct BoardView: View {
                 // subtracts, so a mid-gesture rebuild can discount the travel
                 // already spent.
                 let carried = drag.flatMap { $0.startLocation == value.startLocation ? $0 : nil }
+                // A previous hold still here means its release was lost; land it
+                // BEFORE the new touch is hit-tested, so the grab is decided
+                // against the tile where it is drawn — not where `began` would
+                // have snapped it back to.
+                if carried == nil { landInterrupted() }
                 let inFlight = carried ?? BoardGesture.Drag(
                     at: value.startLocation, in: board, selection: model.selection,
                     camera: camera, inputLocked: model.inputLocked,
@@ -324,8 +462,20 @@ public struct BoardView: View {
                     // geometric form.
                     offsets: model.tileOffsets
                 )
-                if carried == nil {
+                // Not simply "the first frame" any more. A tile or pan hold
+                // waits out `holdThreshold` so a TAP lifts nothing, buzzes
+                // nothing, pans nothing and commits nothing — which is what
+                // leaves the double tap's two halves undisturbed, and with them
+                // `enterSelection` reachable anywhere on the board.
+                // The decision itself is untouched: `inFlight.grab` was still
+                // taken once, at touch-down.
+                if inFlight.shouldBegin(
+                    firstFrame: carried == nil,
+                    begun: begun.has(value.startLocation),
+                    after: value.translation
+                ) {
                     model.began(inFlight.grab, on: board, against: dictionary, haptics: haptics)
+                    begun.mark(value.startLocation)
                 }
                 drag = inFlight
                 model.moved(to: value.translation)
@@ -340,6 +490,9 @@ public struct BoardView: View {
             }
             .onEnded { value in
                 if !model.dragging.isEmpty {
+                    // Record the final translation first, so a release and a
+                    // lost release (`landInterrupted`) read the same number.
+                    model.moved(to: value.translation)
                     // The whole commit is one assignment of one value type:
                     // `commit` hands back either the moved board or the one it
                     // was given, so a refused drop cannot leave a partial move
@@ -351,10 +504,11 @@ public struct BoardView: View {
                     // would jump while the board's half slid.
                     withAnimation(DesignTokens.Motion.snap) {
                         board = model.commit(
-                            translation: value.translation,
+                            translation: model.dragTranslation,
                             on: board,
                             camera: camera,
                             threshold: DesignTokens.Motion.snapThreshold,
+                            lift: DesignTokens.Motion.tileLift,
                             against: dictionary
                         )
                     }
@@ -364,9 +518,11 @@ public struct BoardView: View {
                     // release of the gesture that was decided a sweep, never on
                     // a pan or a hold, so nothing else can clear a selection by
                     // accident.
-                    model.endedPainting()
+                    model.endedPainting(startedAt: value.startLocation)
                 }
+                settledIfPanned()
                 drag = nil
+                begun.clear()
             }
     }
 
@@ -406,14 +562,24 @@ public struct BoardView: View {
 
     // MARK: - Recenter
 
-    /// Frames every placed tile. `BoardGesture.recentered` reads the
-    /// placements; this view never does, so the draw path stays a function of
+    /// Every placed tile framed inside `rect` minus the chrome. The one
+    /// recenter both call sites share; `BoardLayout.framing` reads the
+    /// placements, this view never does, so the draw path stays a function of
     /// the viewport.
+    private func recentered(in rect: CGRect) -> BoardCamera {
+        BoardLayout.framing(board, in: rect, camera: camera, insets: BoardInsets(
+            top: chromeInsets.top, leading: chromeInsets.leading,
+            bottom: chromeInsets.bottom, trailing: chromeInsets.trailing
+        ))
+    }
+
+    /// Frames every placed tile, clear of the chrome.
     private func recenterControl(in rect: CGRect) -> some View {
         Button {
             withAnimation(DesignTokens.Motion.snap) {
-                camera = BoardGesture.recentered(camera, over: board, in: rect)
+                camera = recentered(in: rect)
             }
+            onCameraSettled?(camera)
         } label: {
             Image(systemName: Self.recenterSymbol)
                 .font(.system(size: Self.recenterSymbolSize, weight: .regular))
@@ -462,23 +628,16 @@ private struct BoardSurface: View, Animatable {
     /// session and read straight through to `BoardRender` — this view decides
     /// no position of its own.
     let offsets: [UUID: CGSize]
-    /// The tiles still flying in from the bag, and how far along they are.
-    /// Untouched by `animatableData` below: the flight is animated by the
-    /// owner writing `arrivalProgress`, not by interpolating this view.
+    /// The tiles still flying in from the bag. The flight itself is the
+    /// insertion transition below, so there is no progress number here: one was
+    /// plumbed through and never read.
     let arriving: Set<UUID>
-    let arrivalProgress: CGFloat
-
-    /// Where an arrival comes from, in the surface's own coordinates: the
-    /// corner the HUD draws the bag in. One constant rather than a plumbed
-    /// point — the bag is pinned to that corner, so a second answer here could
-    /// only ever disagree with it.
-    static let arrivalCorner = CGPoint(
-        x: DesignTokens.Space.m,
-        y: DesignTokens.Space.m
-    )
-
-    /// How small a tile is at the mouth of the bag.
-    static let arrivalScale: CGFloat = 0.3
+    /// The owner's delivery counter, handed straight through as the value the
+    /// deal animation below is keyed on. Nothing here reads it as a number.
+    let dealToken: Int
+    /// Tiles in a WILLA run, and how far the one-shot sparkle has faded.
+    let willa: Set<Coord>
+    let sparkle: CGFloat
 
     /// Pan width, pan height, zoom — the whole of what an animation between
     /// two cameras has to interpolate. `baseCellSize` is not in here: it is a
@@ -544,7 +703,19 @@ private struct BoardSurface: View, Animatable {
                     // good or bad, and the released tile's slide into its cell
                     // would cut. The colour is the only decision here, and it
                     // is read from published state, never computed.
-                    .colorMultiply(cell.isInvalid ? DesignTokens.Palette.danger : .white)
+                    .colorMultiply(
+                        cell.isInvalid ? DesignTokens.Palette.danger
+                            : willa.contains(cell.coord) ? DesignTokens.Palette.accent : .white
+                    )
+                    .overlay {
+                        if willa.contains(cell.coord) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: cellSize / 2))
+                                .foregroundStyle(DesignTokens.Palette.accent)
+                                .scaleEffect(1 + sparkle)
+                                .opacity(1 - sparkle)
+                        }
+                    }
                     .offset(x: tilePoint.x, y: tilePoint.y)
                     // `cells` arrives in `visibleCoords` row-major order, so a
                     // tile dragged down or right would otherwise draw BEHIND
@@ -558,24 +729,45 @@ private struct BoardSurface: View, Animatable {
                     // and a swap reads as putting one back and taking another
                     // — the same motion in both directions, because it is the
                     // same act.
+                    // Only an id actually in `arriving` gets the bag flight.
+                    // `BoardSurface` culls to `visibleCoords`, so panning a
+                    // tile that was always on the board back into view is
+                    // ALSO an insertion into this ForEach — without this
+                    // check every one of those replayed the bag animation
+                    // too. The decision itself lives in
+                    // `BoardRender.arrivalTransition`, a plain function
+                    // `BoardTests` can call directly; this only maps its
+                    // answer onto the transition SwiftUI actually runs.
                     .transition(
-                        .modifier(
-                            active: FromBag(travel: 0, home: tilePoint, bag: Self.bagPoint),
-                            identity: FromBag(travel: 1, home: tilePoint, bag: Self.bagPoint)
-                        )
+                        BoardRender.arrivalTransition(for: tile.id, arriving: arriving) == .fromBag
+                            ? .modifier(
+                                active: FromBag(travel: 0, home: tilePoint, bag: Self.bagPoint),
+                                identity: FromBag(travel: 1, home: tilePoint, bag: Self.bagPoint)
+                            )
+                            : .identity
                     )
                 }
             }
         }
-        // Keyed on which tiles are on the table, never on where they are. A
-        // drag changes coords and must not run this: the released tile already
-        // slides to its cell under `onEnded`'s own animation, and a second one
-        // over the top of it would fight. Only a draw, a swap or the opening
-        // deal changes this set.
-        .animation(
-            .easeOut(duration: DesignTokens.Motion.dealDuration),
-            value: Set(cells.compactMap { $0.tile?.id })
-        )
+        // Keyed on the owner's delivery token, never on which tiles happen to
+        // be DRAWN. This used to read `Set(cells.compactMap { $0.tile?.id })`,
+        // and `cells` is viewport-culled: the set changed every time any tile
+        // crossed the viewport edge, so every pan, pinch, recenter and the
+        // opening framing restarted a `dealDuration` ease over every tile's
+        // offset — which is why the letters trailed the grid.
+        //
+        // The token moves on exactly a draw, a swap or the opening deal, which
+        // is the set of events this was always meant to key on, and it moves on
+        // nothing else: not a pan, not a pinch, and not a drag, which must not
+        // run this at all — the released tile already slides to its cell under
+        // `onEnded`'s own animation and a second one over the top would fight.
+        //
+        // Deliberately the token and not the board's own tile ids: the ids
+        // would mean reading `Board.placements` on the draw path, which is
+        // O(board) per body evaluation and is what `BoardSourceTests`'
+        // iterate-placements guardrail exists to refuse. The token is the same
+        // answer at O(1), published by the same owner that publishes the tiles.
+        .animation(.easeOut(duration: DesignTokens.Motion.dealDuration), value: dealToken)
         .clipped()
     }
 

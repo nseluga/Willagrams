@@ -51,9 +51,38 @@ public enum AppRoute: Hashable, Sendable {
     /// inside a match, and it renders nothing match-specific — so, like `menu`,
     /// it carries nothing.
     case howToPlay
+    /// The host's lobby: an invite code, who has arrived, and the way into the
+    /// match. Like `soloSetup` it carries nothing — the state lives on
+    /// ``ShellModel/hostLobby``, which owns a live `OnlineMatch` a route payload
+    /// has no business holding.
+    case hostLobby
+    /// The guest's side: a code field, then the wait for the host to open the
+    /// match. Carries nothing for the same reason `hostLobby` does — the state
+    /// lives on ``ShellModel/join``, which owns a live `OnlineMatch`.
+    case join
+    /// One player's profile. Carries nothing for the same reason `hostLobby`
+    /// does — whose profile it is lives on ``ShellModel/profile``, which the
+    /// route exit tears down.
+    case profile
+    /// The friends list. Carries nothing for the same reason `profile` does —
+    /// the three sections live on ``ShellModel/friends``, which the route exit
+    /// tears down.
+    case friends
     case countdown(MatchSetup)
     case match(MatchSetup)
     /// `winner` is nil when the match ended without one — a draw, or a peer that
     /// left before either player claimed.
     case results(winner: PlayerID?)
+}
+
+extension AppRoute {
+    /// The three match screens. On iPhone these are the only landscape routes —
+    /// ``OrientationPolicy`` reads this. An exhaustive switch, so a new route
+    /// has to decide which side it is on.
+    public var isGameplay: Bool {
+        switch self {
+        case .countdown, .match, .results: true
+        case .menu, .soloSetup, .howToPlay, .hostLobby, .join, .profile, .friends: false
+        }
+    }
 }

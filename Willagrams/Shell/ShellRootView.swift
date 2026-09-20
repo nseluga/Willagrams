@@ -25,12 +25,27 @@ struct ShellRootView: View {
 
     let shell: ShellModel
 
+    /// The loading screen covers the app until the launch loop hands over, and
+    /// never again after that. The decision is `ShellModel`'s, as every other
+    /// one here is — this only renders the answer.
     var body: some View {
+        if shell.showsLaunchScreen {
+            LaunchView(shell: shell)
+        } else {
+            routed
+        }
+    }
+
+    private var routed: some View {
         Group {
             switch shell.route {
             case .menu: MenuView(shell: shell)
             case .soloSetup: SoloSetupView(shell: shell)
             case .howToPlay: HowToPlayView(shell: shell)
+            case .hostLobby: hostLobby
+            case .join: joinScreen
+            case .profile: profileScreen
+            case .friends: friendsScreen
             case .countdown: countdown
             case .match: match
             case .results: results
@@ -38,6 +53,106 @@ struct ShellRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DesignTokens.Palette.canvasTop)
+        // One overlay rather than a banner drawn into each of the four screens
+        // that can carry one. `ShellModel` has already decided whether a banner
+        // exists at all — this renders what it publishes and branches on
+        // nothing, which is why there is no route check here.
+        .overlay(alignment: .top) { inviteBanner }
+        // iPhone is portrait off the match screens and landscape on them; the
+        // policy is `OrientationPolicy`'s, this only tells UIKit it changed.
+        .onChange(of: shell.route.isGameplay, initial: true) { _, isGameplay in
+            OrientationLock.mask = OrientationLock.mask(isGameplay: isGameplay)
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive } ??
+                UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+            scene?.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+            // The error handler is passed by reference, not written inline: a
+            // closure here would inherit this view's `@MainActor` isolation,
+            // and UIKit calls the handler on `com.apple.root.default-qos` when
+            // it rejects the request — which trapped and killed the app on
+            // iPad. `OrientationPolicy.report` is `nonisolated`, so a rejected
+            // rotation is still reported and still not fatal.
+            scene?.requestGeometryUpdate(
+                .iOS(interfaceOrientations: OrientationLock.mask),
+                errorHandler: OrientationPolicy.report(rejection:)
+            )
+        }
+    }
+
+    /// "<name> wants to play", with the way in. Both the line and the decision
+    /// to have one are `ShellModel`'s.
+    @ViewBuilder private var inviteBanner: some View {
+        if let invite = shell.inviteBanner {
+            HStack(spacing: DesignTokens.Space.m) {
+                Text(ShellModel.inviteLine(invite))
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    // The length clamp is `MatchInvite`'s, not this view's.
+                    // This is the second half of it: even a clamped name must
+                    // not push Join off the screen by wrapping.
+                    .lineLimit(2)
+
+                Spacer(minLength: DesignTokens.Space.m)
+
+                Button(ShellModel.inviteDeclineLabel) { shell.declineInvite() }
+                    .buttonStyle(.brandQuiet)
+
+                Button(ShellModel.inviteJoinLabel) { shell.joinInvite() }
+                    .buttonStyle(.brandPrimary)
+            }
+            .padding(DesignTokens.Space.l)
+            .background(DesignTokens.Palette.canvasBottom)
+            .frame(maxWidth: 620)
+            .padding(DesignTokens.Space.m)
+        } else if let message = shell.inviteMessage {
+            Text(message)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Palette.textSecondary)
+                .padding(DesignTokens.Space.l)
+        }
+    }
+
+    /// The host's lobby. Absent when `ShellModel` has already torn it down,
+    /// which renders nothing rather than fabricating a second one — same rule as
+    /// the three match screens below. One screen with `.join` below it —
+    /// `TwoPlayerView` renders both, told apart by `mode`.
+    @ViewBuilder private var hostLobby: some View {
+        if let lobby = shell.hostLobby {
+            TwoPlayerView(shell: shell, mode: .host(lobby))
+        }
+    }
+
+    /// The guest's join screen, on the same terms as the host's lobby above.
+    @ViewBuilder private var joinScreen: some View {
+        if let join = shell.join {
+            TwoPlayerView(shell: shell, mode: .join(join))
+        }
+    }
+
+    /// The local player's profile *or* a friend's — one screen, opened from two
+    /// places, on the same terms as the two screens above: absent when
+    /// `ShellModel` has already torn it down. `dismissProfile()` is the way out
+    /// because Back means the screen this one was opened from; the screen itself
+    /// still knows nothing about routes.
+    @ViewBuilder private var profileScreen: some View {
+        if let profile = shell.profile {
+            ProfileView(model: profile) { shell.dismissProfile() }
+        }
+    }
+
+    /// The friends list, on the same terms as the profile screen above. Tapping
+    /// a friend is a transition, so it goes to the shell rather than being
+    /// decided here.
+    @ViewBuilder private var friendsScreen: some View {
+        if let friends = shell.friends {
+            FriendsView(model: friends) { shell.returnToMenu() } onOpen: { entry in
+                shell.showFriendProfile(entry)
+            } onInvite: { entry in
+                shell.invitePlay(entry)
+            }
+        }
     }
 
     /// The board, with the count over it. Reads the run's session (the count),

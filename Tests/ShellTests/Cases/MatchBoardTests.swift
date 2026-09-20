@@ -1,3 +1,4 @@
+import Audio
 import BoardKit
 import CoreGraphics
 import Foundation
@@ -54,7 +55,7 @@ struct MatchBoardTests {
     /// test made at the right moment.
     static func wired() async throws -> (SoloMatch, MatchBoard) {
         let solo = SoloMatch(setup: setup, dictionary: EveryWordIsReal(), sleepFor: { _ in })
-        let wiring = MatchBoard(session: solo.session, dictionary: EveryWordIsReal())
+        let wiring = MatchBoard(session: solo.session, dictionary: EveryWordIsReal(), audio: SilentAudioPlayer())
         wiring.viewport = viewport
         solo.start()
         try await SoloMatchTests.waitUntil("the opening on the board") {
@@ -95,6 +96,12 @@ struct MatchBoardTests {
 
     static func grant(_ tiles: [Tile], from host: FakeTransport) async throws {
         try await host.send(.grant(player: PlayerID(rawValue: "zzz"), tiles: tiles), delivery: .reliable)
+    }
+
+    /// The other half of the wire: tiles this device owes because the opponent
+    /// drew. They wait behind the Draw button instead of reaching the rack.
+    static func owe(_ tiles: [Tile], from host: FakeTransport) async throws {
+        try await host.send(.obligation(player: PlayerID(rawValue: "zzz"), tiles: tiles), delivery: .reliable)
     }
 
     // MARK: - Criterion 1
@@ -155,7 +162,7 @@ struct MatchBoardTests {
     func drawEligibilityFollowsTheBoardModel() async throws {
         let dictionary = EnableWordList(words: ["GO"])
         let (host, session) = try await Self.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = Self.viewport
 
         try await Self.grant([Tile(letter: "G"), Tile(letter: "O")], from: host)
@@ -195,7 +202,7 @@ struct MatchBoardTests {
     func interruptedDeliveryLosesNoTileAndReArms() async throws {
         let dictionary = EveryWordIsReal()
         let (host, session) = try await Self.guest(handSize: 2, dictionary: dictionary)
-        let wiring = MatchBoard(session: session, dictionary: dictionary)
+        let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         wiring.viewport = Self.viewport
 
         let opening = [Tile(letter: "G"), Tile(letter: "O")]
@@ -205,11 +212,21 @@ struct MatchBoardTests {
         }
         let dealt = Self.custody(wiring, session, "after the deal")
 
+        // Join the two into one cluster the way a drag commits, so the draw
+        // below anchors on it.
+        var joined = wiring.board
+        let g = try #require(joined.placementList.first { $0.tile.id == opening[0].id })
+        let o = try #require(joined.placementList.first { $0.tile.id == opening[1].id })
+        _ = joined.remove(at: o.coord)
+        try joined.place(o.tile, at: Coord(row: g.coord.row, col: g.coord.col + 1))
+        wiring.board = joined
+        try await SoloMatchTests.waitUntil("the join on the session") { session.state.board == joined }
+
         // The opponent drew, so this device owes a press: the tile is held, the
         // board is frozen, and the session refuses every placement until the
         // player takes it. A delivery attempted here must do nothing at all.
         let owed = Tile(letter: "X")
-        try await Self.grant([owed], from: host)
+        try await Self.owe([owed], from: host)
         try await SoloMatchTests.waitUntil("the obligation") { session.hasPendingDraw }
         wiring.sync()
         wiring.sync()
@@ -218,12 +235,29 @@ struct MatchBoardTests {
         let interrupted = Self.custody(wiring, session, "while interrupted")
         #expect(interrupted == dealt.union([owed.id]), "a tile went missing under the interruption")
 
+        // The surface reports where its camera settled: the cluster sits on
+        // the bottom edge of the clear rect, so directly below it is out of
+        // sight. The delivery must follow this camera, not the starting one.
+        let insets = MatchHUDLayout(isCompact: false).boardInsets
+        wiring.insets = insets
+        let clear = insets.inset(Self.viewport)
+        let size = BoardCamera().cellSize
+        let looking = BoardCamera(pan: CGSize(width: 200, height: clear.maxY - size - 10))
+        wiring.cameraSettled(looking)
+        #expect(wiring.camera.pan == looking.pan && wiring.camera.zoom == looking.zoom)
+
         // The press is the resuming path, and the wiring re-arms on it with no
         // second call from anywhere: the tile that was held is delivered.
         #expect(session.draw())
         try await SoloMatchTests.waitUntil("the held tile on the board") {
             wiring.board.placementList.count == 3
         }
+        let arrived = try #require(wiring.board.placementList.first { $0.tile.id == owed.id })
+        let at = looking.point(for: arrived.coord)
+        #expect(
+            clear.contains(CGRect(x: at.x, y: at.y, width: size, height: size)),
+            "the draw landed at \(arrived.coord), outside the settled camera's clear rect \(clear)"
+        )
         #expect(session.state.hand.isEmpty)
         #expect(session.hasPendingDraw == false)
         let resumed = Self.custody(wiring, session, "after resuming")
@@ -236,7 +270,7 @@ struct MatchBoardTests {
     func refusedDeliveryPublishesNothing() async throws {
         let dictionary = EveryWordIsReal()
         let (host, session) = try await Self.guest(handSize: 1, dictionary: dictionary)
-        let laid = MatchBoard(session: session, dictionary: dictionary)
+        let laid = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         laid.viewport = Self.viewport
 
         try await Self.grant([Tile(letter: "G")], from: host)
@@ -245,7 +279,7 @@ struct MatchBoardTests {
         }
 
         // A second tile in hand, taken through the Draw button.
-        try await Self.grant([Tile(letter: "O")], from: host)
+        try await Self.owe([Tile(letter: "O")], from: host)
         try await SoloMatchTests.waitUntil("the obligation") { session.hasPendingDraw }
         #expect(session.draw())
         #expect(session.state.hand.count == 1)
@@ -253,7 +287,7 @@ struct MatchBoardTests {
         // A second wiring over the same session opens onto an empty board, so
         // the cell it picks is one the session already holds and the rules
         // refuse the mirror. Nothing may be published from a refused delivery.
-        let fresh = MatchBoard(session: session, dictionary: dictionary)
+        let fresh = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
         fresh.viewport = Self.viewport
         #expect(fresh.board.placementList.isEmpty)
         #expect(session.state.hand.count == 1, "a refused delivery ate the tile")

@@ -23,12 +23,16 @@ public struct StatRow: View {
             HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.m) {
                 Text(label)
                     .font(DesignTokens.Typography.body)
+                    .lineLimit(ButtonLabelFit.lineLimit)
+                    .minimumScaleFactor(ButtonLabelFit.minimumScaleFactor)
                     .foregroundStyle(DesignTokens.Palette.textSecondary)
 
                 Spacer(minLength: DesignTokens.Space.m)
 
                 Text(value)
                     .font(DesignTokens.Typography.button)
+                    .lineLimit(ButtonLabelFit.lineLimit)
+                    .minimumScaleFactor(ButtonLabelFit.minimumScaleFactor)
                     .foregroundStyle(DesignTokens.Palette.textPrimary)
             }
 

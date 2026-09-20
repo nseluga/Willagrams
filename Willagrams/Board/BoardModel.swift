@@ -69,6 +69,14 @@ public struct BoardModel: Sendable {
     /// dragging sits still.
     public var selected: Set<Coord> { tileDrag?.origins ?? selection.coords }
 
+    /// Whether selection mode is armed, regardless of what is in the set.
+    ///
+    /// ``selected`` cannot answer this: it is empty both when the mode is off
+    /// and when it was entered on bare surface, and those two states drew
+    /// identically. The surface needs the difference to show the player the
+    /// double tap took.
+    public var isSelecting: Bool { selection.isActive }
+
     /// Where the last painted sample was, so a sweep paints the line between
     /// two reported positions rather than the two positions themselves.
     private var paintCursor: CGPoint?
@@ -76,6 +84,23 @@ public struct BoardModel: Sendable {
     /// Whether this sweep has crossed a tile at all. A sweep that crossed none
     /// is a tap on empty space, which is the way out of selection mode.
     private var paintedAny = false
+
+    /// Where the double tap that ENTERED selection mode landed, until the touch
+    /// carrying it is over.
+    ///
+    /// The tap and the drag beneath it are one touch, and their order is not
+    /// ours to choose. On iPad the tap recognizer fires first, so the drag is
+    /// built with the mode already active, takes the `.paint` arm, and its
+    /// release — having crossed nothing — reads as the tap on empty space that
+    /// LEAVES the mode. The border appeared and vanished in the same gesture.
+    /// An entry may not be its own exit, and the point is what tells that touch
+    /// from the next one.
+    private var selectionEntryPoint: CGPoint?
+
+    /// How far apart two points may be and still be the same touch. UIKit calls
+    /// a drift this size a tap, so a tap's own drag cannot start further away
+    /// than this from where the tap was reported.
+    private static let selectionEntrySlop: CGFloat = 12
 
     /// What the frozen checker said about the board after the last committed
     /// move. Published state, never recomputed by a reader: `BoardRender` and
@@ -106,6 +131,15 @@ public struct BoardModel: Sendable {
     /// has run its course, and by `revalidate` the moment any tile moves, so a
     /// flash can never outlive the board it was an answer about.
     public private(set) var flashedInvalid: Set<Coord> = []
+
+    /// Every maximal horizontal or vertical run spelling WILLA, one coord set
+    /// each. The surface tints these with the accent.
+    public private(set) var willaRuns: [Set<Coord>] = []
+
+    /// Bumped once whenever a commit leaves a WILLA run the previous board did
+    /// not have. The sparkle keys on this model-side record, never on a view
+    /// appearing, so a pan or an unrelated move cannot replay it.
+    public private(set) var willaSparkles = 0
 
     /// The player pressed Draw or claimed the win. Lights the bad runs when the
     /// board is not finished, and returns whether the claim stands.
@@ -273,9 +307,10 @@ public struct BoardModel: Sendable {
         onto board: Board,
         camera: BoardCamera,
         in rect: CGRect,
+        insets: BoardInsets = .zero,
         against dictionary: some WordList
     ) -> Board {
-        let next = BoardLayout.delivered(tiles, onto: board, camera: camera, in: rect)
+        let next = BoardLayout.delivered(tiles, onto: board, camera: camera, in: rect, insets: insets)
         seed(next, against: dictionary)
         return next
     }
@@ -336,6 +371,48 @@ public struct BoardModel: Sendable {
         selection.enter()
     }
 
+    /// Forgets the entry point, because the touch that carried it has ended.
+    ///
+    /// Called at the end of EVERY touch, so a stale point cannot swallow a
+    /// later, deliberate tap on empty space — the one real way out of the mode.
+    public mutating func endedSelectionEntryTouch() {
+        selectionEntryPoint = nil
+    }
+
+    /// Enters selection mode at a POINT, seeding the set with the letter drawn
+    /// under it — the double tap's own landing spot.
+    ///
+    /// The seed is what makes the mode visible. Entering with an empty set put
+    /// the surface in a state that draws identically to being out of it
+    /// (`selected` is empty either way), so a player who double-tapped had no
+    /// way to tell whether it took, and the only feedback was whether the NEXT
+    /// drag happened to paint. One selected letter says the mode is live and
+    /// names where the sweep starts.
+    ///
+    /// A double tap on bare surface falls through to the plain `enter` above,
+    /// keeping the entry that already worked rather than making empty space a
+    /// second way to fail.
+    ///
+    /// Takes the point and the camera rather than a coord for the same reason
+    /// `painting` does: the tile the finger is ON is the tile it is DRAWN over,
+    /// which with `tileOffsets` in play is not the tile in the cell the point
+    /// indexes to.
+    public mutating func enterSelection(
+        at point: CGPoint,
+        on board: Board,
+        camera: BoardCamera
+    ) {
+        guard !inputLocked else { return }
+        selectionEntryPoint = point
+        guard let hit = BoardHit.tile(
+            under: point, on: board, offsets: tileOffsets, camera: camera
+        ) else {
+            selection.enter()
+            return
+        }
+        selection.seed(hit.coord)
+    }
+
     /// Sweeps the tiles between the last reported position and this one into
     /// the selection. `board` is read, never written — a painted selection is a
     /// drawing decision, and the board does not change until a group drag
@@ -366,10 +443,18 @@ public struct BoardModel: Sendable {
     /// Crossed, not newly selected: sweeping back over tiles already swept up
     /// must not read as a tap. This is the way out, and it costs no tile move,
     /// which is why it is answered here rather than by any board state.
-    public mutating func endedPainting() {
-        if !paintedAny { selection.clear() }
+    public mutating func endedPainting(startedAt start: CGPoint? = nil) {
+        if !paintedAny && !isEntryTouch(start) { selection.clear() }
         paintCursor = nil
         paintedAny = false
+    }
+
+    /// Whether a sweep starting at `start` is the very touch that entered the
+    /// mode. `nil` is never the entry touch: a caller with no start point to
+    /// offer cannot be the double tap, which always has one.
+    private func isEntryTouch(_ start: CGPoint?) -> Bool {
+        guard let start, let entry = selectionEntryPoint else { return false }
+        return hypot(entry.x - start.x, entry.y - start.y) <= Self.selectionEntrySlop
     }
 
     /// A no-op when nothing is held, so a finger that took hold of the camera
@@ -395,6 +480,7 @@ public struct BoardModel: Sendable {
         on board: Board,
         camera: BoardCamera,
         threshold: CGFloat,
+        lift: CGFloat = 0,
         against dictionary: some WordList
     ) -> Board {
         guard let tileDrag else { return board }
@@ -405,7 +491,7 @@ public struct BoardModel: Sendable {
         let drawn = tileOffsets
         let next = tileDrag.drop(
             translation: translation, on: board, camera: camera,
-            threshold: threshold, offsets: drawn
+            threshold: threshold, lift: lift, offsets: drawn
         )
         // The selection follows the tiles it was holding. Asked of the drag
         // rather than derived from the board that came back: the drag is the
@@ -415,7 +501,7 @@ public struct BoardModel: Sendable {
         if selection.isActive, tileDrag.origins == selection.coords,
            let landed = tileDrag.landed(
                translation: translation, on: board, camera: camera,
-               threshold: threshold, offsets: drawn
+               threshold: threshold, lift: lift, offsets: drawn
            ) {
             selection.replace(with: landed)
         }
@@ -427,6 +513,23 @@ public struct BoardModel: Sendable {
         return next
     }
 
+    /// A drag whose release never arrived — the system took the touch, so
+    /// `DragGesture.onEnded` did not fire. It lands at its last reported
+    /// translation under the same rules as a release (occupied → origin),
+    /// rather than being silently dropped by the next touch's `began`, which
+    /// is what snapped a fast drag's tile back home. No hold → `board` as is.
+    public mutating func interrupted(
+        on board: Board,
+        camera: BoardCamera,
+        lift: CGFloat = 0,
+        against dictionary: some WordList
+    ) -> Board {
+        // `threshold` is ignored — there is no reach limit. 0 on purpose: if a
+        // reach guard is ever restored it refuses here, and the interrupted
+        // tests go red instead of the lost-release snap-back silently returning.
+        commit(translation: dragTranslation, on: board, camera: camera, threshold: 0, lift: lift, against: dictionary)
+    }
+
     /// The ONE place published validation is written, and the only call to the
     /// frozen checker in this lane. Everything here is read back out of
     /// `BoardValidation` — no cluster, run or completeness rule is restated.
@@ -434,10 +537,30 @@ public struct BoardModel: Sendable {
         validation = board.validate(against: dictionary)
         invalidRuns = Self.runs(of: validation)
         strandedCoords = Self.stranded(board)
+        let runs = Self.willaRuns(of: board)
+        if runs.contains(where: { !willaRuns.contains($0) }) { willaSparkles &+= 1 }
+        willaRuns = runs
         // Any commit ends a flash: it was an answer about the board as it stood
         // when the player claimed to be done, and that board no longer exists.
         flashedInvalid = []
         tileOffsets = Self.offsets(for: board, carrying: tileOffsets)
+    }
+
+    /// Each maximal run reading W-I-L-L-A left to right or top to bottom.
+    static func willaRuns(of board: Board) -> [Set<Coord>] {
+        let word = Array("WILLA")
+        var runs: [Set<Coord>] = []
+        for start in board.placementList.map(\.coord) {
+            for (dr, dc) in [(0, 1), (1, 0)] {
+                let at = { (i: Int) in Coord(row: start.row + dr * i, col: start.col + dc * i) }
+                // Maximal only: WILLAS or AWILLA is a different word.
+                guard board.tile(at: at(-1)) == nil, board.tile(at: at(word.count)) == nil else { continue }
+                if (0..<word.count).allSatisfy({ board.tile(at: at($0))?.letter.uppercased() == String(word[$0]) }) {
+                    runs.append(Set((0..<word.count).map(at)))
+                }
+            }
+        }
+        return runs
     }
 
     /// One coord set per bad word. Shared by the committed tint and the tint of

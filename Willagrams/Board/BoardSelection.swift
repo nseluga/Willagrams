@@ -27,10 +27,10 @@ public struct BoardSelection: Equatable, Sendable {
     /// moment they were painted.
     public private(set) var coords: Set<Coord> = []
 
-    /// The only way in is `enter` and `paint`. There is deliberately no
-    /// initializer that takes a set: a selection nobody swept is a fixture that
-    /// proves nothing, and an inactive selection holding coords is a state the
-    /// rest of this type would have to keep answering for.
+    /// The only ways in are `enter`, `seed` and `paint`. There is deliberately
+    /// no initializer that takes a set: a selection nobody swept is a fixture
+    /// that proves nothing, and an inactive selection holding coords is a state
+    /// the rest of this type would have to keep answering for.
     public init() {}
 
     public var isEmpty: Bool { coords.isEmpty }
@@ -41,6 +41,23 @@ public struct BoardSelection: Equatable, Sendable {
     /// swept up — re-entering mid-selection is not a reason to lose it.
     public mutating func enter() {
         isActive = true
+    }
+
+    /// Enters selection mode holding exactly the one coord the player named,
+    /// which is the letter a double tap landed on.
+    ///
+    /// REPLACES rather than inserts. A double tap is how a player starts over,
+    /// so landing one on a letter means "this is the selection now" — not
+    /// "add this to whatever I sweep up earlier". That also makes the gesture
+    /// its own escape hatch: a sweep that took too much is undone by double
+    /// tapping the one letter that was wanted, with no separate way out.
+    ///
+    /// Unlike `paint`, this asks no board. The caller has already hit-tested a
+    /// point to get here, and a coord that carries no tile simply draws no
+    /// selected cell — `BoardRender` reads placements, not this set.
+    public mutating func seed(_ coord: Coord) {
+        isActive = true
+        coords = [coord]
     }
 
     /// Leaves selection mode AND drops the set, in one call.

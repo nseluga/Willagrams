@@ -8,14 +8,20 @@ import SwiftUI
 /// only changes opacity is the one players stop noticing.
 public struct PrimaryButtonStyle: ButtonStyle {
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     public init() {}
 
     public func makeBody(configuration: Configuration) -> some View {
+        let isCompact = ButtonLabelFit.isCompact(horizontal: horizontalSizeClass, vertical: verticalSizeClass)
         configuration.label
-            .font(DesignTokens.Typography.button)
+            .font(ButtonLabelFit.font(horizontal: horizontalSizeClass, vertical: verticalSizeClass))
+            .lineLimit(ButtonLabelFit.lineLimit)
+            .minimumScaleFactor(ButtonLabelFit.minimumScaleFactor)
             .foregroundStyle(DesignTokens.Palette.onInk)
-            .padding(.horizontal, DesignTokens.Space.l)
-            .padding(.vertical, DesignTokens.Space.s)
+            .padding(.horizontal, ButtonLabelFit.horizontalPadding(horizontal: horizontalSizeClass, vertical: verticalSizeClass))
+            .padding(.vertical, isCompact ? DesignTokens.Space.xs : DesignTokens.Space.s)
             .background(DesignTokens.Palette.ink, in: shape)
             .brandShadow(configuration.isPressed ? DesignTokens.Shadow.flush : DesignTokens.Shadow.button)
             .offset(y: configuration.isPressed ? DesignTokens.Stroke.bevel : 0)
@@ -26,14 +32,20 @@ public struct PrimaryButtonStyle: ButtonStyle {
 /// The secondary control: a recessed panel rather than a filled one.
 public struct QuietButtonStyle: ButtonStyle {
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     public init() {}
 
     public func makeBody(configuration: Configuration) -> some View {
+        let isCompact = ButtonLabelFit.isCompact(horizontal: horizontalSizeClass, vertical: verticalSizeClass)
         configuration.label
-            .font(DesignTokens.Typography.button)
+            .font(ButtonLabelFit.font(horizontal: horizontalSizeClass, vertical: verticalSizeClass))
+            .lineLimit(ButtonLabelFit.lineLimit)
+            .minimumScaleFactor(ButtonLabelFit.minimumScaleFactor)
             .foregroundStyle(DesignTokens.Palette.ink)
-            .padding(.horizontal, DesignTokens.Space.l)
-            .padding(.vertical, DesignTokens.Space.s)
+            .padding(.horizontal, ButtonLabelFit.horizontalPadding(horizontal: horizontalSizeClass, vertical: verticalSizeClass))
+            .padding(.vertical, isCompact ? DesignTokens.Space.xs : DesignTokens.Space.s)
             .background(
                 configuration.isPressed ? DesignTokens.Palette.hairline : DesignTokens.Palette.cellEmpty,
                 in: shape
@@ -51,15 +63,21 @@ public struct QuietButtonStyle: ButtonStyle {
 /// The quietest control: a word, no chrome.
 public struct TextButtonStyle: ButtonStyle {
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     public init() {}
 
     public func makeBody(configuration: Configuration) -> some View {
+        let isCompact = ButtonLabelFit.isCompact(horizontal: horizontalSizeClass, vertical: verticalSizeClass)
         configuration.label
-            .font(DesignTokens.Typography.button)
+            .font(ButtonLabelFit.font(horizontal: horizontalSizeClass, vertical: verticalSizeClass))
+            .lineLimit(ButtonLabelFit.lineLimit)
+            .minimumScaleFactor(ButtonLabelFit.minimumScaleFactor)
             .foregroundStyle(
                 configuration.isPressed ? DesignTokens.Palette.accentPressed : DesignTokens.Palette.accent
             )
-            .padding(.horizontal, DesignTokens.Space.s)
+            .padding(.horizontal, isCompact ? DesignTokens.Space.xs : DesignTokens.Space.s)
             .padding(.vertical, DesignTokens.Space.xs)
             .animation(DesignTokens.Motion.snap, value: configuration.isPressed)
     }

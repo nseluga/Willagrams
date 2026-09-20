@@ -20,7 +20,7 @@ import WillagramsRules
 /// An actor, so the `account` and `friends` lanes exercise the same
 /// serialization the real client has, and a test that races two calls behaves
 /// the same way against both.
-public actor FakeBackend: BackendClient {
+public actor FakeBackend: BackendClient, MatchAbandoning, FriendRequestForgetting, FriendForgetting {
 
     private var signedInUser: UUID?
     private var profiles: [UUID: Profile] = [:]
@@ -34,6 +34,18 @@ public actor FakeBackend: BackendClient {
 
     /// Deterministic codes, so a test can predict the next one.
     private var codeCounter = 0
+
+    /// How many of the next ``abandonMatch(_:)`` calls throw before one is
+    /// allowed through. The seam a retry test needs: a real abandon fails on a
+    /// dropped packet, and no other method models a transient failure.
+    private var abandonFailuresRemaining = 0
+
+    /// Every ``abandonMatch(_:)`` call, failed ones included — so a test can
+    /// tell "retried and gave up" from "never retried".
+    public private(set) var abandonAttemptCount = 0
+
+    /// Makes the next `count` abandons throw.
+    public func failNextAbandons(_ count: Int) { abandonFailuresRemaining = count }
 
     public init(now: Date = Date(timeIntervalSince1970: 1_700_000_000)) {
         self.now = now
@@ -69,8 +81,22 @@ public actor FakeBackend: BackendClient {
 
     // MARK: Profiles
 
+    /// Runs once inside the next ``profile(id:)``, after the row has been read
+    /// and before it is returned. The seam a test needs to model a slow read:
+    /// no other method lets a caller run while a response is still open, and
+    /// "a read that crossed a write" is otherwise untestable.
+    private var nextProfileReadHold: (@Sendable () async -> Void)?
+
+    public func holdNextProfileRead(_ hold: @escaping @Sendable () async -> Void) {
+        nextProfileReadHold = hold
+    }
+
     public func profile(id: UUID) async throws -> Profile {
         guard let profile = profiles[id] else { throw BackendError.notFound }
+        if let hold = nextProfileReadHold {
+            nextProfileReadHold = nil
+            await hold()
+        }
         return profile
     }
 
@@ -95,8 +121,13 @@ public actor FakeBackend: BackendClient {
 
     // MARK: Friendships
 
+    /// How many times ``friendships()`` has been asked. A round-trip counter,
+    /// so a caller that must not query per incoming frame can be held to it.
+    public private(set) var friendshipsFetches = 0
+
     public func friendships() async throws -> [Friendship] {
         let me = try requireUser()
+        friendshipsFetches += 1
         return friendships.filter { $0.requesterID == me || $0.addresseeID == me }
     }
 
@@ -134,6 +165,30 @@ public actor FakeBackend: BackendClient {
         friendships[index].status = accept ? .accepted : .blocked
         friendships[index].respondedAt = now
         return friendships[index]
+    }
+
+    /// The offline half of ``FriendRequestForgetting``: the decline that
+    /// forgets rather than blocks, matching `friendships_delete_own`.
+    public func forgetFriendRequest(requesterID: UUID) async throws {
+        let me = try requireUser()
+        guard let index = friendships.firstIndex(where: {
+            $0.requesterID == requesterID && $0.addresseeID == me
+                && $0.status == .pending
+        }) else { throw BackendError.notFound }
+        friendships.remove(at: index)
+    }
+
+    /// The offline half of ``FriendForgetting``. The `.accepted` check is the
+    /// Swift-side filter `friendships_delete_own` does not make: without it an
+    /// unfriend would lift a block.
+    public func unfriend(_ friendID: UUID) async throws {
+        let me = try requireUser()
+        guard let index = friendships.firstIndex(where: {
+            (($0.requesterID == me && $0.addresseeID == friendID)
+                || ($0.requesterID == friendID && $0.addresseeID == me))
+                && $0.status == .accepted
+        }) else { throw BackendError.notFound }
+        friendships.remove(at: index)
     }
 
     public func block(_ playerID: UUID) async throws -> Friendship {
@@ -197,9 +252,49 @@ public actor FakeBackend: BackendClient {
         return match
     }
 
+    /// The row as this fake holds it, with no membership or status gate.
+    ///
+    /// A read a test needs and the protocol has no method for: "the `matches`
+    /// row still reads `lobby`" cannot be asserted through `joinMatch`, which
+    /// refuses on exactly that status and so cannot tell the two apart.
+    public func matchRecord(_ id: UUID) -> MatchRecord? { matches[id] }
+
+    /// The offline stand-in for `matches_update_host`: only the host moves the
+    /// row, and only while it is still a lobby. A row that already went
+    /// `playing` is the outcome recorder's, so this leaves it alone rather than
+    /// erasing a match that was actually played.
+    public func abandonMatch(_ id: UUID) async throws {
+        if abandonFailuresRemaining > 0 {
+            abandonFailuresRemaining -= 1
+            abandonAttemptCount += 1
+            throw BackendError.notFound
+        }
+        abandonAttemptCount += 1
+        let me = try requireUser()
+        guard var match = matches[id] else { throw BackendError.notFound }
+        guard match.hostID == me else { throw BackendError.permissionDenied }
+        guard match.status == .lobby else { return }
+        match.status = .abandoned
+        matches[id] = match
+    }
+
     public func players(inMatch matchID: UUID) async throws -> [MatchPlayerRow] {
         guard let rows = memberships[matchID] else { throw BackendError.notFound }
         return rows
+    }
+
+    /// What ``transport(for:as:)`` hands back, when a caller wants to choose.
+    ///
+    /// The stock endpoint below throws its peer away, so nothing a test does to
+    /// the far end is observable and no send can be counted. A caller that needs
+    /// either — the `online` façade's lobby and its "a refused start sends
+    /// nothing" rule — supplies its own endpoint here.
+    private var transportFactory: (@Sendable (MatchRecord, PlayerID) -> any MatchTransport)?
+
+    public func setTransportFactory(
+        _ factory: @escaping @Sendable (MatchRecord, PlayerID) -> any MatchTransport
+    ) {
+        transportFactory = factory
     }
 
     public func transport(
@@ -207,6 +302,7 @@ public actor FakeBackend: BackendClient {
         as player: PlayerID
     ) async throws -> any MatchTransport {
         guard matches[match.id] != nil else { throw BackendError.notFound }
+        if let transportFactory { return transportFactory(match, player) }
         // A live endpoint with a synthetic peer on the other side. Enough for
         // `account` and `friends`, which never send a MatchMessage; `online`
         // replaces this with a real channel, and the match lane's own tests

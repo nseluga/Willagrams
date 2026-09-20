@@ -160,6 +160,16 @@ property `@ObservationIgnored` to keep the net count unchanged makes it pass.
 Any lane adding state to `MatchSession` must run `swift test --package-path
 Tests/MatchTests`; the engine suite does not cover it.
 
+## Landed amendment — wire v4, the guest's pool count
+
+**Landed 2026-09-14 on `main` (`/foundation` amendment). Not a lane item.**
+
+`WireFormat.current` is `4`, and `MatchMessage` gains a trailing
+`poolCount(remaining: Int)`. It is informational: the host's pool stays the one
+authority, and a receiver keeps the lowest count it has seen, so reordering
+cannot raise it. The spec is in FOUNDATION.md. Sending the count and showing it
+on the guest is the `polish` lane's.
+
 ## Granted amendment — the opening deal and the board-commit bridge, in `shell`
 
 `MatchSession` receives `startingHandSize` off the wire, clamps it, and stores
@@ -211,6 +221,7 @@ Scope, stated because the two halves are not the same problem:
     number. Broadcasting it needs a new field on `MatchMessage`, which is
     `protected:` — a wire break to v4 and a `/foundation` amendment. No guest
     exists until the `online` lane lands, so it is not a round-2 question.
+    **Landed as wire v4, 2026-09-14** — see the amendment above.
 
 Rationale: the same one the grants above carry — every lane has one assignee,
 `match` is merged, and a whole lane round for one published integer is ceremony.
@@ -436,12 +447,72 @@ routing layer from a `#if canImport(UIKit)` hardware file, or excludes the
 hardware file in `Package.swift`. `Tests/BoardTests` dodged this by never
 compiling `Willagrams/Board` at all.
 
+## Granted amendment — `account` and `friends` fold into `shell` round 3, 2026-09-03
+
+Every lane carries the same assignee, and the only thing sequenced behind
+`account` and `friends` is the shell entry point into each of their screens.
+Run as written, the map ends in a fourth shell round whose whole content is
+three menu buttons, plus two extra merges. Online and audio both merged with
+zero callers; a separate `account` lane and a separate `friends` lane would do
+the same, and the wiring would wait.
+
+**Granted:** the `shell` lane's round 3 may create and own
+`Willagrams/Account/**`, `Tests/AccountTests/**`, `Willagrams/Friends/**` and
+`Tests/FriendsTests/**` — the full `owns:` of both lanes — and wires each
+screen into the menu in the same round. The `account` and `friends` entries
+below stay as the record of what those areas are; neither runs as its own lane
+this release. Their `depends on:` edges become items inside shell round 3.
+
+What the fold does not change:
+
+  - `friends` builds and is tested against the real database, not
+    `FakeBackend`. RLS refuses by returning zero rows, never an error, so a
+    fake-green friends page can still be empty in production.
+    `supabase/tests/rls_behavior.sql` is the fixture; extend it.
+  - Sign in with Apple stays below the stop marker, waiting on the paid
+    membership. Identity this round is the anonymous session `online` proved
+    live.
+  - `Willagrams/Online/BackendContracts.swift` and `supabase/migrations/**`
+    are still `protected:`. A screen that needs a column or a call the seam
+    does not have is a `/foundation` amendment, not a shell item.
+  - `launch` is unchanged and still runs last.
+
+Cost accepted with the grant: one large lane PR instead of three small ones,
+and a longer unattended run. `parallel-group:` inside the lane keeps the
+account and friends items concurrent, so no wall-clock is lost.
+
 ## Tuning — the last step before launch
 
 There is no tuning lane; its `owns:` would intersect every other lane. Tuning
 is a **pass**, run after every lane merges and before `launch` closes: token
 values, bot difficulty constants, animation durations, sound levels. Each edit
 lands in the lane that owns the file.
+
+**The 2026-09-14 phone-polish pass runs as lane `polish`**, so one LANE.md can
+drive it after the two-device hand test. It owns nothing of its own. Every path
+it edits belongs to a merged lane, and those are open to any lane, so it needs
+no grant. `protected:` still fences it: its only wire change landed first as
+the v4 amendment.
+
+**The 2026-09-15 final-adjustments pass runs as lane `final`**, cut from
+`lane/polish` after Nate's hand test, implementing his eleven-item list and the
+Claude Design comp `docs/design/willagrams-final.dc.html`. Like `polish` it owns
+nothing and edits merged lanes' paths. **Amendment, 2026-09-15 — two grants,
+each scoped to the named edit only:**
+  - `Willagrams.xcodeproj/project.pbxproj` (unowned): the iPhone
+    `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone` value gains portrait,
+    and the launch-screen background colour. Nothing else in the project file.
+  - `supabase/migrations/0006_fastest_win_skips_null.sql` (protected): a new
+    migration only, re-creating `record_outcome` with the same signature so a
+    null `elapsed_seconds` leaves `fastest_win_seconds` untouched, and resetting
+    every `fastest_win_seconds` to null (a resign win cannot be told apart after
+    the fact; Nate's call). No applied migration is edited. Written and
+    scratch-verified during lane setup (the fixture's null cases fail without
+    it). **Applied live by Nate on 2026-09-15** with `bash scripts/apply-0006-live.sh`:
+    40 of 1,274 fastest wins cleared, null guard present, anon has no execute. Never `supabase db push` on this project:
+    its migration history is empty (0001–0005 went in by script), so a push
+    would re-run them all.
+No wire, `BackendContracts.swift`, `MatchOptions` or `Terminology.swift` change.
 
 ---
 
@@ -461,7 +532,7 @@ lands in the lane that owns the file.
   area: The match session — message codec, host-authoritative pool, draw/swap/grow broadcast, win claim, disconnect freeze and reconnect. Transport-agnostic: it owns the MatchTransport protocol and never imports a networking framework. Reopens this round for wire v3 (up to 6 players).
   owns: [ Willagrams/Match/**, Tests/MatchTests/** ]
   assignee: nate
-  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v3.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. The wire v3 amendment landed 2026-08-19 in `83e300c`, so this lane is unblocked.
+  depends on: — builds on the frozen engine (MatchMessage wire enum in Sources/WillagramsRules/MatchMessage.swift, golden fixture Tests/WillagramsRulesTests/Fixtures/wire-v4.json; host-side Pool.draw/swap in Sources/WillagramsRules/Pool.swift) — no lane edge, fenced under protected:. The wire v3 amendment landed 2026-08-19 in `83e300c`, so this lane is unblocked.
 
 - lane: settings
   area: Match configuration and rule variants — the host's pre-match options screen, local persistence of chosen defaults, and showing both players which rules are in force. Ships the disable-swap, minimum-word-length, and selectable-dictionary controls.
@@ -510,3 +581,15 @@ lands in the lane that owns the file.
   owns: [ fastlane/**, docs/store/** ]
   assignee: nate
   depends on: every other lane (sequenced — the audit runs against a complete build)
+
+- lane: polish
+  area: The phone-polish tuning pass after the two-device hand test — proportional layout at landscape phone height, keyboard-visible typing, reachable validation, forgiving board handling (no snap-back, no fly-in, recenter that fits, drawn tiles near the board), unfriend, the early-start fix, the guest's bag count, and the WILLA word.
+  owns: [ ] — a pass, not a feature lane. Every path it edits is a merged lane's, open to any lane
+  assignee: nate
+  depends on: — every lane it edits is merged; the wire v4 amendment it needs landed 2026-09-14
+
+- lane: final
+  area: The final-adjustments pass after the polish hand test — iPhone portrait outside gameplay, a looping loading screen, Home without the Join button or the shared-pool line, one Play/Join a Friend screen with match settings, restyled Profile/Friends/How to Play, the fast-drag fly-home fix, and resign wins skipping fastest win.
+  owns: [ ] — a pass, like `polish`. Plus the two scoped grants under "Tuning" (project.pbxproj orientation + launch colour; migration 0006)
+  assignee: nate
+  depends on: polish (branched from `lane/polish` at `c1f038b`; merges after it)

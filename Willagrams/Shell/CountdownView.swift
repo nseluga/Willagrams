@@ -27,6 +27,8 @@ struct CountdownView: View {
 
     let dictionary: any WordList
 
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     var body: some View {
         BoardView(
             board: $board,
@@ -39,29 +41,42 @@ struct CountdownView: View {
         )
         .overlay {
             if let overlay = CountdownOverlay(session: session) {
-                card(overlay)
+                CountdownCard(title: overlay.title, secondsRemaining: overlay.secondsRemaining)
             }
         }
     }
+}
 
-    /// A card, deliberately intrinsically sized and centred: it leaves the board
-    /// visible around it at every viewport, iPhone through iPad, and there is no
-    /// scrim over the tiles.
-    private func card(_ overlay: CountdownOverlay) -> some View {
+/// A card, deliberately intrinsically sized and centred: it leaves the board
+/// visible around it at every viewport, iPhone through iPad, and there is no
+/// scrim over the tiles.
+///
+/// Its own view, not a method, because two screens show it: the pre-match
+/// countdown here and the resume countdown `MatchView` puts over a live board.
+/// Takes the strings rather than the session, so neither caller has to reach
+/// past what it already holds.
+struct CountdownCard: View {
+
+    let title: String
+    let secondsRemaining: Int
+
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    var body: some View {
         VStack(spacing: DesignTokens.Space.s) {
             // Uppercased for display only. The words are `Terminology`'s and
             // stay its words; the case is the mono label's, like every other
             // kicker on the app's screens.
-            Text(overlay.title)
+            Text(title)
                 .monoLabel()
                 .textCase(.uppercase)
-            Text(String(overlay.secondsRemaining))
+            Text(String(secondsRemaining))
                 .font(DesignTokens.Typography.display)
                 .foregroundStyle(DesignTokens.Palette.textPrimary)
                 // The card must not resize under each new digit.
                 .monospacedDigit()
         }
-        .padding(DesignTokens.Space.xl)
+        .padding(verticalSizeClass == .compact ? DesignTokens.Space.l : DesignTokens.Space.xl)
         .brandCard()
         .accessibilityElement(children: .combine)
     }
