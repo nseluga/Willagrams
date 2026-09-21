@@ -132,13 +132,12 @@ public struct MenuLayout: Equatable {
     /// structure stays as-is.
     public var quietColumns: Int { (isCompact || isPortrait) ? 2 : 1 }
 
-    /// The Menu's six destinations, in the fixed order both the portrait and
-    /// landscape/iPad layouts render them: Multiplayer (disabled) and Play a
-    /// Friend as the two primary actions, then Solo Practice, Profile,
-    /// Friends and How to Play in the quiet grid. No Join entry — Join is
-    /// reached from the Play a Friend screen, not from Home.
+    /// The Menu's five destinations, in the fixed order both the portrait and
+    /// landscape/iPad layouts render them: Play a Friend as the primary
+    /// action, then Solo Practice, Profile, Friends and How to Play in the
+    /// quiet grid. No Join entry — Join is reached from the Play a Friend
+    /// screen, not from Home.
     public static let actions: [MenuAction] = [
-        MenuAction(title: "Multiplayer", style: .primary, isEnabled: false, caption: "Coming soon"),
         MenuAction(title: "Play a Friend", style: .primary),
         MenuAction(title: "Solo Practice", style: .quiet),
         MenuAction(title: "Profile", style: .quiet),
@@ -147,15 +146,14 @@ public struct MenuLayout: Equatable {
     ]
 
     /// A conservative estimate of the portrait column's fixed (non-flexible)
-    /// content height — the mute row, the wordmark, the PLAY label, both
-    /// primary buttons plus the Multiplayer caption, and the quiet grid.
+    /// content height — the mute row, the wordmark, the PLAY label, the
+    /// primary button, and the quiet grid.
     /// The gap between the wordmark and the PLAY section is a `Spacer` and
     /// contributes nothing here, so this proves the fixed content alone
     /// fits the screen without relying on that gap collapsing to zero.
     public var estimatedContentHeight: CGFloat {
         let muteRowHeight: CGFloat = 44
         let playLabelHeight: CGFloat = 20
-        let multiplayerCaptionHeight: CGFloat = 16
         let onlineCaptionHeight: CGFloat = 16
         let buttonHeight = isCompact ? Self.compactButtonHeight : Self.regularButtonHeight
 
@@ -169,21 +167,20 @@ public struct MenuLayout: Equatable {
             + spacing
             + CGFloat(rowCount) * buttonHeight
             + CGFloat(rowCount - 1) * spacing
-            + multiplayerCaptionHeight
             + onlineCaptionHeight
 
         return topSection + spacing + bottomSection
     }
 
-    /// Estimated height of the actions column — the mute row, the two
-    /// primary buttons, and the quiet grid — the tallest stack in the menu.
+    /// Estimated height of the actions column — the mute row, the
+    /// primary button, and the quiet grid — the tallest stack in the menu.
     /// Proves the compact layout fits a landscape phone without scrolling.
     public var estimatedActionsHeight: CGFloat {
         let muteRowHeight: CGFloat = 44
         let quietActionCount = 4
         let quietRows = (quietActionCount + quietColumns - 1) / quietColumns
         let buttonHeight = isCompact ? Self.compactButtonHeight : Self.regularButtonHeight
-        let primaryButtons = 2
+        let primaryButtons = 1
         let rowCount = 1 + primaryButtons + quietRows
         let buttons = muteRowHeight + CGFloat(primaryButtons + quietRows) * buttonHeight
         let gaps = CGFloat(rowCount - 1) * spacing

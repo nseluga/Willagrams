@@ -197,25 +197,9 @@ struct MenuView: View {
         .accessibilityLabel(shell.isMuted ? Self.soundOffLabel : Self.soundOnLabel)
     }
 
-    /// The two loud actions, in ``MenuLayout/actions``' order: Multiplayer —
-    /// disabled until the feature ships, with its "Coming soon" caption
-    /// underneath — then Play a Friend, off until the anonymous sign-in
-    /// lands.
+    /// The loud action: Play a Friend, off until the anonymous sign-in lands.
     @ViewBuilder
     private var primaryActions: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Space.xs) {
-            Button {} label: {
-                Text(Self.multiplayerTitle).menuActionLabel()
-            }
-            .buttonStyle(.brandPrimary)
-            .disabled(true)
-
-            Text(Self.multiplayerComingSoon)
-                .font(DesignTokens.Typography.caption)
-                .foregroundStyle(DesignTokens.Palette.textSecondary)
-        }
-        .padding(.bottom, DesignTokens.Space.s)
-
         Button { shell.playAFriend() } label: {
             Text(HostLobbyModel.title).menuActionLabel()
         }
@@ -294,12 +278,6 @@ struct MenuView: View {
     /// app reads "Sound off".
     private static let soundOnLabel = "Sound on"
     private static let soundOffLabel = "Sound off"
-
-    /// The disabled primary action's title and its reason caption. Chrome,
-    /// so a local constant and not `Terminology` — there is no game concept
-    /// named "Multiplayer" for the fence to guard.
-    private static let multiplayerTitle = "Multiplayer"
-    private static let multiplayerComingSoon = "Coming soon"
 
     /// The width the design comp was drawn at. Nothing is pinned to it — it is
     /// the ceiling the content stops growing at, so a wider screen adds margin
