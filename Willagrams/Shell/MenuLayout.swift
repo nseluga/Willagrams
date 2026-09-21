@@ -87,13 +87,13 @@ public struct MenuLayout: Equatable {
     /// Portrait's wordmark is sized from the width alone — there is no
     /// second column racing it for space, so height never binds the way it
     /// does in the two-column layouts above.
-    private static let portraitWordmarkFraction: CGFloat = 0.48
+    private static let portraitWordmarkFraction: CGFloat = 0.70
     private static let portraitWordmarkMin: CGFloat = 180
-    private static let portraitWordmarkMax: CGFloat = 260
+    private static let portraitWordmarkMax: CGFloat = 320
 
     /// True on a portrait phone (width < height): the single-column Home,
-    /// mute top-right, wordmark near the top, PLAY actions anchored to the
-    /// bottom. False for both landscape phone and iPad, which keep the
+    /// mute top-right, wordmark centred above the bottom-anchored PLAY
+    /// actions. False for both landscape phone and iPad, which keep the
     /// existing two-column layout below.
     public let isPortrait: Bool
     /// True under a landscape phone's height, false on an iPad.

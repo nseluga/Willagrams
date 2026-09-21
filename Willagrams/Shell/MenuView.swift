@@ -155,15 +155,17 @@ struct MenuView: View {
         }
     }
 
-    /// The single-column portrait Home: mute top-right, wordmark near the
-    /// top sized from the available width, a flexible gap, then the PLAY
-    /// actions anchored to the bottom.
+    /// The single-column portrait Home: mute top-right, the wordmark sized
+    /// from the available width and centred in the space between the mute
+    /// row and the PLAY actions, which stay anchored to the bottom.
     private func portraitColumn(_ layout: MenuLayout) -> some View {
         VStack(alignment: .leading, spacing: layout.spacing) {
             HStack {
                 Spacer(minLength: 0)
                 muteButton
             }
+
+            Spacer(minLength: 0)
 
             HStack {
                 Spacer(minLength: 0)
