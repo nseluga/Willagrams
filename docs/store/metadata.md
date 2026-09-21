@@ -116,29 +116,35 @@ creates an anonymous session by itself and asks the player for nothing.
 ### Notes (4,000)
 
 ```
-Willagrams is a word game. No account, login, or payment is needed — tapping
-Play a Friend creates an anonymous profile automatically.
+Willagrams is a word game. No account, login, or payment is needed. On launch
+the app creates an anonymous profile automatically; the caption under Play a
+Friend reads "Signing in…" for a moment, then the button enables.
 
-TESTING ONLINE PLAY WITH ONE DEVICE
-"Play a Friend" is real-time and needs two devices, so a single reviewer cannot
-complete an online match alone. Solo Practice exercises the identical board,
-rules and match flow against a computer opponent, and is the fastest way to see
-the whole game. Please use it if a second device is not available.
+EVERY SCREEN AND HOW TO REACH IT
+Everything below is visible from the home screen. There are no hidden, locked,
+or remotely enabled features, and no server-side switches — the backend only
+stores profiles and friends and relays live match moves.
+- Play a Friend: host an online match and share its invite code.
+- Join a Friend: on the Play a Friend screen; enter an invite code.
+- Solo Practice: play the computer at Easy, Medium or Hard. Works offline.
+- Profile: display name, friend code, and your match stats.
+- Friends: your friend code, add a friend by code, accept requests, and
+  "Invite to play" a friend directly.
+- How to Play: the rules.
 
-TESTING ONLINE PLAY WITH TWO DEVICES
-1. On both devices open Play a Friend.
-2. Device A: Host, then share the invite with device B.
-3. Device B: Join, and enter the invite.
-4. The match starts for both. Tiles can be dragged and the grid rebuilt freely.
+TESTING ONLINE PLAY
+An online match is real-time and needs two devices.
+1. Device A: Play a Friend. Note the invite code.
+2. Device B: Play a Friend, switch to Join a Friend, enter the code.
+3. The match starts on both. Drag tiles; the grid can be rebuilt freely.
+With one device, Solo Practice runs the identical board, rules and match flow
+against a computer opponent. A screen recording of a full two-device match:
+<VIDEO LINK>
 
 HOW THE GAME IS WON
 Both players build at once from one shared pool. Draw is enabled once your grid
 is complete and valid. When the pool empties, the Win button enables for the
 first player holding a complete, valid grid.
-
-NOTE ON THE MENU
-"Multiplayer" on the home screen is intentionally disabled and captioned
-"Coming soon". It is a placeholder for a later version and is not reachable.
 
 There is no user-to-user messaging or chat anywhere in the app. The only text a
 player enters is their own display name.

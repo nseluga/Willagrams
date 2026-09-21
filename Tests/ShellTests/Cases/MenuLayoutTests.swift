@@ -47,12 +47,11 @@ struct MenuLayoutTests {
     /// ~34pt bottom inset.
     private static let portraitSafeAreaInset: CGFloat = 81
 
-    @Test("The menu's action list is exactly six slots, in order, with no Join entry")
-    func actionListIsExactlySixSlotsNoJoin() {
+    @Test("The menu's action list is exactly five slots, in order, with no Join or Multiplayer entry")
+    func actionListIsExactlyFiveSlotsNoJoin() {
         let titles = MenuLayout.actions.map(\.title)
 
         #expect(titles == [
-            "Multiplayer",
             "Play a Friend",
             "Solo Practice",
             "Profile",
@@ -60,15 +59,13 @@ struct MenuLayoutTests {
             "How to Play",
         ])
         #expect(!titles.contains("Join a Friend"))
+        // App Review 5.6: no disabled placeholder for an unshipped feature.
+        #expect(!titles.contains("Multiplayer"))
     }
 
-    @Test("Multiplayer is the disabled slot; every other slot starts enabled")
-    func multiplayerSlotIsDisabled() {
-        let multiplayer = MenuLayout.actions.first { $0.title == "Multiplayer" }
-        #expect(multiplayer?.isEnabled == false)
-
-        let others = MenuLayout.actions.filter { $0.title != "Multiplayer" }
-        #expect(others.allSatisfy { $0.isEnabled })
+    @Test("Every slot starts enabled — no disabled placeholders")
+    func everySlotStartsEnabled() {
+        #expect(MenuLayout.actions.allSatisfy { $0.isEnabled })
     }
 
     @Test("A portrait phone reports portrait mode, at construction, with content that fits")
