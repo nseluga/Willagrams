@@ -55,6 +55,10 @@ public protocol MatchOpponent: AnyObject {
     /// on the spot; a network peer cannot — that needs a new match row and a
     /// fresh invite, which is a lobby's job and not this screen's.
     var offersRematch: Bool { get }
+
+    /// The opponent's final board when it is readable locally (a bot's own
+    /// session); nil when it is not (a network peer).
+    var peerBoardPlacements: [Placement]? { get }
 }
 
 extension MatchOpponent {
@@ -66,8 +70,13 @@ extension MatchOpponent {
     /// The session already elected a local player; asking it is how the two
     /// answers cannot start to disagree.
     public var localPlayerID: PlayerID { session.localPlayerID }
+
+    public var peerBoardPlacements: [Placement]? { nil }
 }
 
 /// Solo is just one kind of far end. Declared here rather than on the type so
 /// `SoloMatch` keeps saying only what solo means.
-extension SoloMatch: MatchOpponent {}
+extension SoloMatch: MatchOpponent {
+    /// The bot's own session board, read locally.
+    public var peerBoardPlacements: [Placement]? { bot.session.state.board.placementList }
+}

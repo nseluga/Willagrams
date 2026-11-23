@@ -24,7 +24,26 @@ import Style
 #endif
 
 import Foundation
+import Observation
 import WillagramsRules
+
+/// Which final board the end screen shows.
+public enum ResultsBoardSide: Equatable, Sendable {
+    case yours
+    case opponents
+}
+
+/// What must survive `MatchRun.results(board:)` being called again on every
+/// re-render: whether the card is up, which board is shown, whether the win
+/// burst is spent. Owned by `MatchRun`, so it lives as long as the match does.
+@MainActor @Observable
+public final class ResultsState {
+    public var isCardShown = true
+    /// nil until the player picks; the model then opens on the winner's board.
+    public var side: ResultsBoardSide?
+    public var isBurstSpent = false
+    public init() {}
+}
 
 /// The end of a match: who won, the board it ended on, and the two ways out.
 ///
@@ -65,6 +84,12 @@ public final class ResultsModel {
     /// screen may move a tile, so there is nothing to keep in step.
     public let board: Board
 
+    /// The opponent's final board, or nil for "not available". Built strictly
+    /// from untrusted placements and never from the local board.
+    public let opponentBoard: Board?
+
+    public let state: ResultsState
+
     private let shell: ShellModel
 
     /// Ends the match and drops the last strong reference to it in the same
@@ -95,14 +120,23 @@ public final class ResultsModel {
         winner: PlayerID?,
         localPlayerID: PlayerID,
         winningPlacements: [Placement]? = nil,
+        opponentFinalPlacements: [Placement]? = nil,
         board: Board = Board(),
+        state: ResultsState = ResultsState(),
         teardown: (() -> Bool)? = nil,
         rematch: (() -> Void)? = nil
     ) {
         self.startRematch = rematch
         self.shell = shell
-        self.outcome = Outcome(winner: winner, localPlayerID: localPlayerID)
-        self.board = Self.finalBoard(winningPlacements, fallback: board)
+        let outcome = Outcome(winner: winner, localPlayerID: localPlayerID)
+        self.outcome = outcome
+        self.board = board
+        self.state = state
+        // The supplied final placements first; the winner's board only stands in
+        // for the opponent's when the opponent won and nothing was supplied.
+        self.opponentBoard = opponentFinalPlacements != nil
+            ? Self.strictBoard(opponentFinalPlacements)
+            : (outcome == .peerWin ? Self.strictBoard(winningPlacements) : nil)
         self.teardown = teardown
     }
 
@@ -110,7 +144,9 @@ public final class ResultsModel {
     public convenience init(
         shell: ShellModel,
         session: MatchSession,
+        opponentFinalPlacements: [Placement]? = nil,
         board: Board = Board(),
+        state: ResultsState = ResultsState(),
         teardown: (() -> Bool)? = nil,
         rematch: (() -> Void)? = nil
     ) {
@@ -119,22 +155,21 @@ public final class ResultsModel {
             winner: session.winner,
             localPlayerID: session.localPlayerID,
             winningPlacements: session.winningPlacements,
+            opponentFinalPlacements: opponentFinalPlacements,
             board: board,
+            state: state,
             teardown: teardown,
             rematch: rematch
         )
     }
 
-    /// The winner's board as it was sent, or the board this device ended on.
-    ///
-    /// `winningPlacements` is peer input, so it can name the same coordinate
-    /// twice. `MatchSession` deliberately leaves that decision here: a list that
-    /// will not make a board is dropped whole rather than shown half laid.
-    static func finalBoard(_ placements: [Placement]?, fallback: Board) -> Board {
-        guard let placements else { return fallback }
+    /// A board from untrusted placements, or nil. Same coordinate twice, or
+    /// nothing to show, gives nil — never half a board, never a fallback.
+    static func strictBoard(_ placements: [Placement]?) -> Board? {
+        guard let placements, !placements.isEmpty else { return nil }
         var built = Board()
         for placement in placements {
-            do { try built.place(placement.tile, at: placement.coord) } catch { return fallback }
+            do { try built.place(placement.tile, at: placement.coord) } catch { return nil }
         }
         return built
     }
@@ -170,6 +205,31 @@ public final class ResultsModel {
     /// The board is shown, never played. `BoardView` takes this and refuses a
     /// pickup before a drag is ever built.
     public static let inputLocked = true
+
+    // MARK: - The card and the two boards
+
+    public static let yourBoardLabel = "Your board"
+    public static let opponentBoardLabel = "Opponent's board"
+    public static let opponentBoardMissing = "Opponent's board is not available"
+    public static let closeLabel = "Close"
+    public static let showResultLabel = "Show result"
+
+    public var isCardShown: Bool { state.isCardShown }
+    public func closeCard() { state.isCardShown = false }
+    public func reopenCard() { state.isCardShown = true }
+
+    /// Opens on the winner's board when there is one to show.
+    public var shownSide: ResultsBoardSide {
+        state.side ?? (didPeerWin && opponentBoard != nil ? .opponents : .yours)
+    }
+    public func show(_ side: ResultsBoardSide) { state.side = side }
+
+    /// nil is the "not available" state, drawn as words.
+    public var shownBoard: Board? { shownSide == .yours ? board : opponentBoard }
+
+    /// The win burst plays once per match, on a win only.
+    public var showsBurst: Bool { didLocalPlayerWin && !state.isBurstSpent && state.isCardShown }
+    public func burstFinished() { state.isBurstSpent = true }
 
     // MARK: - Rematch
 

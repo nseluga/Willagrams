@@ -255,45 +255,31 @@ struct ResultsModelTests {
         #expect(model.selected.isEmpty, "a locked board entered selection")
     }
 
-    /// The board shown is the winner's board when the wire sent one, and this
-    /// device's own otherwise. Peer input that will not make a board is dropped
-    /// whole rather than shown half laid.
-    @Test("The final board is the winning board, or the one this device ended on")
-    func theFinalBoardIsTheWinningBoard() throws {
+    /// The local board is always the local board; the winner's board is the
+    /// opponent's, only when the opponent won and nothing better was supplied.
+    @Test("The own board is the local board, also when the opponent won")
+    func theOwnBoardIsTheLocalBoard() throws {
         let shell = ShellModel()
-        let mine = try {
-            var board = Board()
-            try board.place(Tile(letter: "M"), at: Coord(row: 5, col: 5))
-            return board
-        }()
+        var mine = Board()
+        try mine.place(Tile(letter: "M"), at: Coord(row: 5, col: 5))
         let theirs = [
             Placement(tile: Tile(letter: "W"), coord: Coord(row: 0, col: 0)),
             Placement(tile: Tile(letter: "E"), coord: Coord(row: 0, col: 1)),
         ]
-
-        let won = ResultsModel(
+        let lost = ResultsModel(
             shell: shell, winner: Self.hostID, localPlayerID: Self.guestID,
             winningPlacements: theirs, board: mine
         )
-        #expect(won.board.placementList.count == 2)
-        #expect(won.board.tile(at: Coord(row: 0, col: 1))?.letter == "E")
+        #expect(lost.board == mine)
+        #expect(lost.opponentBoard?.placementList.count == 2)
+        #expect(lost.shownSide == .opponents, "did not open on the winner's board")
 
-        let none = ResultsModel(
-            shell: shell, winner: nil, localPlayerID: Self.guestID,
-            winningPlacements: nil, board: mine
+        let won = ResultsModel(
+            shell: shell, winner: Self.guestID, localPlayerID: Self.guestID,
+            winningPlacements: theirs, board: mine
         )
-        #expect(none.board == mine)
-
-        // Peer input naming one coordinate twice will not make a board.
-        let duplicate = [
-            Placement(tile: Tile(letter: "W"), coord: Coord(row: 0, col: 0)),
-            Placement(tile: Tile(letter: "E"), coord: Coord(row: 0, col: 0)),
-        ]
-        let refused = ResultsModel(
-            shell: shell, winner: Self.hostID, localPlayerID: Self.guestID,
-            winningPlacements: duplicate, board: mine
-        )
-        #expect(refused.board == mine, "a board that will not build was shown half laid")
+        #expect(won.opponentBoard == nil, "our own winning board was shown as theirs")
+        #expect(won.shownSide == .yours)
     }
 
     // MARK: - Rematch

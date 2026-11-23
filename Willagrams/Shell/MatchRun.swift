@@ -93,6 +93,10 @@ public final class MatchRun {
     /// next run is a different deal, and by tests to prove it.
     public let seed: UInt64
 
+    /// Card and board-tab state for the end screen. Here, not on `ResultsModel`,
+    /// because that is rebuilt on every re-render.
+    public let resultsState = ResultsState()
+
     /// The one session. The opponent owns it; this is the short way to it.
     public var session: MatchSession { opponent.session }
 
@@ -173,7 +177,11 @@ public final class MatchRun {
         return ResultsModel(
             shell: shell,
             session: session,
+            // Solo: the bot's own board. Online: nil until the orchestrator wires
+            // the final board the peer sent.
+            opponentFinalPlacements: opponent.peerBoardPlacements, // PR7-SEAM: orchestrator wires session final board here
             board: board,
+            state: resultsState,
             teardown: { [weak shell] in
                 // A gone shell owns no live run, so there is nothing to hold the
                 // route back for — only a stale generation declines.
