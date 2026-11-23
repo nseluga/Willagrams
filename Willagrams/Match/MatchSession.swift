@@ -1530,14 +1530,15 @@ public final class MatchSession: AppActivityListener {
     }
 
     /// What a frozen session still takes in: how the match ended, and anything
-    /// the host has already done with the pool. Spelled out with no `default`,
-    /// so a new kind has to be placed on one side on purpose.
+    /// the host has already done with the pool. Everything else is dropped,
+    /// which is the safe side for a kind this list has not heard of: a kind
+    /// that must survive a freeze has to be added here on purpose.
     private static func survivesAFreeze(_ message: MatchMessage) -> Bool {
         switch message {
         case .win, .resign, .grant, .obligation, .swapGrant, .poolExhausted, .poolCount, .rejected,
              .drawRequest:
             return true
-        case .start, .swapRequest:
+        default:
             return false
         }
     }

@@ -222,12 +222,12 @@ struct MatchSessionMatchFlowTests {
         try await Terminal.settle()
 
         table.hostWire.restore(Self.bob)
-        try await Terminal.resume(table.host, on: table.hostClock)
-
-        // The answer is on its way as soon as the host is playing again.
-        try await Terminal.waitUntil("the host's tile for the round", within: .seconds(2)) {
-            Self.held(table.host) == 4
-        }
+        // Cranked until the tile arrives, not until `.playing`: a frozen host
+        // stays `.playing`, so a wait on the status can return before the
+        // resume countdown has started, and then nothing moves the clock.
+        try await Terminal.crank(
+            table.hostClock, releasing: .seconds(1), until: "the host's tile for the round"
+        ) { Self.held(table.host) == 4 }
         await table.hostToGuest()
         try await Terminal.waitUntil("the guest's answer", within: .seconds(2)) {
             Self.held(table.guest) == 4
