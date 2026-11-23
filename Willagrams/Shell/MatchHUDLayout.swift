@@ -54,6 +54,18 @@ public struct MatchHUDLayout: Equatable {
             : BoardInsets(top: bag, bottom: row)
     }
 
+    /// Where an arriving tile may land: clear of every control, not only the
+    /// two edges recenter frames around. On a landscape phone Pause and the
+    /// recenter control sit along the top edge, outside `boardInsets`, so the
+    /// top takes a control row here too. Kept apart from `boardInsets`
+    /// because recenter would zoom out to pay for that row on the screen with
+    /// the least height to spare.
+    public var deliveryInsets: BoardInsets {
+        var insets = boardInsets
+        if isCompact { insets.top = Self.edgePadding + Self.compactControlRowHeight }
+        return insets
+    }
+
     /// The em dash standing in for a number that is not a game concept —
     /// `MatchHUDModel.unknownValue` delegates here so the literal lives in
     /// one place.

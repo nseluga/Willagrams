@@ -261,15 +261,18 @@ final class BoardLayoutTests: XCTestCase {
         return next.placementList.map(\.coord).filter { !old.contains($0) }
     }
 
-    /// The anchor is the cluster, not the camera: a camera looking at the
-    /// origin still gets tiles just under the block at rows 10-12, cols 30-35.
-    func testDeliveryLandsJustBelowTheLargestClusterWhereverTheCameraLooks() throws {
+    /// With the cluster in view the anchor is the cluster, not the corner of
+    /// the screen: tiles land just under the block at rows 10-12, cols 30-35.
+    /// (A cluster the camera has left is the next section's business: the
+    /// tile then lands in view, never out by the cluster.)
+    func testDeliveryLandsJustBelowTheLargestClusterWhenItIsInView() throws {
         var board = Board()
         for r in 10...12 { for c in 30...35 { try board.place(Tile(letter: "A"), at: Coord(row: r, col: c)) } }
         try board.place(Tile(letter: "B"), at: Coord(row: 0, col: 0))   // a loose tile elsewhere
         let drawn = tiles(3)
 
-        let next = BoardLayout.delivered(drawn, onto: board, camera: BoardCamera(), in: iPad)
+        let looking = BoardCamera(pan: CGSize(width: -1200, height: -300))
+        let next = BoardLayout.delivered(drawn, onto: board, camera: looking, in: iPad)
         let cells = landed(next, over: board)
 
         XCTAssertEqual(cells.count, drawn.count, "not every tile landed")
@@ -320,7 +323,10 @@ final class BoardLayoutTests: XCTestCase {
         XCTAssertEqual(next.placementList.count, board.placementList.count + drawn.count)
         for coord in cells {
             XCTAssertNil(board.tile(at: coord), "\(coord) was written over")
-            XCTAssertGreaterThan(coord.row, 18, "\(coord) landed inside the blocked area")
+            XCTAssertFalse(
+                (2...18).contains(coord.row) && (22...39).contains(coord.col),
+                "\(coord) landed inside the blocked area"
+            )
         }
         assertLandedClear(cells, on: next)
     }
@@ -355,6 +361,86 @@ final class BoardLayoutTests: XCTestCase {
     func testDeliveringNothingLeavesTheBoardAlone() {
         let board = BoardLayout.opening(tiles(21))
         XCTAssertEqual(BoardLayout.delivered([], onto: board, camera: BoardCamera(), in: iPad), board)
+    }
+
+    // MARK: - An arriving tile is never hidden
+
+    /// The rectangles the HUD draws its controls in, measured from `MatchHUD`
+    /// and `BoardView` rather than read back from the insets under test, so
+    /// an inset that forgets a control fails here.
+    private func buttonAreas(in viewport: CGRect, compact: Bool) -> [CGRect] {
+        let pad = MatchHUDLayout.edgePadding
+        let bag = pad + MatchHUDLayout(isCompact: compact).bagSize
+        let row = pad + (compact ? MatchHUDLayout.compactControlRowHeight : MatchHUDLayout.regularControlRowHeight)
+        return [
+            CGRect(x: 0, y: 0, width: bag, height: bag),                                // the bag, top-leading
+            CGRect(x: viewport.midX - 60, y: 0, width: 120, height: row),               // Pause, top centre
+            CGRect(x: viewport.maxX - 96, y: 0, width: 96, height: row),                // Recenter, top-trailing
+            CGRect(x: 0, y: viewport.maxY - row, width: viewport.width, height: row),   // Draw, Swap, Win, Resign
+        ]
+    }
+
+    /// Loose tiles four rows and five columns apart, far past every viewport
+    /// below: no two touch, so there is no cluster to anchor on.
+    private func scattered() throws -> Board {
+        var board = Board()
+        for r in stride(from: -92, through: 152, by: 4) {
+            for c in stride(from: -90, through: 170, by: 5) where (r / 4 + c / 5) % 3 != 0 {
+                try board.place(Tile(letter: "S"), at: Coord(row: r, col: c))
+            }
+        }
+        return board
+    }
+
+    /// Wherever the camera looks and whatever is on the board, every arriving
+    /// tile is drawn whole inside the viewport, under no control, on a cell
+    /// that was free and touches nothing.
+    func testEveryArrivingTileLandsWhereThePlayerCanSeeIt() throws {
+        let devices: [(String, CGRect, Bool)] = [
+            ("phone portrait", CGRect(x: 0, y: 0, width: 393, height: 759), false),
+            ("phone landscape", CGRect(x: 0, y: 0, width: 750, height: 382), true),
+            ("iPad", CGRect(x: 0, y: 0, width: 1366, height: 1004), false),
+        ]
+        let pans = [CGSize.zero, CGSize(width: -13, height: -29), CGSize(width: 731, height: 517),
+                    CGSize(width: -1000.5, height: -640.25)]
+        let loose = try scattered()
+        // The same loose tiles plus a cluster nowhere near any camera below.
+        var farCluster = loose
+        for c in 301...303 { try farCluster.place(Tile(letter: "A"), at: Coord(row: 301, col: c)) }
+
+        for (name, viewport, compact) in devices {
+            let insets = MatchHUDLayout(isCompact: compact).deliveryInsets
+            let covered = buttonAreas(in: viewport, compact: compact)
+            for cellSize in [BoardCamera.minCellSize, 48, BoardCamera.maxCellSize] {
+                for pan in pans {
+                    let camera = BoardCamera(pan: pan, zoom: cellSize / 48)
+                    XCTAssertEqual(camera.cellSize, cellSize)
+                    // A cluster in the viewport but under the control row.
+                    let under = camera.coord(at: CGPoint(x: viewport.midX, y: viewport.maxY - 10))
+                    var hiddenCluster = Board()
+                    for c in 0...2 { try hiddenCluster.place(Tile(letter: "A"), at: Coord(row: under.row, col: under.col + c)) }
+
+                    let boards = [("empty", Board()), ("loose", loose), ("far cluster", farCluster),
+                                  ("cluster under the controls", hiddenCluster)]
+                    for (kind, board) in boards {
+                        for count in 1...3 {
+                            let label = "\(name), cell \(Int(cellSize)), pan \(pan), \(kind), \(count) tile(s)"
+                            let next = BoardLayout.delivered(tiles(count), onto: board, camera: camera, in: viewport, insets: insets)
+                            let cells = landed(next, over: board)
+                            XCTAssertEqual(cells.count, count, "\(label): not every tile landed")
+                            assertLandedClear(cells.filter { c in !cells.contains { $0 != c && c.neighbors.contains($0) } }, on: board)
+                            for coord in cells {
+                                let cell = CGRect(origin: camera.point(for: coord), size: CGSize(width: cellSize, height: cellSize))
+                                XCTAssertTrue(viewport.contains(cell), "\(label): \(coord) at \(cell) is off screen")
+                                XCTAssertFalse(covered.contains { $0.intersects(cell) }, "\(label): \(coord) at \(cell) is under a control")
+                                XCTAssertNil(board.tile(at: coord), "\(label): \(coord) was taken")
+                                XCTAssertFalse(coord.neighbors.contains { next.tile(at: $0) != nil }, "\(label): \(coord) touches a tile")
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - The session publishes both arrivals

@@ -42,13 +42,15 @@ public enum BoardLayout {
         laid(tiles, on: Board(), from: Coord(row: 0, col: 0), across: openingWidth(for: tiles.count))
     }
 
-    /// Tiles delivered by a Draw, landing in the free cells nearest the
-    /// player's largest connected cluster: directly below it first, then
-    /// beside it, then outward. While the cluster is on screen, cells inside
-    /// `rect` minus `insets` (the chrome) are preferred over every other.
+    /// Tiles delivered by a Draw. A tile lands where the player can see it:
+    /// on a free cell drawn whole inside `rect` minus `insets` (the chrome),
+    /// for as long as one exists. Among those, the cells nearest the player's
+    /// largest connected cluster win: directly below it first, then beside
+    /// it, then outward. Only a view with no free cell left sends a tile out
+    /// of sight.
     ///
     /// A board with no cluster of two or more tiles — empty, or the loose
-    /// opening deal — keeps the viewport rule in ``viewportDelivered``.
+    /// opening deal — orders the same cells by ``viewportDelivered``.
     /// Never overwrites, never refuses, never throws.
     public static func delivered(
         _ tiles: [Tile],
@@ -58,8 +60,18 @@ public enum BoardLayout {
         insets: BoardInsets = .zero
     ) -> Board {
         guard !tiles.isEmpty else { return board }
+        // Every cell drawn whole inside the clear rect, in reading order. None
+        // for a frame with no area left (a `GeometryReader`'s zero-size first
+        // pass, or chrome wider than the frame).
+        let clear = insets.inset(rect)
+        let size = camera.cellSize
+        let seen = clear.width > 0 && clear.height > 0
+            ? camera.visibleCoords(in: clear).filter {
+                clear.contains(CGRect(origin: camera.point(for: $0), size: CGSize(width: size, height: size)))
+            }
+            : []
         guard let cluster = largestCluster(on: board), cluster.count > 1 else {
-            return viewportDelivered(tiles, onto: board, camera: camera, in: rect)
+            return viewportDelivered(tiles, onto: board, seen: seen)
         }
 
         let minRow = cluster.map(\.row).min()!, maxRow = cluster.map(\.row).max()!
@@ -74,11 +86,7 @@ public enum BoardLayout {
             return (tier, rowGap(c) + colGap(c), c.row, c.col)
         }
 
-        let clear = insets.inset(rect)
-        let size = camera.cellSize
-        func onScreen(_ c: Coord) -> Bool {
-            clear.contains(CGRect(origin: camera.point(for: c), size: CGSize(width: size, height: size)))
-        }
+        let inView = Set(seen)
         // ponytail: a fixed ring of `step * (count + 1)` cells round the box
         // is searched, O(box area) per delivery — the fallback below still
         // places anything it could not. Widen when deliveries grow past a few.
@@ -88,23 +96,21 @@ public enum BoardLayout {
             for col in (minCol - reach)...(maxCol + reach) { candidates.append(Coord(row: row, col: col)) }
         }
         candidates.sort { rank($0) < rank($1) }
-        if cluster.contains(where: onScreen) {
-            // Stable partition: cells the player can see first, each half
-            // keeping its below/beside/outward order.
-            candidates = candidates.filter(onScreen) + candidates.filter { !onScreen($0) }
-        }
+        // Cells the player can see first: the ring's, then every other cell in
+        // view (nearest the cluster first, which is the edge of the screen it
+        // lies beyond when the camera has panned away). The ring's hidden
+        // cells come last. Each part keeps its below/beside/outward order.
+        candidates = candidates.filter(inView.contains)
+            + seen.sorted { rank($0) < rank($1) }
+            + candidates.filter { !inView.contains($0) }
 
         var next = board
-        var index = 0
-        for coord in candidates where index < tiles.count {
-            guard isVacant(coord, on: next), (try? next.place(tiles[index], at: coord)) != nil else { continue }
-            index += 1
-        }
-        guard index < tiles.count else { return next }
+        let rest = settle(tiles, on: &next, trying: candidates)
+        guard !rest.isEmpty else { return next }
         // Every nearby cell was blocked: carry on down from under the box,
         // where the board is unbounded and so always has another free row.
         return laid(
-            Array(tiles[index...]), on: next,
+            rest, on: next,
             from: Coord(row: maxRow + reach + step, col: minCol),
             across: (maxCol - minCol) / step + 1
         )
@@ -139,24 +145,18 @@ public enum BoardLayout {
     /// The rule for a board with no cluster yet: free cells below whatever is
     /// currently on screen, so the player sees them without moving the camera.
     ///
-    /// Prefers the rows still inside `rect` and carries on below it only once
-    /// those are used up. The board is unbounded downward, so there is always
-    /// another free row.
-    static func viewportDelivered(
-        _ tiles: [Tile],
-        onto board: Board,
-        camera: BoardCamera,
-        in rect: CGRect
-    ) -> Board {
-
-        let visible = Array(camera.visibleCoords(in: rect))
-        // A degenerate frame (a `GeometryReader`'s first zero-size pass) has no
-        // cells to prefer. Falling back to the row below the whole board still
-        // places every tile rather than dropping the delivery on the floor.
-        guard let firstCol = visible.map(\.col).min(),
-              let lastCol = visible.map(\.col).max(),
-              let top = visible.map(\.row).min(),
-              let bottom = visible.map(\.row).max()
+    /// `seen` is every cell in view. The lattice rows under the lowest tile in
+    /// view go first, then any other cell in view, and the rows below the view
+    /// only once those are used up. The board is unbounded downward, so there
+    /// is always another free row.
+    static func viewportDelivered(_ tiles: [Tile], onto board: Board, seen: [Coord]) -> Board {
+        // Nothing in view (see `delivered`) leaves no cells to prefer. Falling
+        // back to the row below the whole board still places every tile rather
+        // than dropping the delivery on the floor.
+        guard let firstCol = seen.map(\.col).min(),
+              let lastCol = seen.map(\.col).max(),
+              let top = seen.map(\.row).min(),
+              let bottom = seen.map(\.row).max()
         else {
             let below = (board.placementList.map(\.coord.row).max() ?? -step) + step
             return laid(tiles, on: board, from: Coord(row: below, col: 0), across: 1)
@@ -171,12 +171,13 @@ public enum BoardLayout {
         }
         let start = (onScreen.map(\.row).max()).map { $0 + step } ?? top
 
-        return laid(
-            tiles,
-            on: board,
-            from: Coord(row: start, col: firstCol),
-            across: (lastCol - firstCol) / step + 1
-        )
+        var lattice: [Coord] = []
+        for row in stride(from: start, through: bottom, by: step) {
+            for col in stride(from: firstCol, through: lastCol, by: step) { lattice.append(Coord(row: row, col: col)) }
+        }
+        var next = board
+        let rest = settle(tiles, on: &next, trying: lattice + seen)
+        return laid(rest, on: next, from: Coord(row: start, col: firstCol), across: (lastCol - firstCol) / step + 1)
     }
 
     // MARK: - Framing
@@ -242,6 +243,17 @@ public enum BoardLayout {
             row += step
         }
         return board
+    }
+
+    /// Lands each tile on the first cell of `cells` that is still vacant, in
+    /// order, and returns the tiles no cell was left for.
+    private static func settle(_ tiles: [Tile], on board: inout Board, trying cells: [Coord]) -> [Tile] {
+        var index = 0
+        for coord in cells where index < tiles.count {
+            guard isVacant(coord, on: board), (try? board.place(tiles[index], at: coord)) != nil else { continue }
+            index += 1
+        }
+        return Array(tiles[index...])
     }
 
     /// Free, and with all four edge neighbours free. Both halves are the

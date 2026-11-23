@@ -119,7 +119,7 @@ struct MatchView: View {
                 matchBoard.viewport = CGRect(origin: .zero, size: proxy.size)
             }
             .onChange(of: verticalSizeClass, initial: true) {
-                matchBoard.insets = MatchHUDLayout(isCompact: verticalSizeClass == .compact).boardInsets
+                matchBoard.insets = MatchHUDLayout(isCompact: verticalSizeClass == .compact).deliveryInsets
             }
         }
     }
