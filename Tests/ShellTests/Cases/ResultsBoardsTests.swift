@@ -103,6 +103,10 @@ struct ResultsBoardsTests {
     func onlineShowsTheBoardThatArrived() async throws {
         let (host, guest) = try await ResultsModelTests.playingPair()
         defer { host.leave() }
+        // The opening hands are dealt a moment after both ends start playing.
+        try await SoloMatchTests.waitUntil("the opening hands") {
+            host.state.hand.count == 2 && guest.state.hand.count == 2
+        }
         let tile = try #require(host.state.hand.first)
         try host.place(tileID: tile.id, at: Coord(row: 4, col: 4))
 
