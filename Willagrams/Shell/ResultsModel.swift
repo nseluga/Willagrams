@@ -80,6 +80,13 @@ public final class ResultsModel {
 
     public let outcome: Outcome
 
+    /// The match ended because one player was disconnected for too long, so
+    /// the other player won it. ``outcome`` says which side this device is on.
+    public let endedByDisconnect: Bool
+
+    /// The match stayed paused past its limit and ended with no winner.
+    public let isVoided: Bool
+
     /// The board shown behind the result. Fixed at construction: nothing on this
     /// screen may move a tile, so there is nothing to keep in step.
     public let board: Board
@@ -123,6 +130,8 @@ public final class ResultsModel {
         opponentFinalPlacements: [Placement]? = nil,
         board: Board = Board(),
         state: ResultsState = ResultsState(),
+        endedByDisconnect: Bool = false,
+        isVoided: Bool = false,
         teardown: (() -> Bool)? = nil,
         rematch: (() -> Void)? = nil
     ) {
@@ -130,6 +139,8 @@ public final class ResultsModel {
         self.shell = shell
         let outcome = Outcome(winner: winner, localPlayerID: localPlayerID)
         self.outcome = outcome
+        self.endedByDisconnect = endedByDisconnect
+        self.isVoided = isVoided
         self.board = board
         self.state = state
         // The supplied final placements first; the winner's board only stands in
@@ -158,6 +169,8 @@ public final class ResultsModel {
             opponentFinalPlacements: opponentFinalPlacements,
             board: board,
             state: state,
+            endedByDisconnect: session.endedByDisconnect,
+            isVoided: session.isVoided,
             teardown: teardown,
             rematch: rematch
         )
@@ -201,17 +214,35 @@ public final class ResultsModel {
         switch outcome {
         case .localWin: Terminology.winCall
         case .peerWin: Self.peerWinHeadline
-        case .noWinner: Self.noWinnerHeadline
+        case .noWinner: isVoided ? Self.voidedHeadline : Self.noWinnerHeadline
         }
     }
+
+    /// Why the match ended, for an ending nobody played their way to. nil for
+    /// a match that was won on the board or resigned.
+    public var reason: String? {
+        if isVoided { return Self.voidedReason }
+        guard endedByDisconnect else { return nil }
+        switch outcome {
+        case .localWin: return Self.peerDisconnectedReason
+        case .peerWin: return Self.localDisconnectedReason
+        case .noWinner: return nil
+        }
+    }
+
+    public static let voidedHeadline = "Match voided"
+    public static let voidedReason =
+        "Paused for more than \(MatchSession.pauseLimitSeconds / 60) minutes"
+    public static let peerDisconnectedReason = "Your opponent disconnected"
+    public static let localDisconnectedReason = "You disconnected"
 
     /// Local chrome, not `Terminology`: that file is the frozen IP fence and
     /// names game concepts, not screens.
     public static let peerWinHeadline = "Your opponent won"
-    /// Not a defeat, and not an error. Said plainly — and named for the one
-    /// way a match reaches it: `MatchSession` declares no winner exactly when a
-    /// peer stopped answering, so "no winner" told the player a fact about the
-    /// scoreboard when what they needed was the reason.
+    /// Not a defeat, and not an error. Said plainly, and named for the way a
+    /// match reaches it: a player left without resigning and nobody was named.
+    /// A peer that stopped answering is a forfeit now and has its own
+    /// ``reason``; a pause that ran out has ``voidedHeadline``.
     public static let noWinnerHeadline = "Opponent left"
     public static let rematchLabel = "Rematch"
     public static let mainMenuLabel = "Main Menu"

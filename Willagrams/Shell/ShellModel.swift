@@ -205,9 +205,7 @@ public final class ShellModel {
             // that can say so.
             (try? EnableWordList()) ?? EnableWordList(words: [])
         },
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
-            try await Task.sleep(for: $0)
-        },
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = MatchSession.realSleep,
         seedSource: @escaping @MainActor () -> UInt64 = {
             UInt64.random(in: UInt64.min ... UInt64.max)
         },

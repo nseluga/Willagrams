@@ -111,6 +111,16 @@ struct MatchHUD: View {
                             .monoLabel()
                             .textCase(.uppercase)
                     }
+                    if let deadline = hud.pauseDeadline {
+                        // The system redraws this every second by itself. The
+                        // range must not run backwards, which a deadline
+                        // already behind us would make it do.
+                        Text(timerInterval: min(Date.now, deadline)...deadline, countsDown: true)
+                            .font(DesignTokens.Typography.display)
+                            .monospacedDigit()
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                            .accessibilityLabel("Time left before the match is voided")
+                    }
                     if let status = hud.pauseStatus {
                         Text(status)
                             .font(DesignTokens.Typography.body)

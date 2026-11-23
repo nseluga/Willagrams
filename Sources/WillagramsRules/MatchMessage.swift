@@ -171,6 +171,15 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     /// opening hand: the opener offers only hands a half pool can deal, and the
     /// device that runs the pool clamps the hand to the pool it builds.
     case gameLength(half: Bool)
+
+    /// A pause ran its whole limit, so the match is over with no winner. Sent
+    /// by the host only, and believed by a guest only while it is paused.
+    ///
+    /// Safe to lose and safe to drop. A guest that never hears it reaches the
+    /// same end a few seconds later by its own clock, started when it heard the
+    /// pause. A build that drops these kinds never votes, so it is never paused
+    /// against, and this is never sent to it.
+    case matchVoided
 }
 
 public extension MatchMessage {

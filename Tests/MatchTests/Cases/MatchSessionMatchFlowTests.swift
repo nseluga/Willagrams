@@ -69,18 +69,22 @@ struct MatchSessionMatchFlowTests {
         }
     }
 
-    static func dealtTable(handSize: Int = 3) async throws -> Table {
+    /// - Parameter now: the wall clock both sessions read. A test that lets a
+    ///   long wait run out moves it, because the session checks the two agree.
+    static func dealtTable(
+        handSize: Int = 3, now: @escaping @Sendable () -> Date = { Date() }
+    ) async throws -> Table {
         let hostWire = Wire(localPlayerID: alice, peer: bob)
         let guestWire = Wire(localPlayerID: bob, peer: alice)
         let hostClock = Terminal.HandCrankedClock()
         let guestClock = Terminal.HandCrankedClock()
         let host = MatchSession(
             transport: hostWire, peerPlayerID: bob, dictionary: Terminal.EveryWordIsReal(),
-            sleepFor: { await hostClock.tick($0) }
+            sleepFor: { await hostClock.tick($0) }, now: now
         )
         let guest = MatchSession(
             transport: guestWire, peerPlayerID: alice, dictionary: Terminal.EveryWordIsReal(),
-            sleepFor: { await guestClock.tick($0) }
+            sleepFor: { await guestClock.tick($0) }, now: now
         )
         var table = Table(
             host: host, guest: guest, hostWire: hostWire, guestWire: guestWire,

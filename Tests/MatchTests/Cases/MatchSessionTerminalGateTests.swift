@@ -233,7 +233,7 @@ struct MatchSessionTerminalGateTests {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock)
         let tiles = try await Terminal.stock(guest, wire)
-        let before = Terminal.snapshot(guest)
+        let before = Terminal.tiles(guest)
 
         wire.drop(Self.alice)
         try await Terminal.waitUntil("the first freeze") { guest.peerPresence != .present }
@@ -265,15 +265,16 @@ struct MatchSessionTerminalGateTests {
         #expect(guest.isMatchOver == false)
         #expect(guest.winner == nil)
 
-        // Letting it pass ends the match, with nobody named and nothing moved.
+        // Letting it pass ends the match as a forfeit, with no tile moved.
         clock.release(.seconds(MatchSession.reconnectGraceSeconds))
         try await Terminal.waitUntil("the second deadline to pass") { guest.peerPresence == .gone }
 
         #expect(guest.isMatchOver)
-        #expect(guest.winner == nil)
+        #expect(guest.winner == Self.bob)
+        #expect(guest.endedByDisconnect)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .playing)
-        #expect(Terminal.snapshot(guest) == before)
+        #expect(guest.state.status == .finished(winner: Self.bob))
+        #expect(Terminal.tiles(guest) == before)
         #expect(guest.draw() == false)
         #expect(throws: BoardActionError.drawPending) {
             try guest.place(tileID: tiles[1].id, at: Coord(row: 0, col: 1))

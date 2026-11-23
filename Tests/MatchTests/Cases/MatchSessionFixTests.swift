@@ -93,18 +93,17 @@ struct MatchSessionFixTests {
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }
     }
 
-    // MARK: - `.gone` on a live match stays terminal
+    // MARK: - A forfeit stays terminal
 
-    /// The flush path acts on a peer coming back, so the guard that keeps it off
-    /// a match that merely ran out of window is load-bearing: a session whose
-    /// deadline passed is over with nobody named, and a late `.connected` must
-    /// not thaw it back into play.
-    @Test("A peer returning after the deadline passed cannot put a match with no winner back into play")
+    /// A session whose deadline passed is over, won by the player who stayed. A
+    /// late `.connected` gets the result said to it, and must not thaw the match
+    /// back into play.
+    @Test("A peer returning after the deadline passed is told the result and cannot put the match back into play")
     func aReturnAfterTheDeadlineCannotThawTheMatch() async throws {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock)
         let tiles = try await Terminal.stock(guest, wire)
-        let before = Terminal.snapshot(guest)
+        let before = Terminal.tiles(guest)
 
         wire.drop(Self.alice)
         try await Terminal.waitUntil("the session to freeze") { guest.peerPresence != .present }
@@ -113,19 +112,20 @@ struct MatchSessionFixTests {
         try await Terminal.waitUntil("the deadline to pass") { guest.peerPresence == .gone }
 
         wire.restore(Self.alice)
-        try await Terminal.settle()
+        try await Terminal.waitUntil("the result to be said") { await wire.count == 2 }
 
-        #expect(guest.peerPresence == .gone)
         #expect(guest.isMatchOver)
-        #expect(guest.winner == nil)
-        #expect(Terminal.snapshot(guest) == before)
+        #expect(guest.winner == Self.bob)
+        #expect(guest.state.status == .finished(winner: Self.bob))
+        #expect(Terminal.tiles(guest) == before)
         #expect(guest.draw() == false)
         #expect(guest.claimWin() == false)
         #expect(throws: BoardActionError.drawPending) {
             try guest.place(tileID: tiles[1].id, at: Coord(row: 0, col: 1))
         }
         try await Terminal.settle()
-        #expect(await wire.count == 0)
+        // The win and this board, said once.
+        #expect(await wire.count == 2)
 
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

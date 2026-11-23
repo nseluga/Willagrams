@@ -127,9 +127,7 @@ public final class SoloMatch {
         setup: MatchSetup,
         dictionary: any WordList,
         difficulty: BotDifficulty? = nil,
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
-            try await Task.sleep(for: $0)
-        }
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = MatchSession.realSleep
     ) {
         self.setup = setup
         self.difficulty = difficulty

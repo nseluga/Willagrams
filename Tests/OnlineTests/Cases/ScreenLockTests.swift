@@ -358,7 +358,7 @@ struct ScreenLockTests {
     /// `done when:` 2's other direction, on the same clock: the time off screen
     /// is charged to nobody, so a long lock leaves the remainder where the lock
     /// found it rather than draining it.
-    @Test("A long lock does not spend the banked remainder on the one clock")
+    @Test("A lock shorter than the window does not spend the banked remainder on the one clock")
     func theBankedRemainderSurvivesALongLock() async throws {
         let table = try await Self.table(clock: ScaledClock(factor: 100))
 
@@ -372,9 +372,11 @@ struct ScreenLockTests {
         table.guestActivity.send(.away)
         await Self.settle()
         let atLock = try #require(table.guest.reconnectSecondsOwedForTesting)
-        // 500ms off screen is fifty session-seconds — well past the whole
-        // window. None of it may be charged.
-        try await Task.sleep(for: .milliseconds(500))
+        // 150ms off screen is fifteen session-seconds. None of it may be
+        // charged to the peer. Kept under the window on purpose: a player off
+        // screen for the whole of it forfeits, which
+        // `MatchSessionForfeitTests` covers.
+        try await Task.sleep(for: .milliseconds(150))
         table.guestActivity.send(.active)
 
         // Straight back off screen: whatever is banked now is what the lock
@@ -671,8 +673,10 @@ struct ScreenLockTests {
             let owed = try #require(table.guest.reconnectSecondsOwedForTesting)
             #expect(owed < previous, "cycle \(cycle): \(owed) owed, was \(previous)")
             previous = owed
-            // Off screen for five times as long, and none of it charged.
-            try await Task.sleep(for: .milliseconds(100))
+            // Off screen for twice as long, and none of it charged. Five such
+            // trips stay under the window between them: off screen for the
+            // whole of it is a forfeit, and that is another test's subject.
+            try await Task.sleep(for: .milliseconds(40))
             table.guestActivity.send(.active)
             await Self.settle()
         }

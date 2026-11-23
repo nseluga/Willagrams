@@ -83,9 +83,7 @@ public final class BotMatch {
 
     public init(
         dictionary: any WordList,
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
-            try await Task.sleep(for: $0)
-        }
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = MatchSession.realSleep
     ) {
         let (human, bot) = LocalMatchLink.pair(Self.humanPlayerID, Self.botPlayerID)
         self.humanTransport = human

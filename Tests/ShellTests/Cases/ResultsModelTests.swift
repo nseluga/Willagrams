@@ -88,13 +88,12 @@ struct ResultsModelTests {
         guest.leave()
     }
 
-    // MARK: - Criterion 1, case 3: nobody won
+    // MARK: - Criterion 1, case 3: the peer forfeited by disconnecting
 
-    /// A peer that never comes back ends the match with `winner` nil. That is
-    /// neither player winning and it is not this player losing — the screen must
-    /// say so rather than fall through to a defeat.
-    @Test("A peer that never returns shows neither player as winner and no defeat")
-    func aVanishedPeerShowsNeitherPlayerAsWinner() async throws {
+    /// A peer that never comes back forfeits. The player who stayed wins, with
+    /// no winning board behind it, and the screen says why.
+    @Test("A peer that never returns forfeits: the player who stayed wins and is told why")
+    func aVanishedPeerForfeits() async throws {
         let (host, guest) = try await Self.playingPair()
 
         // The reconnect window is the injected seam, and it returns at once.
@@ -103,40 +102,63 @@ struct ResultsModelTests {
             guest.peerPresence == .gone
         }
         #expect(guest.isMatchOver, "the match really did end")
-        #expect(guest.winner == nil)
+        #expect(guest.winner == guest.localPlayerID)
+        #expect(guest.endedByDisconnect)
         #expect(guest.winningPlacements == nil)
 
         let results = ResultsModel(shell: ShellModel(), session: guest)
-        #expect(results.outcome == .noWinner)
-        #expect(results.didLocalPlayerWin == false)
+        #expect(results.outcome == .localWin)
         #expect(results.didPeerWin == false)
-        #expect(results.headline != Terminology.winCall)
-        #expect(
-            results.headline != ResultsModel.peerWinHeadline,
-            "a nil winner fell through to a defeat"
-        )
-        #expect(results.headline == ResultsModel.noWinnerHeadline)
+        #expect(results.reason == ResultsModel.peerDisconnectedReason)
 
         guest.leave()
     }
 
-    /// The other no-winner terminal the match lane ships: a resignation whose
-    /// peer vanished before it could be answered. Same rule, different route in.
-    @Test("A resignation the vanished peer never answered still names no winner")
-    func aResignVanishShowsNoWinner() async throws {
+    /// The words for the three endings nobody played their way to, on the plain
+    /// initializer so each can be named without staging a whole match.
+    @Test("The end screen says who disconnected, and says a voided match was voided")
+    func theEndScreenSaysWhyItEnded() {
+        let me = PlayerID(rawValue: "me"), them = PlayerID(rawValue: "them")
+        func results(winner: PlayerID?, disconnect: Bool = false, voided: Bool = false)
+            -> ResultsModel
+        {
+            ResultsModel(
+                shell: ShellModel(), winner: winner, localPlayerID: me,
+                endedByDisconnect: disconnect, isVoided: voided)
+        }
+        #expect(results(winner: me, disconnect: true).reason == "Your opponent disconnected")
+
+        let forfeited = results(winner: them, disconnect: true)
+        #expect(forfeited.headline == ResultsModel.peerWinHeadline)
+        #expect(forfeited.reason == "You disconnected")
+
+        let voided = results(winner: nil, voided: true)
+        #expect(voided.outcome == .noWinner)
+        #expect(voided.headline == "Match voided")
+        #expect(voided.reason == "Paused for more than 5 minutes")
+
+        // A match won on the board, or left with nobody named, gives no reason.
+        #expect(results(winner: me).reason == nil)
+        #expect(results(winner: nil).reason == nil)
+        #expect(results(winner: nil).headline == ResultsModel.noWinnerHeadline)
+    }
+
+    /// A resignation pressed after the peer already forfeited changes nothing:
+    /// the match is over, and the win stands.
+    @Test("A resignation after the peer forfeited is refused and the win stands")
+    func aResignAfterAForfeitIsRefused() async throws {
         let (host, guest) = try await Self.playingPair()
 
         host.leave()
         try await SoloMatchTests.waitUntil("the peer to be gone") {
             guest.peerPresence == .gone
         }
-        // Over is over: the resignation is refused, so nobody is handed a win.
+        // Over is over: the resignation is refused, so the win is not given away.
         #expect(guest.resign() == false)
-        #expect(guest.winner == nil)
+        #expect(guest.winner == guest.localPlayerID)
 
         let results = ResultsModel(shell: ShellModel(), session: guest)
-        #expect(results.outcome == .noWinner)
-        #expect(results.didLocalPlayerWin == false)
+        #expect(results.outcome == .localWin)
         #expect(results.didPeerWin == false)
 
         guest.leave()

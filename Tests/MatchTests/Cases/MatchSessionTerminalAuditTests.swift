@@ -366,8 +366,8 @@ struct MatchSessionTerminalAuditTests {
     /// The criteria suite lets the deadline pass on a match already in play.
     /// This one drops during the countdown, where a tick is parked on the clock
     /// across the end of the match and `status` is the thing most likely to move.
-    @Test("A deadline passing during the countdown ends the match without naming anyone")
-    func theDeadlinePassingDuringTheCountdownNamesNobody() async throws {
+    @Test("A deadline passing during the countdown is a forfeit to the player who stayed")
+    func theDeadlinePassingDuringTheCountdownIsAForfeit() async throws {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock, countdownSeconds: 3)
         try await Terminal.waitUntil("the first tick to be asked for") { clock.parkedCount == 1 }
@@ -379,36 +379,37 @@ struct MatchSessionTerminalAuditTests {
         clock.release(.seconds(MatchSession.reconnectGraceSeconds))
         try await Terminal.waitUntil("the deadline to pass") { guest.peerPresence == .gone }
 
-        // Over, and nobody is named anywhere: not in `winner`, not in `status`,
-        // not in the winning board.
+        // Over, and the player who stayed is named in `winner` and in `status`.
+        // No winning board: nobody finished one.
         #expect(guest.isMatchOver)
-        #expect(guest.winner == nil)
+        #expect(guest.winner == Self.bob)
+        #expect(guest.endedByDisconnect)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
+        #expect(guest.state.status == .finished(winner: Self.bob))
 
         // The tick parked from before the drop, handed out onto a match that has
         // ended.
         clock.release(.seconds(1))
         try await Terminal.settle()
-        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
-        #expect(guest.winner == nil)
+        #expect(guest.state.status == .finished(winner: Self.bob))
+        #expect(guest.winner == Self.bob)
 
-        // Nothing arriving afterwards names one either, and a peer that comes
-        // back cannot restart a match that is already over.
+        // Nothing arriving afterwards names anybody else. A peer that comes back
+        // is told the result and this board, and cannot restart the match.
         wire.deliver(.win(player: Self.alice, placements: [Placement(tile: Tile(letter: "Z"), coord: Coord(row: 1, col: 1))]))
         wire.deliver(.resign(player: Self.alice))
         wire.deliver(.win(player: Self.bob, placements: []))
         wire.restore(Self.alice)
+        try await Terminal.waitUntil("the result to be said") { await wire.count == 2 }
         try await Terminal.settle()
 
-        #expect(guest.peerPresence == .gone)
         #expect(guest.isMatchOver)
-        #expect(guest.winner == nil)
+        #expect(guest.winner == Self.bob)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .countdown(secondsRemaining: MatchSession.resumeCountdownSeconds))
+        #expect(guest.state.status == .finished(winner: Self.bob))
         #expect(guest.claimWin() == false)
         #expect(guest.resign() == false)
-        #expect(await wire.count == 0)
+        #expect(await wire.count == 2)
 
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }
