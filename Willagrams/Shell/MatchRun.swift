@@ -129,7 +129,8 @@ public final class MatchRun {
         )
         self.board = board
         self.hud = MatchHUDModel(
-            shell: shell, session: opponent.session, board: board, audio: shell.services.audio
+            shell: shell, session: opponent.session, board: board, audio: shell.services.audio,
+            setPause: { [opponent] in opponent.setPause($0) }
         )
     }
 

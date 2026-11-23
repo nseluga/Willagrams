@@ -341,6 +341,9 @@ public actor BotBrain {
     @MainActor
     private static func step(_ session: MatchSession, _ drawMark: WireMark?) -> Tick {
         if session.isMatchOver { return .finished }
+        // A paused session refuses every move, so there is nothing to search
+        // for: wait a beat and look again.
+        if session.isPaused { return .acted(drawMark) }
         if session.hasPendingDraw {
             session.draw()
             return .acted(nil)

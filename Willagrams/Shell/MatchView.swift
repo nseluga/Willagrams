@@ -70,7 +70,10 @@ struct MatchView: View {
                 dictionary: dictionary,
                 // Locked while something covers the board. `BoardView` writes
                 // this into its model, which cancels a drag in flight.
-                inputLocked: matchBoard.inputLocked,
+                // A held match refuses moves too. Asked of the HUD rather than
+                // drawn as a cover, because the control that resumes the match
+                // lives on the HUD and a cover would sit on top of it.
+                inputLocked: matchBoard.inputLocked || hud.isPaused,
                 // The refusal count, not a flag: `BoardView` keys its flash on
                 // the value changing, so a second refusal flashes again.
                 completionAttempts: hud.completionAttempts,
@@ -84,6 +87,14 @@ struct MatchView: View {
                 chromeInsets: hudInsets,
                 onCameraSettled: matchBoard.cameraSettled
             )
+            // The dim under the HUD, so a paused board reads as held and the
+            // HUD's own controls stay live above it.
+            .overlay {
+                if hud.isPaused {
+                    DesignTokens.Palette.ink.opacity(0.35).ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay { MatchHUD(hud: hud) }
             .overlay {
                 switch matchBoard.overlay {

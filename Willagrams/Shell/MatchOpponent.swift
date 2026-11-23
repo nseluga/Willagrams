@@ -55,6 +55,13 @@ public protocol MatchOpponent: AnyObject {
     /// on the spot; a network peer cannot — that needs a new match row and a
     /// fresh invite, which is a lobby's job and not this screen's.
     var offersRematch: Bool { get }
+
+    /// Says whether the local player wants the match paused.
+    ///
+    /// Asked of the opponent for the reason ``offersRematch`` is: against a
+    /// person this is a request the other player has to agree to, and against a
+    /// bot there is nobody to ask, and the run never learns which it holds.
+    func setPause(_ wanted: Bool)
 }
 
 extension MatchOpponent {
@@ -66,6 +73,10 @@ extension MatchOpponent {
     /// The session already elected a local player; asking it is how the two
     /// answers cannot start to disagree.
     public var localPlayerID: PlayerID { session.localPlayerID }
+
+    /// A vote, unless the conformer says otherwise: the match pauses when every
+    /// player wants it paused and resumes when every player wants it resumed.
+    public func setPause(_ wanted: Bool) { session.votePause(wanted) }
 }
 
 /// Solo is just one kind of far end. Declared here rather than on the type so

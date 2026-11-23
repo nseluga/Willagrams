@@ -95,16 +95,23 @@ public final class MatchHUDModel {
     /// on a HUD whose shell has gone would trap on the way to a sound.
     @ObservationIgnored private let audio: any AudioPlayer
 
+    /// How this match is paused: a vote against a person, at once against a
+    /// bot. Handed down by ``MatchRun`` from the opponent, which is the one
+    /// thing that knows which it is.
+    @ObservationIgnored private let setPause: @MainActor (Bool) -> Void
+
     public init(
         shell: ShellModel,
         session: MatchSession,
         board: MatchBoard,
-        audio: any AudioPlayer
+        audio: any AudioPlayer,
+        setPause: (@MainActor (Bool) -> Void)? = nil
     ) {
         self.shell = shell
         self.session = session
         self.board = board
         self.audio = audio
+        self.setPause = setPause ?? { [session] in session.votePause($0) }
     }
 
     // MARK: - Pool
@@ -200,7 +207,66 @@ public final class MatchHUDModel {
     /// ``MatchBoard/inputLocked`` is the same question the surface already
     /// asks, so the HUD and the board cannot disagree about who owns the turn.
     public var isMatchLive: Bool {
+        isPauseOffered && !session.isPaused
+    }
+
+    // MARK: - Pause
+
+    /// Whether the match is held. The session's answer, which on every device
+    /// is the pool holder's, so two players cannot see different ones.
+    public var isPaused: Bool { session.isPaused }
+
+    /// Whether the pause control can do anything: the match is being played or
+    /// is paused. Not while the board is covered, for the reason
+    /// ``isMatchLive`` gives.
+    public var isPauseOffered: Bool {
         !session.isMatchOver && session.peerPresence == .present && !board.inputLocked
+    }
+
+    private var localVote: Bool { session.playersWantingPause.contains(session.localPlayerID) }
+    private var peerVote: Bool {
+        session.playersWantingPause.contains { $0 != session.localPlayerID }
+    }
+
+    /// Whether this player is the one keeping the match paused, or asking for
+    /// it. A pause that no vote explains is a solo pause, and that is this
+    /// player's own.
+    private var holdsPause: Bool { localVote || (session.isPaused && !peerVote) }
+
+    /// Local chrome, like ``resignLabel``: holding a match is a control, not a
+    /// game concept.
+    public var pauseLabel: String {
+        switch (session.isPaused, localVote, peerVote) {
+        case (false, true, _): "Cancel pause"
+        case (false, false, true): "Agree to pause"
+        case (false, false, false): "Pause"
+        case (true, true, false): "Agree to resume"
+        case (true, false, true): "Stay paused"
+        case (true, _, _): "Resume"
+        }
+    }
+
+    /// What the other player has to do, or has asked for. `nil` when the two
+    /// players agree, and always `nil` against a bot.
+    public var pauseStatus: String? {
+        switch (session.isPaused, localVote, peerVote) {
+        case (false, true, false): "Waiting for your opponent to agree to pause"
+        case (false, false, true): "Your opponent wants to pause"
+        case (true, true, false): "Your opponent wants to resume"
+        case (true, false, true): "Waiting for your opponent to agree to resume"
+        default: nil
+        }
+    }
+
+    public var pausedTitle: String { "Paused" }
+
+    /// The one pause control: asks for whatever this player is not already
+    /// asking for. A request the other player never answers changes nothing,
+    /// and a second press takes it back.
+    public func pausePressed() {
+        resignArmed = false
+        guard isPauseOffered else { return }
+        setPause(!holdsPause)
     }
 
     /// Takes a round. Refuses outright when ``isDrawEnabled`` is false, so the
