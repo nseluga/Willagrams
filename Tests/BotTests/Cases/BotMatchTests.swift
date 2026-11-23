@@ -126,7 +126,7 @@ struct BotMatchTests {
         match.leave()
 
         await #expect(throws: MatchTransportError.peerDisconnected) {
-            try await match.humanTransport.send(.poolExhausted, delivery: .reliable)
+            try await match.humanTransport.send(.poolExhausted(requester: match.humanTransport.localPlayerID), delivery: .reliable)
         }
     }
 
