@@ -163,10 +163,26 @@ public final class ResultsModel {
         )
     }
 
-    /// A board from untrusted placements, or nil. Same coordinate twice, or
-    /// nothing to show, gives nil — never half a board, never a fallback.
+    /// The furthest from the origin a shown tile may sit. Far past any board a
+    /// player can build, and far short of where coordinate arithmetic overflows.
+    nonisolated static let coordinateLimit = 10_000
+
+    /// A board from untrusted placements, or nil. Nothing to show, more tiles
+    /// than a pool holds, a tile or a coordinate used twice, or a coordinate
+    /// out of range gives nil — never half a board, never a fallback.
+    ///
+    /// The range check is what keeps a hostile payload from stopping the app:
+    /// the board view adds one to a coordinate to find its neighbours, and
+    /// Swift traps on overflow.
     static func strictBoard(_ placements: [Placement]?) -> Board? {
-        guard let placements, !placements.isEmpty else { return nil }
+        guard let placements, !placements.isEmpty, placements.count <= MatchLimits.poolSize,
+              Set(placements.map(\.tile.id)).count == placements.count,
+              placements.allSatisfy({
+                  // A range, not `abs`: `abs(Int.min)` is itself an overflow.
+                  let allowed = -coordinateLimit...coordinateLimit
+                  return allowed.contains($0.coord.row) && allowed.contains($0.coord.col)
+              })
+        else { return nil }
         var built = Board()
         for placement in placements {
             do { try built.place(placement.tile, at: placement.coord) } catch { return nil }

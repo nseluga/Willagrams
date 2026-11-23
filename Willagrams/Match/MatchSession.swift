@@ -1262,7 +1262,8 @@ public final class MatchSession: AppActivityListener {
         // player's hand. It moves nothing, so it is not a move on a settled
         // match either.
         if case let .finalBoard(player, placements) = message {
-            guard isFinished, isPeer(player) else { return }
+            // The first one stands: a board is a fact, sent once.
+            guard isFinished, isPeer(player), storedFinalBoards[player] == nil else { return }
             withMutation(keyPath: \.peerFinalBoards) { storedFinalBoards[player] = placements }
             return
         }
