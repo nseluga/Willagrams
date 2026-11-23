@@ -55,8 +55,8 @@ struct SoloMatchTests {
         return solo
     }
 
-    /// Every tile the local end holds anywhere: rack, board, and the tiles it
-    /// owes a press for.
+    /// Every tile the local end holds anywhere: rack, board, and any tiles it
+    /// anything still waiting.
     static func localTileIDs(_ solo: SoloMatch) -> Set<UUID> {
         var ids = Set(solo.session.state.hand.map(\.id))
         ids.formUnion(solo.session.pendingDrawTiles.map(\.id))

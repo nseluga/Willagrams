@@ -7,9 +7,9 @@ import WillagramsRules
 ///
 /// Everything here drives two real `MatchSession`s over a real `FakeTransport`
 /// pair — no adapter shortcuts, no assertions on mocks. The negative criterion
-/// (a playing-phase grant is held behind the obligation) is exercised through
-/// the production entry point: the host really presses Draw, the grant really
-/// travels, and the guest's own `draw()` really resolves it.
+/// (a playing-phase grant lands in the rack at once) is exercised through the
+/// production entry point: the host really presses Draw, the grant really
+/// travels, and the guest's rack really takes the tile.
 @MainActor
 @Suite("Match session opening deal audit")
 struct MatchSessionOpeningDealAuditTests {
@@ -134,11 +134,11 @@ struct MatchSessionOpeningDealAuditTests {
 
     // MARK: - The negative criterion, through the production entry point
 
-    /// The Draw obligation must survive the opening deal untouched. This does
+    /// The opening deal must not change how a peer's round lands. This does
     /// not re-derive it from `applyGrant` or from a `HostPool` call: the host
-    /// session presses `draw()`, the grant crosses a real wire, and the guest's
-    /// own `draw()` is what finally takes it.
-    @Test("After the deal, a peer's draw is still held until this player presses Draw")
+    /// session presses `draw()`, the grant crosses a real wire, and the tile
+    /// goes straight into the guest's rack beside the dealt hand.
+    @Test("After the deal, a peer's draw lands in this player's rack at once")
     func aPeerDrawIsStillAnObligationAfterTheDeal() async throws {
         let handSize = 4
         let (host, guest, _) = try await Self.livePair(countdownSeconds: 0, handSize: handSize)
@@ -149,27 +149,23 @@ struct MatchSessionOpeningDealAuditTests {
 
         // The real button on the real host session.
         #expect(host.draw())
-        try await Self.waitUntil("the peer's round to reach the guest") { guest.hasPendingDraw }
-
-        // Held, not taken. The board is shut behind it.
-        #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand.count == handSize)
-        #expect(Set(guest.state.hand.map(\.id)) == dealtToGuest)
-        let waiting = guest.pendingDrawTiles[0].id
-        #expect(dealtToGuest.contains(waiting) == false)
-        #expect(throws: BoardActionError.drawPending) {
-            try guest.place(tileID: guest.state.hand[0].id, at: Coord(row: 0, col: 0))
+        try await Self.waitUntil("the peer's round to reach the guest") {
+            guest.state.hand.count == handSize + 1
         }
-        // It stays held across time, not merely at the instant it arrives.
-        try await Self.settle()
-        #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand.count == handSize)
 
-        // And the player's own press is what resolves it.
-        #expect(guest.draw())
+        // Taken at once: nothing waits, and the board is not shut behind it.
         #expect(guest.pendingDrawTiles.isEmpty)
-        #expect(guest.state.hand.count == handSize + 1)
-        #expect(guest.state.hand.map(\.id).contains(waiting))
+        #expect(guest.hasPendingDraw == false)
+        #expect(dealtToGuest.isSubset(of: Set(guest.state.hand.map(\.id))))
+        let taken = try #require(guest.state.hand.first { !dealtToGuest.contains($0.id) })
+        #expect(throws: Never.self) {
+            try guest.place(tileID: taken.id, at: Coord(row: 0, col: 0))
+        }
+        // It stays in the rack across time, not merely at the instant it arrives.
+        try await Self.settle()
+        #expect(guest.pendingDrawTiles.isEmpty)
+        #expect(guest.state.hand.count == handSize)
+        #expect(guest.state.board.placementList.map(\.tile.id) == [taken.id])
         // The host took its half of the same round straight into hand.
         #expect(host.state.hand.count == handSize + 1)
         #expect(host.pendingDrawTiles.isEmpty)
@@ -206,18 +202,16 @@ struct MatchSessionOpeningDealAuditTests {
 
         // A legitimate playing-phase round: one tile each.
         #expect(host.draw())
-        try await Self.waitUntil("the round to reach the guest") { guest.hasPendingDraw }
+        try await Self.waitUntil("the round to reach the guest") { guest.state.hand.count == 1 }
 
-        // Held behind the Draw gate, not taken — the size never entered into it.
-        #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand.isEmpty)
+        // In the rack, not taken for a deal — the size never entered into it.
+        #expect(guest.pendingDrawTiles.isEmpty)
 
         // And the one after it, so this is the rule rather than a spent flag.
         #expect(guest.draw())
         #expect(host.draw())
-        try await Self.waitUntil("the second round to be held") { guest.hasPendingDraw }
-        #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand.count == 1)
+        try await Self.waitUntil("the second round to reach the guest") { guest.state.hand.count == 3 }
+        #expect(guest.pendingDrawTiles.isEmpty)
     }
 
     /// The phase collision, probed the same way — the one that was *not* bounded
@@ -256,12 +250,13 @@ struct MatchSessionOpeningDealAuditTests {
 
         // A one-tile round arriving while the guest is still in `.countdown`.
         #expect(host.draw())
-        try await Self.waitUntil("the round to reach the guest") { guest.hasPendingDraw }
+        try await Self.waitUntil("the round to reach the guest") { guest.state.hand.count == 1 }
 
-        // Held, not taken. The phase no longer decides anything: the wire named
-        // this an obligation and the guest's own status is beside the point.
-        #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand.isEmpty)
+        // In the rack, not taken for the deal. The phase no longer decides
+        // anything: the wire named this an obligation and the guest's own
+        // status is beside the point.
+        #expect(guest.pendingDrawTiles.isEmpty)
+        #expect(guest.state.status != .playing)
 
         gate.open = true
         try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }
@@ -278,11 +273,11 @@ struct MatchSessionOpeningDealAuditTests {
         #expect(host.pendingDrawTiles.isEmpty)
         #expect(guest.pendingDrawTiles.isEmpty)
 
-        // And a round after a dealless start is a normal obligation.
+        // And a round after a dealless start is a normal obligation: its tile
+        // lands in the rack.
         #expect(host.draw())
-        try await Self.waitUntil("the round to be held") { guest.hasPendingDraw }
-        #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.state.hand.isEmpty)
+        try await Self.waitUntil("the round to reach the guest") { guest.state.hand.count == 1 }
+        #expect(guest.pendingDrawTiles.isEmpty)
     }
 
     /// A negative hand size is not a setting, so it is refused outright rather

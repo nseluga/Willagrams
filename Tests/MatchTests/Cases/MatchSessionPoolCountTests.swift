@@ -60,9 +60,8 @@ struct MatchSessionPoolCountTests {
 
         // Each bad count is followed by a sentinel the guest does observe, so
         // "nothing changed" is read after the count was processed, not before.
-        // The tile sentinels are obligations rather than grants: a grant goes
-        // straight to the rack, and `pendingDrawTiles` is the queue that is
-        // easiest to count from outside.
+        // The tile sentinels are obligations: they land in the rack, and the
+        // hand count is easiest to read from outside.
         // Above the pool, onto a nil count, so `min` cannot hide it.
         try await first.send(.poolCount(remaining: MatchLimits.poolSize + 1), delivery: .reliable)
         try await first.send(.poolExhausted(requester: bob), delivery: .reliable)
@@ -74,12 +73,12 @@ struct MatchSessionPoolCountTests {
 
         try await first.send(.poolCount(remaining: 95), delivery: .reliable)
         try await first.send(.obligation(player: bob, tiles: [Tile(letter: "A")]), delivery: .reliable)
-        try await T.waitUntil("sentinel obligation 1") { guest.pendingDrawTiles.count == 1 }
+        try await T.waitUntil("sentinel obligation 1") { guest.state.hand.count == 1 }
         #expect(guest.poolRemaining == 90, "a late 95 grew the pool")
 
         try await first.send(.poolCount(remaining: -1), delivery: .reliable)
         try await first.send(.obligation(player: bob, tiles: [Tile(letter: "B")]), delivery: .reliable)
-        try await T.waitUntil("sentinel obligation 2") { guest.pendingDrawTiles.count == 2 }
+        try await T.waitUntil("sentinel obligation 2") { guest.state.hand.count == 2 }
         #expect(guest.poolRemaining == 90, "-1 was shown")
 
         // Host side: `bob` is raw, `alice` runs the pool.
