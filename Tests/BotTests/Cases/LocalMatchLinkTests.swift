@@ -53,7 +53,7 @@ struct LocalMatchLinkTests {
         let (a, b) = Self.newPair()
         let sent: [MatchMessage] = [
             .drawRequest(player: Self.alice),
-            .poolExhausted,
+            .poolExhausted(requester: Self.alice),
             .rejected(reason: .notYourTurn),
             .resign(player: Self.alice),
         ]
@@ -70,7 +70,7 @@ struct LocalMatchLinkTests {
     @Test("Every access returns the same stream, not a new subscription")
     func streamIsSingleSubscription() async throws {
         let (a, b) = Self.newPair()
-        try await a.send(.poolExhausted, delivery: .reliable)
+        try await a.send(.poolExhausted(requester: Self.alice), delivery: .reliable)
         try await a.send(.resign(player: Self.alice), delivery: .reliable)
         a.leave()
 
@@ -79,7 +79,7 @@ struct LocalMatchLinkTests {
             first = message
             break
         }
-        #expect(first == .poolExhausted)
+        #expect(first == .poolExhausted(requester: Self.alice))
         // The remainder, read through a separate access to the property.
         #expect(await Self.drain(b.inboundMessages) == [.resign(player: Self.alice)])
     }
@@ -87,14 +87,14 @@ struct LocalMatchLinkTests {
     @Test("leave() finishes both streams on both endpoints, after buffered elements drain")
     func leaveFinishesEveryStream() async throws {
         let (a, b) = Self.newPair()
-        try await a.send(.poolExhausted, delivery: .reliable)
+        try await a.send(.poolExhausted(requester: Self.alice), delivery: .reliable)
         try await b.send(.drawRequest(player: Self.bob), delivery: .reliable)
         b.leave()
 
         // Each of these four loops ends rather than hanging, and the elements
         // buffered before `leave()` still arrive.
         #expect(await Self.drain(a.inboundMessages) == [.drawRequest(player: Self.bob)])
-        #expect(await Self.drain(b.inboundMessages) == [.poolExhausted])
+        #expect(await Self.drain(b.inboundMessages) == [.poolExhausted(requester: Self.alice)])
         #expect(await Self.drain(a.peerConnectionStates) == [.connected(Self.bob), .disconnected(Self.bob)])
         #expect(await Self.drain(b.peerConnectionStates) == [.connected(Self.alice)])
     }
@@ -111,10 +111,10 @@ struct LocalMatchLinkTests {
         let (a, b) = Self.newPair()
         a.leave()
         await #expect(throws: MatchTransportError.peerDisconnected) {
-            try await a.send(.poolExhausted, delivery: .reliable)
+            try await a.send(.poolExhausted(requester: Self.alice), delivery: .reliable)
         }
         await #expect(throws: MatchTransportError.peerDisconnected) {
-            try await b.send(.poolExhausted, delivery: .reliable)
+            try await b.send(.poolExhausted(requester: Self.alice), delivery: .reliable)
         }
     }
 
@@ -132,7 +132,7 @@ struct LocalMatchLinkTests {
     func sendDoesNotApplyBackpressure() async throws {
         let (a, b) = Self.newPair()
         for _ in 0..<1_000 {
-            try await a.send(.poolExhausted, delivery: .reliable)
+            try await a.send(.poolExhausted(requester: Self.alice), delivery: .reliable)
         }
         a.leave()
         #expect(await Self.drain(b.inboundMessages).count == 1_000)
