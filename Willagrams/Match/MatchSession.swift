@@ -394,7 +394,9 @@ public final class MatchSession: AppActivityListener {
     ///
     /// A request that reaches a host which cannot serve it yet — frozen, or
     /// still counting back in — is held there in ``heldDrawRequests`` and
-    /// answered when play resumes, so the credit it opened is always closed.
+    /// answered when play resumes, so the credit it opened is closed, when the
+    /// host runs this build or later. A 1.0 host drops the request, and the
+    /// credit then stands until this device's own return resets it.
     @ObservationIgnored private var outstandingDrawRequests = 0
 
     /// Host only: players whose draw request arrived while this device could
@@ -826,11 +828,13 @@ public final class MatchSession: AppActivityListener {
         }
         guard case .reconnecting = presence(of: player) else { return }
         peerPresences[player] = .present
-        // Nothing can legitimately be in flight across a freeze — `blockedByLock`
-        // already drops outbound sends — so a credit still standing here is one
-        // the host will never answer. Left at 1 it latches Draw shut for the
-        // rest of the match, and the next grant meant for somebody else is
-        // mistaken for this device's own answer and goes straight into the hand.
+        // A credit still standing here may never be answered: a 1.0 host drops
+        // every request that reaches it frozen. Left at 1 it latches Draw shut
+        // for the rest of the match, so it is reset.
+        // ponytail: a host on this build holds that request and answers it on
+        // resume, so a player who presses Draw again right after a return can
+        // get two rounds for one intended draw. Tiles are still conserved. Keep
+        // the credit across the return once no 1.0 host is left in the field.
         outstandingDrawRequests = 0
         // Another peer still away keeps the match frozen, and its window keeps
         // running: resuming the countdown now would move game state nobody is

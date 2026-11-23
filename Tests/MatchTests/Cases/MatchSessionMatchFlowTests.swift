@@ -238,4 +238,54 @@ struct MatchSessionMatchFlowTests {
         #expect(table.guest.draw())
         await table.leave()
     }
+
+    /// One held request per player. A second copy is a repeat or a modified
+    /// peer, and answering both would take two rounds out of the pool for one
+    /// press.
+    @Test("A request held twice for one player is answered once")
+    func aRepeatedHeldRequestIsOneRound() async throws {
+        var table = try await Self.dealtTable()
+        let pool = try #require(table.host.poolRemaining)
+
+        table.hostWire.drop(Self.bob)
+        try await Terminal.waitUntil("the host to freeze") { table.host.peerPresence != .present }
+        table.hostWire.deliver(.drawRequest(player: Self.bob))
+        table.hostWire.deliver(.drawRequest(player: Self.bob))
+        try await Terminal.settle()
+
+        table.hostWire.restore(Self.bob)
+        try await Terminal.crank(
+            table.hostClock, releasing: .seconds(1), until: "the host's tile for the round"
+        ) { Self.held(table.host) == 4 }
+        try await Terminal.settle()
+
+        #expect(Self.held(table.host) == 4)
+        #expect(table.host.poolRemaining == pool - 2)
+        await table.leave()
+    }
+
+    /// The other answers the host can have sent before this device froze. Each
+    /// says the pool already moved, so each is kept, like a grant.
+    @Test("A swap answer and an empty-pool notice that land during a freeze are both kept")
+    func aSwapAnswerAndTheEmptyPoolNoticeSurviveAFreeze() async throws {
+        let clock = Terminal.HandCrankedClock()
+        let (guest, wire) = try await Terminal.playingGuest(clock: clock)
+        let returned = Tile(letter: "Q")
+        wire.deliver(.obligation(player: Self.bob, tiles: [returned]))
+        try await Terminal.waitUntil("the tile to swap") { guest.state.hand.count == 1 }
+
+        wire.drop(Self.alice)
+        try await Terminal.waitUntil("the guest to freeze") { guest.peerPresence != .present }
+        let fresh = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
+        wire.deliver(.swapGrant(player: Self.bob, tiles: fresh, returned: returned))
+        wire.deliver(.poolExhausted(requester: Self.alice))
+        try await Terminal.settle()
+
+        wire.restore(Self.alice)
+        try await Terminal.resume(guest, on: clock)
+        #expect(guest.state.hand.map(\.id) == fresh.map(\.id))
+        #expect(guest.poolIsExhausted)
+        guest.leave()
+        clock.releaseAll()
+    }
 }
