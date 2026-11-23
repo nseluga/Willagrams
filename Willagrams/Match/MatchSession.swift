@@ -397,13 +397,30 @@ public final class MatchSession: AppActivityListener {
     /// naming this device or a `.rejected`, so any of the three clears one —
     /// and a request that never reached the wire clears its own.
     ///
-    /// ponytail: one way out is not covered — a request that reaches the host
-    /// and is dropped there by ``receive(_:)``'s `state.status == .playing`
-    /// guard is never answered and never times out, and the credit it opened
-    /// latches Draw shut. Unreachable at two players, who run the same status
-    /// machine off the same `.start`; give the credit a deadline if a larger
-    /// match ever makes the statuses diverge.
+    /// A request that reaches a host which cannot serve it yet — frozen, or
+    /// still counting back in — is held there in ``heldDrawRequests`` and
+    /// answered when play resumes, so the credit it opened is closed, when the
+    /// host runs this build or later. A 1.0 host drops the request, and the
+    /// credit then stands until this device's own return resets it.
     @ObservationIgnored private var outstandingDrawRequests = 0
+
+    /// Host only: players whose draw request arrived while this device could
+    /// not serve it, answered by ``answerHeldDrawRequests()`` when the board is
+    /// live again.
+    ///
+    /// The two devices do not freeze together. One that steps out of the app
+    /// and back freezes and counts back in alone, while the other plays on and
+    /// can press Draw. Dropping that request left the asker waiting on an answer
+    /// that never came, with Draw refusing every later press.
+    ///
+    /// One per player: an honest peer has one request in flight at a time, and
+    /// a second entry would let a modified one queue rounds against the pool.
+    @ObservationIgnored private var heldDrawRequests: [PlayerID] = []
+
+    /// Whether the board has been live at least once. A request sent before
+    /// that is early, not late: it is dropped, as it always was, so nobody
+    /// takes tiles out of the pool ahead of the opening deal.
+    @ObservationIgnored private var playHasBegun = false
 
     /// This device's own `.win`/`.resign` was caught by the freeze and still
     /// owes the peer an outcome.
@@ -816,11 +833,13 @@ public final class MatchSession: AppActivityListener {
         }
         guard case .reconnecting = presence(of: player) else { return }
         peerPresences[player] = .present
-        // Nothing can legitimately be in flight across a freeze — `blockedByLock`
-        // already drops outbound sends — so a credit still standing here is one
-        // the host will never answer. Left at 1 it latches Draw shut for the
-        // rest of the match, and the next grant meant for somebody else is
-        // mistaken for this device's own answer and goes straight into the hand.
+        // A credit still standing here may never be answered: a 1.0 host drops
+        // every request that reaches it frozen. Left at 1 it latches Draw shut
+        // for the rest of the match, so it is reset.
+        // ponytail: a host on this build holds that request and answers it on
+        // resume, so a player who presses Draw again right after a return can
+        // get two rounds for one intended draw. Tiles are still conserved. Keep
+        // the credit across the return once no 1.0 host is left in the field.
         outstandingDrawRequests = 0
         // Another peer still away keeps the match frozen, and its window keeps
         // running: resuming the countdown now would move game state nobody is
@@ -844,6 +863,7 @@ public final class MatchSession: AppActivityListener {
             // and still owes two hands.
             guard !awaitingOpeningDeal else {
                 dealOpeningHands()
+                answerHeldDrawRequests()
                 return
             }
             // Mid-match. The deal is long done, and what a returning peer owes
@@ -1125,12 +1145,13 @@ public final class MatchSession: AppActivityListener {
         // Over is over, however it ended: nothing may move a settled match.
         guard !isMatchOver else { return }
         // Frozen, the two streams are a race — messages the peer sent before it
-        // dropped can still be buffered behind the disconnect. Anything that
-        // would move the game is dropped so the match stands still, but a `.win`
-        // or a `.resign` is honoured: the peer legitimately sent it while it was
-        // here, and taking it whichever stream wins makes the outcome the same
-        // on both devices instead of dependent on the race.
-        guard !isFrozen || Self.endsTheMatch(message) else { return }
+        // dropped can still be buffered behind the disconnect. A request to
+        // begin or move play is dropped so the match stands still. What the
+        // peer already *did* is honoured: a `.win` or a `.resign` it sent while
+        // it was here, and every tile the host has already taken out of the
+        // pool for this device. The pool never moves back, so dropping a grant
+        // here loses the tile for good.
+        guard !isFrozen || Self.survivesAFreeze(message) else { return }
         switch message {
 
         case let .start(version, _, _, _, _, _):
@@ -1154,7 +1175,17 @@ public final class MatchSession: AppActivityListener {
             // ponytail: nothing caps peer submissions in flight — the transport
             // buffers unboundedly by contract — add a cap when a real link
             // shows the buffer is the limit that bites.
-            guard hostPool != nil, state.status == .playing else { break }
+            guard hostPool != nil else { break }
+            guard !isFrozen, state.status == .playing else {
+                // Held, not dropped: the asker is waiting on an answer. Only a
+                // draw — a swap leaves its tile in the rack and can be pressed
+                // again, and replaying one late could return a tile twice.
+                if playHasBegun, case let .drawRequest(player) = message, isPeer(player),
+                   !heldDrawRequests.contains(player) {
+                    heldDrawRequests.append(player)
+                }
+                break
+            }
             submitToHost(message)
 
         case let .grant(player, tiles):
@@ -1324,6 +1355,7 @@ public final class MatchSession: AppActivityListener {
             // answer, not before its own `.playing`.
             dealOpeningHands()
             state.status = .playing
+            answerHeldDrawRequests()
             return
         }
         state.status = .countdown(secondsRemaining: seconds)
@@ -1348,6 +1380,7 @@ public final class MatchSession: AppActivityListener {
                 self.state.status = remaining > 0
                     ? .countdown(secondsRemaining: remaining)
                     : .playing
+                if remaining == 0 { self.answerHeldDrawRequests() }
             }
         }
     }
@@ -1404,15 +1437,26 @@ public final class MatchSession: AppActivityListener {
         state.hand.append(contentsOf: fresh)
     }
 
-    /// Holds a tile behind the obligation.
+    /// Takes the tile this device owes for the opponent's draw, straight into
+    /// the rack.
     ///
-    /// The opponent drew, so this device owes a tile for the same event and its
-    /// board stays frozen until the player presses Draw. Spends no credit: this
-    /// answers nothing this device asked for.
+    /// It used to wait behind the Draw button with the board shut, which also
+    /// shut swap. Now the opponent's draw simply gives this device its tile.
+    /// Spends no credit: this answers nothing this device asked for.
     private func applyObligation(_ tiles: [Tile]) {
         let fresh = unheld(tiles)
         guard !fresh.isEmpty else { return }
-        pendingDrawTiles.append(contentsOf: fresh)
+        state.hand.append(contentsOf: fresh)
+    }
+
+    /// Answers every draw request this host held while it could not serve one.
+    /// Called at each flip to a live board, the first one included, which is
+    /// what marks play as begun.
+    private func answerHeldDrawRequests() {
+        playHasBegun = true
+        let held = heldDrawRequests
+        heldDrawRequests = []
+        for player in held { submitToHost(.drawRequest(player: player)) }
     }
 
     /// The tiles of `tiles` this device is not already holding somewhere.
@@ -1515,6 +1559,20 @@ public final class MatchSession: AppActivityListener {
         switch message {
         case .win, .resign: return true
         default: return false
+        }
+    }
+
+    /// What a frozen session still takes in: how the match ended, and anything
+    /// the host has already done with the pool. Everything else is dropped,
+    /// which is the safe side for a kind this list has not heard of: a kind
+    /// that must survive a freeze has to be added here on purpose.
+    private static func survivesAFreeze(_ message: MatchMessage) -> Bool {
+        switch message {
+        case .win, .resign, .grant, .obligation, .swapGrant, .poolExhausted, .poolCount, .rejected,
+             .drawRequest:
+            return true
+        default:
+            return false
         }
     }
 

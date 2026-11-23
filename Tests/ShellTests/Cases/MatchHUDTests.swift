@@ -525,37 +525,34 @@ struct MatchHUDTests {
         solo.leave()
     }
 
-    @Test("A tile peeled to you is takeable while your own board is unfinished")
-    func anOwedTileIsTakeableWithAnUnfinishedBoard() async throws {
+    @Test("A tile handed over by the opponent's draw arrives with no press, on an unfinished board")
+    func anOwedTileArrivesWithAnUnfinishedBoard() async throws {
         let (solo, wiring, _, hud) = try await Self.hud()
         defer { solo.leave() }
 
-        let before = solo.session.state.hand.count
+        let before = MatchBoardTests.custody(wiring, solo.session, "before the opponent's draw").count
         #expect(wiring.canDraw == false, "an opening deal is not a finished board")
 
-        // The far end presses Draw. A peel takes one tile per player at once,
+        // The far end presses Draw. The pool takes one tile per player at once,
         // so this device is handed a tile it never asked for and cannot refuse.
         #expect(solo.bot.session.draw())
-        try await SoloMatchTests.waitUntil("a tile waiting behind Draw") {
-            solo.session.hasPendingDraw
+        try await SoloMatchTests.waitUntil("the tile to arrive") {
+            MatchBoardTests.custody(wiring, solo.session, "after the opponent's draw").count == before + 1
         }
-        #expect(hud.drawLabel.contains("1"), "nothing on screen says a tile is waiting")
 
-        // The press that reopens the board. Gated on `canDraw` this was refused,
-        // and refused permanently: `place` throws `.drawPending` while a tile
-        // waits, so the board could never become finished, so the tile could
-        // never be taken. The pool went down and no letter ever arrived.
-        #expect(hud.isDrawEnabled)
-        #expect(hud.draw())
+        // Nothing waits behind the button: the label is plain, no press is
+        // owed, and the unfinished board is not what stops the player.
         #expect(solo.session.hasPendingDraw == false)
-        #expect(solo.session.state.hand.count == before + 1)
+        #expect(solo.session.pendingDrawTiles.isEmpty)
         #expect(hud.drawLabel == Terminology.draw)
+        #expect(hud.isDrawEnabled == false, "a press is only offered for a finished board")
+        #expect(hud.isDrawPressable)
     }
 
-    // MARK: - One press, one tile, laid on the press
+    // MARK: - Tiles from the opponent's draw, laid on arrival
 
-    @Test("Each press lays its own tile while the rest of the queue still waits")
-    func everyPressLaysItsTileWithMoreStillQueued() async throws {
+    @Test("Several tiles handed over at once are all laid on arrival, none waiting")
+    func severalOwedTilesAreAllLaidOnArrival() async throws {
         let dictionary = EveryWordIsReal()
         let (host, session) = try await MatchBoardTests.guest(handSize: 2, dictionary: dictionary)
         let wiring = MatchBoard(session: session, dictionary: dictionary, audio: SilentAudioPlayer())
@@ -568,39 +565,27 @@ struct MatchHUDTests {
             wiring.board.placementList.count == 2
         }
 
-        // Three peels this device never asked for. It now owes three presses,
-        // and the queue is what makes this different from the single-tile case
-        // already covered: with tiles still behind it, a press used to take a
-        // letter it could not lay, and the whole queue then landed at once on
-        // the last press.
+        // Three tiles this device never asked for, handed over in one go. Every
+        // one reaches the rack and the wiring lays it, with no press between —
+        // a press used to take one letter at a time, and the whole queue then
+        // landed at once on the last.
         let owed = [Tile(letter: "A"), Tile(letter: "B"), Tile(letter: "C")]
         try await MatchBoardTests.owe(owed, from: host)
-        try await SoloMatchTests.waitUntil("three tiles waiting behind Draw") {
-            session.pendingDrawTiles.count == 3
+        try await SoloMatchTests.waitUntil("all three tiles on the board") {
+            wiring.board.placementList.count == 5
         }
 
-        for (pressed, tile) in owed.enumerated() {
-            #expect(hud.isDrawEnabled, "press \(pressed + 1) was not offered")
-            #expect(hud.draw(), "press \(pressed + 1) did nothing")
-
-            // The tile this press took is on the board before the next press,
-            // and it is on the board because the wiring laid it — no test calls
-            // `sync()` here.
-            try await SoloMatchTests.waitUntil("press \(pressed + 1)'s tile on the board") {
-                wiring.board.placementList.count == 3 + pressed
-            }
+        for tile in owed {
             #expect(
                 wiring.board.placementList.contains { $0.tile.id == tile.id },
-                "press \(pressed + 1) took a tile it never laid"
+                "a tile that arrived was never laid"
             )
-            #expect(session.state.hand.isEmpty, "press \(pressed + 1) left its tile in the rack")
-            // One per press, never the queue.
-            #expect(session.pendingDrawTiles.count == owed.count - pressed - 1)
-            _ = MatchBoardTests.custody(wiring, session, "after press \(pressed + 1)")
         }
-
+        #expect(session.state.hand.isEmpty, "a tile was left in the rack")
+        #expect(session.pendingDrawTiles.isEmpty, "a tile was left waiting")
         #expect(session.hasPendingDraw == false)
-        #expect(wiring.board.placementList.count == 5)
+        #expect(hud.drawLabel == Terminology.draw)
+        _ = MatchBoardTests.custody(wiring, session, "after the delivery")
 
         session.leave()
     }

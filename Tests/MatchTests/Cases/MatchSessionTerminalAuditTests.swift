@@ -207,8 +207,8 @@ struct MatchSessionTerminalAuditTests {
         // And the elements are not divided: every one of six offers lands.
         let offered = (0..<6).map { Tile(letter: $0.isMultiple(of: 2) ? "A" : "B") }
         for tile in offered { wire.deliver(.obligation(player: Self.bob, tiles: [tile])) }
-        try await Terminal.waitUntil("all six offers to land") { guest.pendingDrawTiles.count == 6 }
-        #expect(guest.pendingDrawTiles.map(\.id) == offered.map(\.id))
+        try await Terminal.waitUntil("all six offers to land") { guest.state.hand.count == 6 }
+        #expect(guest.state.hand.map(\.id) == offered.map(\.id))
 
         // The connection stream is not divided either: a drop and a return both
         // reach the one consumer.
@@ -252,8 +252,8 @@ struct MatchSessionTerminalAuditTests {
         // rather than still queued behind the assertions.
         let marker = Tile(letter: "M")
         wire.deliver(.obligation(player: Self.bob, tiles: [marker]))
-        try await Terminal.waitUntil("the marker to land") { guest.hasPendingDraw }
-        #expect(guest.pendingDrawTiles.map(\.id) == [marker.id])
+        try await Terminal.waitUntil("the marker to land") { guest.state.hand.count == 3 }
+        #expect(guest.state.hand.last?.id == marker.id)
 
         // Frozen, the same two forgeries pass the freeze filter — `.win` and
         // `.resign` are the two messages it still honours — and must still be
@@ -450,8 +450,7 @@ struct MatchSessionTerminalAuditTests {
         // latch is not a gate on the rack.
         let late = Tile(letter: "Q")
         wire.deliver(.obligation(player: Self.bob, tiles: [late]))
-        try await Terminal.waitUntil("the reordered grant to land") { guest.hasPendingDraw }
-        #expect(guest.draw())
+        try await Terminal.waitUntil("the reordered grant to land") { guest.state.hand.count == 1 }
         #expect(guest.state.hand.map(\.id) == [late.id])
         try guest.place(tileID: late.id, at: Coord(row: 0, col: 0))
         #expect(guest.state.board.tile(at: Coord(row: 0, col: 0))?.id == late.id)

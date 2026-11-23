@@ -266,26 +266,22 @@ struct BotBrainTests {
         #expect(human.winner == BotMatch.humanPlayerID)
     }
 
-    /// The stale-snapshot path, forced: a grant is waiting, so `place` throws
-    /// `.drawPending` for any move the brain chooses. The brain must take the
-    /// tile rather than jam.
-    @Test("A pending grant is taken first, before any search")
-    func pendingDrawComesFirst() async throws {
+    /// The tile the opponent's draw owes the bot is in its rack the moment it
+    /// arrives, so the brain never has to take it before it can play: nothing
+    /// is waiting and `place` is not refused.
+    @Test("A tile owed for the opponent's draw is in the bot's rack at once, and the brain plays on with it")
+    func owedTileLandsInTheRackAndTheBrainPlaysOn() async throws {
         let (match, human) = Self.matched(AnyWordList())
         defer { match.leave() }
         human.startMatch(seed: 33, startingHandSize: 2, countdownSeconds: 0)
         try await Self.waitUntil("bot dealt") { match.session.state.hand.count == 2 }
 
-        // The human draws; the host grants to both players, and the bot's
-        // grant arrives as a pending obligation that freezes its board.
+        // The human draws; the host grants to both players, and the bot's tile
+        // arrives as an obligation that goes straight into its rack.
         human.draw()
-        try await Self.waitUntil("the bot owes a draw") { match.session.hasPendingDraw }
-        #expect(throws: BoardActionError.drawPending) {
-            try match.session.place(
-                tileID: match.session.state.hand[0].id,
-                at: Coord(row: 0, col: 0)
-            )
-        }
+        try await Self.waitUntil("the bot's tile in its rack") { match.session.state.hand.count == 3 }
+        #expect(match.session.hasPendingDraw == false)
+        #expect(match.session.pendingDrawTiles.isEmpty)
 
         let brain = BotBrain(
             session: match.session,
@@ -295,10 +291,10 @@ struct BotBrainTests {
         let driver = Task { await brain.run() }
         defer { driver.cancel() }
 
-        try await Self.waitUntil("the bot took the pending tile and played on") {
-            !match.session.hasPendingDraw && !match.session.state.board.placements.isEmpty
+        try await Self.waitUntil("the bot played on") {
+            !match.session.state.board.placements.isEmpty
         }
-        // Nothing was lost taking it: three tiles granted, three accounted for.
+        // Nothing was lost on the way: three tiles granted, three accounted for.
         #expect(
             match.session.state.hand.count + match.session.state.board.placements.count >= 3
         )
@@ -361,7 +357,7 @@ struct BotBrainTests {
 
     /// `canDraw` stays true from the request until the grant lands, so a brain
     /// that re-checked it alone would fire a fresh `drawRequest` every tick of
-    /// that window — draining the pool and handing the human a pending tile per
+    /// that window — draining the pool and handing the human a tile in the rack per
     /// extra request.
     ///
     /// Observable as rack size: the human never presses Draw here, so every
@@ -397,19 +393,19 @@ struct BotBrainTests {
 
     // MARK: - A thrown placement is recorded, not swallowed
 
-    /// Forces the throw from inside the search: the human draws while the brain
-    /// is mid-`contains`, so the grant lands as a pending obligation before the
-    /// chosen move is applied, and `place` throws `.drawPending`. The error must
-    /// be recorded and the brain must go on to take the tile and keep playing.
-    @Test("A placement thrown against a stale snapshot is recorded and retried")
-    func staleePlacementIsRecordedAndRetried() async throws {
+    /// Forces the throw from inside the search: the human resigns while the
+    /// brain is mid-`contains`, so the match is locked before the chosen move is
+    /// applied, and `place` refuses it. The refusal must be recorded, not
+    /// swallowed, and the brain must stop rather than jam.
+    @Test("A placement refused against a stale snapshot is recorded")
+    func staleePlacementIsRecorded() async throws {
         let (match, human) = Self.matched(AnyWordList())
         defer { match.leave() }
 
         let humanBox = UncheckedBox(human)
         let spy = BotBrainAdversarialTests.Spy { n in
-            guard n % 8 == 1, n < 400 else { return }
-            Task { @MainActor in humanBox.value.draw() }
+            guard n == 1 else { return }
+            Task { @MainActor in _ = humanBox.value.resign() }
             Thread.sleep(forTimeInterval: 0.02)
         }
 
@@ -425,30 +421,18 @@ struct BotBrainTests {
         defer { driver.cancel() }
 
         // Bounded by hand, because the condition needs the brain's own actor.
-        // The poll keeps the pool moving too, so the match does not simply end
-        // before a grant ever lands on a snapshot the brain is holding.
         var sawError = false
         let limit = ContinuousClock.now + .seconds(30)
         while !sawError {
             sawError = await brain.lastPlacementError == .drawPending
             guard !sawError else { break }
-            guard match.session.winner == nil else {
-                Issue.record("the match ended before any placement was refused")
-                break
-            }
             guard ContinuousClock.now < limit else {
                 Issue.record("timed out waiting for a recorded placement refusal")
                 break
             }
-            if !human.poolIsExhausted { human.draw() }
             try await Task.sleep(for: .milliseconds(2))
         }
         #expect(sawError)
-
-        // Not a jam: the brain took the pending tile and went on placing.
-        let placed = match.session.state.board.placements.count
-        try await Self.waitUntil("the brain kept playing", seconds: 30) {
-            match.session.state.board.placements.count > placed
-        }
+        #expect(match.session.isMatchOver)
     }
 }

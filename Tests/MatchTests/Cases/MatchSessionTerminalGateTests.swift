@@ -299,11 +299,11 @@ struct MatchSessionTerminalGateTests {
         wire.drop(Self.alice)
         try await Terminal.waitUntil("the session to freeze") { guest.peerPresence != .present }
 
-        // Everything the wire can carry, and everything the shell can press.
+        // Everything the wire can carry that must not move a frozen match, and
+        // everything the shell can press. Pool results the host already paid
+        // out (a grant, an obligation, a swap grant, a pool-exhausted notice)
+        // are kept through a freeze on purpose, so they are not in this list.
         wire.deliver(.start(version: WireFormat.current, seed: 42, startingHandSize: 0, countdownSeconds: 7, options: .standard, roster: [Self.alice, Self.bob]))
-        wire.deliver(.grant(player: Self.bob, tiles: [Tile(letter: "Q")]))
-        wire.deliver(.swapGrant(player: Self.bob, tiles: [Tile(letter: "R")], returned: tiles[1]))
-        wire.deliver(.poolExhausted(requester: Self.bob))
         wire.deliver(.rejected(reason: .unknownPlayer))
         #expect(guest.draw() == false)
         #expect(guest.swap(tiles[1]) == false)

@@ -48,9 +48,9 @@ enum WholeMatchScript {
 
     // MARK: The ledger
 
-    /// Tiles this device has been granted — in the rack, or still waiting to be
-    /// taken. Taking a waiting tile moves it between the two and must not read
-    /// as a tile arriving.
+    /// Tiles this device has been given — in the rack. A tile owed for the
+    /// opponent's draw lands in the rack on arrival, so nothing waits; the
+    /// waiting queue is still counted so a tile that did wait could not hide.
     static func tilesHeld(_ session: MatchSession) -> Int {
         session.state.hand.count + session.pendingDrawTiles.count
     }
@@ -67,10 +67,6 @@ enum WholeMatchScript {
         expecting held: Int,
         until: Waiter
     ) async {
-        // Accepting a waiting tile is not a request. The rack has to be clear
-        // before a press reaches the pool at all, or this round never happens
-        // and the count that follows is asserting the previous round twice.
-        while requester.hasPendingDraw { requester.draw() }
         guard requester.draw() else {
             Issue.record("the draw press did nothing")
             return
@@ -80,8 +76,9 @@ enum WholeMatchScript {
         }
     }
 
-    /// Takes every waiting tile into the rack. `place` refuses while one is
-    /// outstanding, which is the obligation working, not a failure.
+    /// Takes any waiting tile into the rack. A tile owed for the opponent's
+    /// draw lands there on arrival, so this finds nothing to take; it stays so
+    /// a build that queued one again would still be drained here.
     static func drainPendingDraws(_ session: MatchSession) {
         while session.hasPendingDraw { session.draw() }
     }

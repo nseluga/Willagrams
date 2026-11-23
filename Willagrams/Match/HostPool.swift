@@ -125,9 +125,10 @@ public actor HostPool {
                 return await answer([.poolExhausted(requester: player)], to: player)
             }
             // The asker gets `grant` — the answer it is waiting for. Everybody
-            // else gets `obligation`, a tile they must press Draw to take. The
-            // host is the only side that knows which is which; saying it here
-            // is what stops the receiver guessing.
+            // else gets `obligation`, the tile they are owed for the same round,
+            // which lands in their rack on arrival. The host is the only side
+            // that knows which is which; saying it here is what stops the
+            // receiver guessing.
             return await answer(
                 zip(players, drawn).map { recipient, tile in
                     recipient == player
