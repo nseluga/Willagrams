@@ -32,7 +32,11 @@ struct WillagramsApp: App {
                     // A factory, not a channel: the topic is named for the
                     // signed-in player, who is not known until sign-in lands.
                     inviteChannel: { backend.inviteChannel(for: $0) }
-                )
+                ),
+                updateCheck: {
+                    let running = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+                    return await UpdateGate.isBlocked(running: running, lookup: UpdateGate.liveLookup)
+                }
             )
         )
     }
@@ -40,6 +44,7 @@ struct WillagramsApp: App {
     var body: some Scene {
         WindowGroup {
             ShellRootView(shell: shell)
+                .overlay { UpdatePromptView(shell: shell) }
         }
     }
 }

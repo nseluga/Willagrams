@@ -109,6 +109,30 @@ public final class ShellModel {
     /// it; nothing in the app reads it.
     @ObservationIgnored private(set) var signInTask: Task<Void, Never>?
 
+    // MARK: - Update gate
+
+    /// True once the store lookup says a newer version exists. Online play is
+    /// then refused behind ``showsUpdatePrompt``; solo is never touched.
+    public private(set) var updateRequired = false
+    public var showsUpdatePrompt = false
+
+    /// Where the prompt's Update button goes: the one shared store link.
+    public var updateLink: URL { AppStoreLink.url }
+
+    @ObservationIgnored private let updateCheck: (@Sendable () async -> Bool)?
+    @ObservationIgnored private(set) var updateTask: Task<Void, Never>?
+
+    public static let updateTitle = "A new version of Willagrams is out. Update to play online."
+    public static let updateButtonLabel = "Update"
+    public static let updateDismissLabel = "Not now"
+
+    /// Online entry points ask this first. The buttons stay tappable; a tap
+    /// while blocked raises the prompt instead.
+    private func blockedByUpdate() -> Bool {
+        if updateRequired { showsUpdatePrompt = true }
+        return updateRequired
+    }
+
     // MARK: - Launch
 
     /// Whether the loading screen is still up. True for exactly one cold
@@ -147,6 +171,12 @@ public final class ShellModel {
         // than in the gap before the first match.
         _ = loadedDictionary()
         isDictionaryLoaded = true
+        if let updateCheck {
+            updateTask = Task { @MainActor [weak self] in
+                let blocked = await updateCheck()
+                self?.updateRequired = blocked
+            }
+        }
     }
 
     /// The loading screen's last cycle has finished. The one way it comes down.
@@ -182,8 +212,10 @@ public final class ShellModel {
             UInt64.random(in: UInt64.min ... UInt64.max)
         },
         now: @escaping @MainActor () -> Date = { Date() },
-        services: ShellServices = ShellServices()
+        services: ShellServices = ShellServices(),
+        updateCheck: (@Sendable () async -> Bool)? = nil
     ) {
+        self.updateCheck = updateCheck
         self.route = route
         self.dictionary = dictionary
         self.sleepFor = sleepFor
@@ -225,6 +257,7 @@ public final class ShellModel {
     /// socket after the model has gone is one nothing can ever tear down.
     deinit {
         signInTask?.cancel()
+        updateTask?.cancel()
         launchTask?.cancel()
         inviteTask?.cancel()
         inviteExpiry?.cancel()
@@ -287,7 +320,7 @@ public final class ShellModel {
     /// - Returns: whether the route moved.
     @discardableResult
     public func showJoin() -> Bool {
-        guard route == .menu || route == .hostLobby,
+        guard route == .menu || route == .hostLobby, !blockedByUpdate(),
               canPlayOnline, let backend = services.backend else {
             return false
         }
@@ -1037,7 +1070,7 @@ public final class ShellModel {
     /// - Returns: whether the route moved.
     @discardableResult
     public func playAFriend() -> Bool {
-        guard route == .menu || route == .join,
+        guard route == .menu || route == .join, !blockedByUpdate(),
               canPlayOnline, let backend = services.backend else {
             return false
         }

@@ -341,6 +341,7 @@ struct ProfileModelTests {
         // recipient knows what the eight characters are for.
         #expect(f.shareMessage.contains("ABCD1234"))
         #expect(f.shareMessage != "ABCD1234")
+        #expect(f.shareMessage.contains(AppStoreLink.urlString))
     }
 
     /// Somewhere for the injected clipboard closure to land. `UIPasteboard` is

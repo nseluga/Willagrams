@@ -330,7 +330,7 @@ struct TwoPlayerView: View {
                         .buttonStyle(.brandQuiet)
                         .frame(maxWidth: .infinity)
 
-                        ShareLink(item: code) {
+                        ShareLink(item: AppStoreLink.inviteText(code: code)) {
                             Label(Self.shareLabel, systemImage: "square.and.arrow.up")
                         }
                         .buttonStyle(.brandQuiet)

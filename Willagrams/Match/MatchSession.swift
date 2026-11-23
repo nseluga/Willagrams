@@ -243,6 +243,8 @@ public final class MatchSession: AppActivityListener {
     public enum OptionsRefusal: Equatable, Sendable {
         /// The host's list and this device's list are not the same content.
         case dictionaryMismatch(expected: String, received: String)
+        /// The host's start speaks another wire version: one side is out of date.
+        case unsupportedVersion(received: Int)
     }
 
     /// The last thing that went wrong, as text. A `String` rather than an error
@@ -1286,6 +1288,7 @@ public final class MatchSession: AppActivityListener {
             // membership, and a deal the pool can cover. Everything past it is
             // inside its documented bounds.
             guard let start = message.validatedStart(for: localPlayerID) else {
+                if version != WireFormat.current, !hasStarted { storedOptionsRefusal = .unsupportedVersion(received: version) }
                 lastNote = version == WireFormat.current
                     ? "this start message cannot be played"
                     : "unsupported wire version \(version)"
