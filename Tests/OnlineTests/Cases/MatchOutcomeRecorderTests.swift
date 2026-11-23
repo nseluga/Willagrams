@@ -315,6 +315,57 @@ struct MatchOutcomeRecorderTests {
         #expect(update.stats.fastestWinSeconds == nil)
     }
 
+    /// A pause that ran its whole limit ends the match with nobody named. That
+    /// is not a result: neither player gets a match played, a win or a loss,
+    /// and the row is never closed out with a winner.
+    @Test("A voided match records nothing for either player")
+    func aVoidedMatchRecordsNothing() async throws {
+        let store = RecordingOutcomeStore(profiles: [
+            Self.aliceUUID: Self.profile(Self.aliceUUID),
+            Self.bobUUID: Self.profile(Self.bobUUID),
+        ])
+        // A sleep ends when the test's clock has moved past it, so the pause
+        // limit and the wall clock the session checks it against are one clock.
+        let clock = TestClock(start: Date(timeIntervalSince1970: 0))
+        let sleep: @MainActor @Sendable (Duration) async throws -> Void = {
+            let until = clock.now().addingTimeInterval(TimeInterval($0.components.seconds))
+            while clock.now() < until { try await Task.sleep(for: .milliseconds(1)) }
+        }
+        let (first, second) = FakeTransport.pair(Self.alice, Self.bob)
+        let host = MatchSession(
+            transport: first, peerPlayerID: Self.bob, dictionary: EveryWordIsReal(),
+            sleepFor: sleep, now: clock.now
+        )
+        let guest = MatchSession(
+            transport: second, peerPlayerID: Self.alice, dictionary: EveryWordIsReal(),
+            sleepFor: sleep, now: clock.now
+        )
+        host.startMatch(seed: 77, startingHandSize: 0, countdownSeconds: 0)
+        try await Self.waitUntil("both sessions playing") {
+            host.state.status == .playing && guest.state.status == .playing
+        }
+        let recorders = [(Self.alice, host), (Self.bob, guest)].map {
+            MatchOutcomeRecorder(
+                record: Self.lobby(), localPlayer: $0.0, session: $0.1, store: store, now: clock.now
+            )
+        }
+        for recorder in recorders { await recorder.sync() }
+
+        host.votePause(true)
+        guest.votePause(true)
+        try await Self.waitUntil("both players paused") { host.isPaused && guest.isPaused }
+        clock.advance(TimeInterval(MatchSession.pauseLimitSeconds))
+        try await Self.waitUntil("the pause ran out on both devices") {
+            host.isVoided && guest.isVoided
+        }
+        #expect(host.winner == nil)
+        #expect(guest.winner == nil)
+        for recorder in recorders { await recorder.sync() }
+
+        #expect(await store.profileUpdates.isEmpty)
+        #expect(await store.matchUpdates.contains { $0.isFinished } == false)
+    }
+
     // MARK: - fastest_win_seconds, all four branches
 
     @Test("A win lower than the record replaces it")

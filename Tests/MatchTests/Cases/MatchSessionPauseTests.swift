@@ -73,8 +73,8 @@ struct MatchSessionPauseTests {
     }
 
     /// Both players agreed, and both devices say so.
-    static func pausedTable() async throws -> Table {
-        var table = try await Flow.dealtTable()
+    static func pausedTable(now: @escaping @Sendable () -> Date = { Date() }) async throws -> Table {
+        var table = try await Flow.dealtTable(now: now)
         var decisions = 0
         var guestVotes = 0
         try await vote(bob, true, at: &table, decisions: &decisions, guestVotes: &guestVotes)

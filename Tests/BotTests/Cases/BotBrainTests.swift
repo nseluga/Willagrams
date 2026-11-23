@@ -330,7 +330,7 @@ struct BotBrainTests {
 
     /// The same ending from the other side — the peer goes away and never comes
     /// back. The grace period runs on the injected clock, so it elapses at once.
-    @Test("A peer that goes away ends the brain, though nobody won")
+    @Test("A peer that goes away ends the brain, and the one who stayed has won")
     func peerGoneStopsTheBrain() async throws {
         let (match, human) = Self.matched(AnyWordList())
         defer { match.leave() }
@@ -349,7 +349,8 @@ struct BotBrainTests {
         try await Self.waitUntil("the bot noticed the peer go") {
             match.session.isMatchOver
         }
-        #expect(match.session.winner == nil)
+        // The peer forfeited by not coming back, so the bot is the winner.
+        #expect(match.session.winner == match.session.localPlayerID)
         try await Self.waitUntil("run() returned by itself") { returned.isSet }
     }
 

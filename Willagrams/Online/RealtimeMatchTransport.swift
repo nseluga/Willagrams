@@ -121,10 +121,11 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
     /// fallback without waiting a real second for it.
     private nonisolated let selfJoinWait: Duration
 
-    /// The production window: `MatchSession.reconnectGraceSeconds` (45) plus
+    /// The production window: `MatchSession.reconnectGraceSeconds` (30) plus
     /// margin, so the transport outlives the session's own reconnect window
-    /// rather than finishing the streams 25 seconds early and turning
-    /// `MatchSession.peerReturned` into dead code.
+    /// rather than finishing the streams early and turning
+    /// `MatchSession.peerReturned` into dead code. The margin is also how long
+    /// a player who comes back after forfeiting can still be told the result.
     ///
     /// ponytail: the two windows are coupled by convention, not by the type
     /// system — `MatchSession` is `@MainActor`, so its constant is not
@@ -345,12 +346,19 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         // messages — so the subscription's own status is the only witness.
         channel.onLocalStatus { subscribed in
             guard !subscribed else {
+                // This endpoint's own link, under its own name. From inside, a
+                // dead link looks exactly like every peer leaving, and the
+                // session must be able to tell the two apart: the player whose
+                // link died is the one who forfeits. See
+                // `MatchSession.ownLinkDropped`.
+                states.yield(.connected(local))
                 // Back on the air, so this endpoint's own presence join is due
                 // now — and only now is there any point counting. No-op unless
                 // the gate is shut, so a first subscribe is untouched.
                 selfJoin.resubscribed(waiting: selfJoinWait, release: release)
                 return
             }
+            states.yield(.disconnected(local))
             // Emptying the roster is what makes the recovery work: the rejoin's
             // presence sync re-inserts each peer, and `insert` only yields
             // `.connected` for a player the roster did not already hold.

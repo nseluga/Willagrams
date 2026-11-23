@@ -448,8 +448,10 @@ struct RealtimeMatchTransportTests {
 
         hostChannel.deliverLocalStatus(false)
 
+        // This endpoint's own link is named first, so a session can tell "my
+        // link died" from "everybody else left": the two look the same after it.
         let states = try await drain(host.peerConnectionStates)
-        #expect(states == [.connected(guestID), .disconnected(guestID)])
+        #expect(states == [.connected(guestID), .disconnected(hostID), .disconnected(guestID)])
         #expect(host.isFinishedForTesting)
     }
 
@@ -477,7 +479,11 @@ struct RealtimeMatchTransportTests {
 
         host.leave()
         let states = try await drain(host.peerConnectionStates)
-        #expect(states == [.connected(guestID), .disconnected(guestID), .connected(guestID)])
+        #expect(
+            states == [
+                .connected(guestID), .disconnected(hostID), .disconnected(guestID),
+                .connected(hostID), .connected(guestID),
+            ])
     }
 
     /// `onStatusChange` replays the current status the moment it is registered,
@@ -496,8 +502,9 @@ struct RealtimeMatchTransportTests {
         let guest = try await connect(guestID, channel: bus.channel())
         defer { _ = guest }  // A discarded transport deinits, and deinit leaves.
         host.leave()
+        // Its own link is reported, and no peer is: there was none to report.
         let states = try await drain(host.peerConnectionStates)
-        #expect(states == [.connected(guestID)])
+        #expect(states == [.disconnected(hostID), .connected(guestID)])
     }
 
     /// A second leave restarts the clock rather than inheriting the first

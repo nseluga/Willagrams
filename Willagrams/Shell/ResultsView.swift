@@ -106,6 +106,13 @@ struct ResultsView: View {
                 .opacity(!results.didLocalPlayerWin || headlineIn ? 1 : 0)
                 .scaleEffect(!results.didLocalPlayerWin || reduceMotion || headlineIn ? 1 : 0.4)
 
+            if let reason = results.reason {
+                Text(reason)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Palette.textPrimary)
+                    .multilineTextAlignment(.center)
+            }
+
             // The opponent's board is one tap away whoever won.
             HStack(spacing: DesignTokens.Space.s) {
                 Button(ResultsModel.yourBoardLabel) { results.show(.yours); results.closeCard() }

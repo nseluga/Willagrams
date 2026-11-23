@@ -260,6 +260,10 @@ public final class MatchHUDModel {
 
     public var pausedTitle: String { "Paused" }
 
+    /// When a pause against a person runs out and the match is voided. nil for
+    /// a solo pause, which has no limit, and whenever the match is not paused.
+    public var pauseDeadline: Date? { session.isPaused ? session.pauseDeadline : nil }
+
     /// The one pause control: asks for whatever this player is not already
     /// asking for. A request the other player never answers changes nothing,
     /// and a second press takes it back.

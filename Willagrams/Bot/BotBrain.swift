@@ -168,8 +168,8 @@ public actor BotBrain {
     /// Plays until the match is over or the task is cancelled.
     ///
     /// Ends on ``MatchSession/isMatchOver`` however it arrives — the bot's own
-    /// ``claimWin()``, the human's `.win`, or `leave()` and a peer that went
-    /// away, which lock the session with no winner at all. A brain that watched
+    /// ``claimWin()``, the human's `.win`, a peer that went away and so
+    /// forfeited, or `leave()`, which names no winner at all. A brain that watched
     /// only for `.finished` would spin the full search every `thinkDelay` for
     /// the life of the process against a session that refuses every move.
     ///

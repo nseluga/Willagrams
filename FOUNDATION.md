@@ -703,3 +703,44 @@ still needs a bump. So does any change to an existing case.
         older build drops it silently, and the two devices drift
   difficulty: low — four cases, tests, one inert arm in `MatchSession.receive`
   status: done on `feat/wire-optional-kinds`
+
+
+## Amendment — one more optional kind, `matchVoided` (2026-11-23)
+
+Approved by Nate on 2026-11-23 for 1.1, under the 2026-11-22 rule: additive,
+no bump, existing payloads unchanged. A paused online match now has a limit of
+five minutes. When it runs out the match ends with no winner, and the host says
+so with this kind.
+
+It ends a match, so it needs the reason it still fits the rule. The match stays
+correct with the other side ignoring it, in both cases there are:
+
+- A build that knows Pause starts its own clock when it hears
+  `pauseState(paused: true)`, and voids the match itself a few seconds after
+  the host would have. `matchVoided` only makes the two screens change together.
+- A build that drops these kinds never votes to pause, so it is never paused
+  against, and this kind is never sent to it.
+
+- task: Add `matchVoided` to `MatchMessage`
+  done when:
+    - `WireFormat.current == 5`, unchanged. `wire-v5.json` is unchanged and still
+      decodes into its 15 messages
+    - `MatchMessage` gains `matchVoided`, with no associated value, after
+      `gameLength`; no existing case changes shape or position
+    - `MatchMessageTests` round-trips it and decodes it from bytes written by
+      hand in the test file
+    - `MatchSessionForfeitTests` shows the guest reaching the void by its own
+      clock when the message never arrives
+  guardrails:
+    - it states a fact, never a toggle. A repeat changes nothing
+    - only the host sends it, and the host drops any it receives, as it drops a
+      `pauseState`
+    - a guest believes it only while paused, so it cannot end a match that is
+      being played
+    - it names no winner and nothing is recorded for a voided match. A kind
+      that names a winner still needs a bump
+  risk: a message does not carry its sender, so a modified peer can void a
+        paused match. That is the trust `pauseState` already has: the same peer
+        could refuse to resume and reach the same end five minutes later
+  difficulty: low — one case, tests, one arm in `MatchSession.receive`
+  status: done on `feat/forfeit-and-pause-limit`

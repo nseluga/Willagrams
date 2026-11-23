@@ -84,15 +84,15 @@ struct MatchEndNoticeTests {
         // says why. The Draw and Swap this item is about are not merely dead —
         // the screen holding them is gone, which is the only honest answer once
         // `isDrawPressable` and `isSwapPressable` can never be true again.
+        let local = run.session.localPlayerID
         try await SoloMatchTests.waitUntil("the shell to surface the ending") {
-            shell.route == .results(winner: nil)
+            shell.route == .results(winner: local)
         }
         #expect(run.session.presence(of: Self.peerID) == .gone)
-        #expect(run.session.winner == nil)
-        #expect(run.results().outcome == .noWinner)
-        #expect(run.results().headline == ResultsModel.noWinnerHeadline)
+        #expect(run.session.winner == local)
+        #expect(run.results().outcome == .localWin)
         #expect(
-            ResultsModel.noWinnerHeadline.localizedCaseInsensitiveContains("left"),
+            run.results().reason?.localizedCaseInsensitiveContains("disconnected") == true,
             "the end screen no longer says why the match ended")
 
         // The two controls the player pressed into silence really are off.
@@ -104,7 +104,7 @@ struct MatchEndNoticeTests {
 
         // It does not drift back. The ending is terminal, not a frame.
         for _ in 0..<50 {
-            #expect(shell.route == .results(winner: nil))
+            #expect(shell.route == .results(winner: local))
             #expect(run.board.overlay == nil)
             await Task.yield()
         }

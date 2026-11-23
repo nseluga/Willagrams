@@ -221,29 +221,28 @@ struct PresenceOverlayTests {
 
     // MARK: - done when 2
 
-    @Test("A peer that does not come back ends the match on the results screen, naming no winner")
+    @Test("A peer that does not come back forfeits, and the results screen says so")
     func aDepartedPeerEndsTheMatchOnResults() async throws {
         // An instant clock: the reconnect window runs out the moment it opens.
         let (shell, run, opponent) = try await Self.playing(sleepFor: { _ in })
         #expect(shell.route == .match(Self.setup))
 
         opponent.wire.announce(.disconnected(Self.peerID))
+        let local = run.session.localPlayerID
         try await SoloMatchTests.waitUntil("the shell to end the match itself") {
-            shell.route == .results(winner: nil)
+            shell.route == .results(winner: local)
         }
 
         #expect(run.session.isMatchOver)
-        #expect(run.session.winner == nil)
+        #expect(run.session.winner == local)
         #expect(run.session.presence(of: Self.peerID) == .gone)
 
         // The production entry point, not a headline helper: this is the very
         // `ResultsModel` `ShellRootView` renders for this run.
         let results = run.results()
-        #expect(results.outcome == .noWinner)
-        #expect(results.headline == "Opponent left")
-        // And it is not a scoreboard line. The player is told the reason.
-        #expect(results.headline != ResultsModel.peerWinHeadline)
-        #expect(results.headline != Terminology.winCall)
+        #expect(results.outcome == .localWin)
+        // And the player is told the reason, not only the score.
+        #expect(results.reason == "Your opponent disconnected")
 
         shell.returnToMenu()
     }

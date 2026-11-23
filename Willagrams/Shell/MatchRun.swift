@@ -146,9 +146,7 @@ public final class MatchRun {
         dictionary: any WordList,
         generation: Int,
         difficulty: BotDifficulty? = nil,
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
-            try await Task.sleep(for: $0)
-        }
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = MatchSession.realSleep
     ) {
         let match = SoloMatch(
             setup: setup, dictionary: dictionary, difficulty: difficulty, sleepFor: sleepFor

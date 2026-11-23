@@ -32,8 +32,8 @@ public enum BoardActionError: Error, Sendable, Equatable {
 /// Where the one remote peer is.
 ///
 /// A session-level surface, not a `MatchStatus`: the frozen `MatchStatus` has
-/// no terminal case without a winner, and a peer that drops out must never be
-/// turned into one. A match this ends is over with nobody named.
+/// no terminal case without a winner, and a peer that has only dropped out
+/// must not be turned into one while it may still come back.
 public enum PeerPresence: Sendable, Equatable {
     /// The peer is here. The only state in which anything is sent.
     case present
@@ -41,7 +41,8 @@ public enum PeerPresence: Sendable, Equatable {
     /// shows as a banner and a countdown. The board is locked and nothing is
     /// sent meanwhile, so a peer that returns finds the match untouched.
     case reconnecting(deadline: Date)
-    /// The peer did not come back. The match is over and no winner is named.
+    /// The peer did not come back. In a two-player match that is a forfeit:
+    /// the player who stayed is the winner.
     case gone
 }
 
@@ -82,8 +83,9 @@ public enum PeerPresence: Sendable, Equatable {
 /// ``peerPresence`` freezes the session rather than ending it: the board locks,
 /// nothing reaches the wire, and no game state moves, so a peer that comes back
 /// inside the deadline finds the match exactly where it was. A peer that does
-/// not ends the match with **no winner** — ``isMatchOver`` turns true while
-/// ``winner`` stays `nil`. Only an explicit `.win` or `.resign` ever names one.
+/// not has **forfeited**: the player who stayed is the ``winner`` and
+/// ``endedByDisconnect`` says why. A device that was itself out of touch for
+/// the whole deadline takes the loss instead, so no ordering gives two winners.
 ///
 /// One exception, and only for those two messages: a `.win` or `.resign` that
 /// *arrives* while frozen is applied — see ``receive(_:)`` — because the peer
@@ -173,6 +175,10 @@ public final class MatchSession: AppActivityListener {
     // observed property `@ObservationIgnored` to keep the net count unchanged
     // makes it pass again. It is a layout threshold, not a bug in this logic.
     //
+    // Update 2026-11-23: the cause was the inline default `sleepFor` closure,
+    // not this class's layout. See ``realSleep``. The storage below was left as
+    // it is because it works.
+    //
     // So the two values below are stored `@ObservationIgnored` and read back
     // through computed properties that first touch a property that *is*
     // observed. Reading `session.options` in a SwiftUI body therefore still
@@ -261,19 +267,49 @@ public final class MatchSession: AppActivityListener {
 
     /// Whether this match is over, however it ended.
     ///
-    /// Two ways in: somebody won or resigned, or the peer never came back.
-    /// `state.status` alone cannot answer this — it has no terminal case
-    /// without a winner — so a lost peer leaves the status where it stood and
-    /// is reported here. Nothing is sent and no game state moves either way.
-    public var isMatchOver: Bool { isFinished || presentPlayers.count < 2 }
+    /// Three ways in: somebody won, resigned or forfeited by staying out of
+    /// touch; a pause ran its whole limit and the match was voided; or this
+    /// device left. `state.status` alone cannot answer this — it has no
+    /// terminal case without a winner — so a void leaves the status where it
+    /// stood and is reported here.
+    public var isMatchOver: Bool { isFinished || isVoided || presentPlayers.count < 2 }
 
     /// Who won, or `nil` if nobody did.
     ///
-    /// `nil` while the match is live *and* after a peer simply vanished: a
-    /// dropped peer never hands anyone a win.
+    /// `nil` while the match is live and after a void. A player out of touch
+    /// for ``reconnectGraceSeconds`` forfeits, so the other player is named
+    /// here: see ``endedByDisconnect``.
     public var winner: PlayerID? {
         guard case let .finished(winner) = state.status else { return nil }
         return winner
+    }
+
+    /// The match ended because a player stayed out of touch for
+    /// ``reconnectGraceSeconds``, not because somebody won or resigned.
+    /// ``winner`` is the player who stayed.
+    public var endedByDisconnect: Bool { time.endedByDisconnect }
+
+    /// A pause ran for ``pauseLimitSeconds``, so the match is over with no
+    /// winner and nothing for anybody's record.
+    ///
+    /// Observed by hand, like ``isPaused``: the shell watches ``isMatchOver``
+    /// and this is one of the ways in.
+    public var isVoided: Bool {
+        access(keyPath: \.isVoided)
+        return time.voided
+    }
+
+    /// When the pause in force runs out, or `nil` when no agreed pause is in
+    /// force. A local pause, the solo kind, has none.
+    ///
+    /// ponytail: each device stamps this from its own clock when it learns of
+    /// the pause, so the two agree to within the delivery of one message. A
+    /// guest that hears of the pause late shows a clock late by that much, and
+    /// is still voided on time by the host. Carry the seconds left in
+    /// `pauseState` if that ever shows.
+    public var pauseDeadline: Date? {
+        access(keyPath: \.pauseDeadline)
+        return time.pauseDeadline
     }
 
     /// How long both boards stay covered after a peer comes back mid-match.
@@ -293,11 +329,25 @@ public final class MatchSession: AppActivityListener {
     /// the wire would make it exact, and is a wire-version bump.
     public static var resumeCountdownSeconds: Int { 3 }
 
-    /// How long a dropped peer has to come back.
+    /// How long a player may be out of touch before forfeiting the match,
+    /// paused or not.
     ///
     /// Public so the shell can size its banner, and so a test can name the same
     /// number the session does.
-    public static let reconnectGraceSeconds = 45
+    public static let reconnectGraceSeconds = 30
+
+    /// How long an agreed pause may last before the match is voided. Computed
+    /// for the reason ``resumeCountdownSeconds`` is.
+    public static var pauseLimitSeconds: Int { 300 }
+
+    /// How much longer than the limit a guest waits before voiding on its own.
+    /// The host decides; this only covers a `matchVoided` that never arrived.
+    public static var pauseVoidMarginSeconds: Int { 5 }
+
+    /// How long after coming back on screen a dead link may still be reported
+    /// and counted as dead since the app went away. Realtime notices a dead
+    /// socket one to two heartbeats (10 s each) after the fact.
+    static var linkProbeSeconds: Int { 25 }
 
     // MARK: - Fixed for the life of the match
 
@@ -369,7 +419,6 @@ public final class MatchSession: AppActivityListener {
     @ObservationIgnored private var pump: Task<Void, Never>?
     @ObservationIgnored private var presencePump: Task<Void, Never>?
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
-    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
 
     /// Whether this match is the half-length game. Set by the device that opens
@@ -445,11 +494,13 @@ public final class MatchSession: AppActivityListener {
         // the next vote. Two-player matches end on a departure instead.
         let present = presentPlayers
         let wanting = present.filter(pauseWanted.contains)
+        let wasPaused = storedPaused
         if wanting.count == present.count {
             setPaused(true)
         } else if wanting.isEmpty {
             setPaused(false)
         }
+        pauseLimitFollows(wasPaused)
         // A fact, so sending it again after every vote changes nothing.
         send(.pauseState(paused: storedPaused))
     }
@@ -458,6 +509,76 @@ public final class MatchSession: AppActivityListener {
         guard paused != storedPaused else { return }
         withMutation(keyPath: \.isPaused) { storedPaused = paused }
         if paused { storedWasPaused = true }
+    }
+
+    /// Starts the limit when an agreed pause begins and stops it on a resume.
+    ///
+    /// Called by the two places an agreed pause changes, never from
+    /// ``setPaused(_:)``: a local pause, the solo kind, has no limit.
+    private func pauseLimitFollows(_ wasPaused: Bool) {
+        guard storedPaused != wasPaused else { return }
+        withMutation(keyPath: \.pauseDeadline) {
+            time.pauseDeadline = storedPaused
+                ? now().addingTimeInterval(TimeInterval(Self.pauseLimitSeconds)) : nil
+        }
+        armPauseLimit()
+    }
+
+    /// Waits out what is left of the pause, then voids the match if it is still
+    /// paused. Always counted from ``pauseDeadline``, so arming it again after
+    /// a reconnect cannot move the end.
+    ///
+    /// The device that runs the pool decides. Every other device waits
+    /// ``pauseVoidMarginSeconds`` longer and acts only if it never heard.
+    private func armPauseLimit() {
+        time.pauseTask?.cancel()
+        time.pauseTask = nil
+        guard let deadline = time.pauseDeadline else { return }
+        let left = max(0, Int(deadline.timeIntervalSince(now()).rounded(.up)))
+        let wait = left + (hostPool == nil ? Self.pauseVoidMarginSeconds : 0)
+        time.pauseTask = Task { @MainActor [weak self] in
+            guard let sleepFor = self?.sleepFor else { return }
+            do {
+                try await sleepFor(.seconds(wait))
+            } catch {
+                return  // cancelled
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.time.pauseTask = nil
+            // Believed only when the wall clock agrees. A sleep that came back
+            // early, as an instant test clock does, must not void a pause that
+            // has barely begun.
+            // ponytail: a wall clock set back by more than the margin during a
+            // pause leaves that pause with no limit until the next reconnect or
+            // resume. Loop on the remainder if that is ever seen.
+            guard deadline.timeIntervalSince(self.now()) <= TimeInterval(Self.pauseVoidMarginSeconds)
+            else { return }
+            // Somebody out of touch at the limit is the forfeit rule's to
+            // settle, and this device being the one out of touch is too. If
+            // the match is still paused when everyone is back, the return arms
+            // this again with nothing left to wait.
+            guard self.storedPaused, !self.isMatchOver, !self.isFrozen,
+                  !self.isAway, !self.time.linkDown else { return }
+            self.voidMatch()
+        }
+    }
+
+    /// Arms the limit again if its wait was spent while somebody was away.
+    private func rearmSpentPauseLimit() {
+        if storedPaused, time.pauseTask == nil, !isMatchOver { armPauseLimit() }
+    }
+
+    /// Ends the match with no winner. See ``isVoided``.
+    private func voidMatch() {
+        guard !isMatchOver else { return }
+        let somebodyIsAway = isFrozen
+        stopEveryClock()
+        withMutation(keyPath: \.isVoided) { time.voided = true }
+        // Only the device that runs the pool says so. Everyone still shows
+        // everyone their board, as after a win.
+        if hostPool != nil { send(.matchVoided) }
+        guard !somebodyIsAway else { return }
+        send(.finalBoard(player: localPlayerID, placements: state.board.placementList))
     }
 
     /// The board is shut to this player's own moves.
@@ -582,6 +703,27 @@ public final class MatchSession: AppActivityListener {
     /// test stops passing, and you want to notice which.
     @ObservationIgnored private var hasLeft = false
 
+    /// Everything the forfeit and pause-limit rules remember, behind one
+    /// pointer.
+    @ObservationIgnored private let time = Timekeeping()
+
+    /// The only sleep a shipping build ever uses, and the default for every
+    /// `sleepFor` parameter in the app.
+    ///
+    /// It is a named value on purpose. Do not write this closure inline as a
+    /// default argument of a public function: Swift 6.3.3 then compiles a copy
+    /// of it into every test file that relies on the default, the copies record
+    /// different async context sizes (144 and 160 bytes), and the linker may
+    /// pair one copy's code with another copy's size. A cancelled or finished
+    /// sleep then aborts with `swift_task_dealloc`, "freed pointer was not the
+    /// last allocation". Which copy wins moves with any unrelated edit, which is
+    /// what the older "one more stored property" notes in this file were seeing.
+    /// Found 2026-11-23 with `nm -m` on the test objects (the closure and its
+    /// `Tu` record are both `weak private external` in several of them).
+    nonisolated public static let realSleep: @MainActor @Sendable (Duration) async throws -> Void = {
+        try await Task.sleep(for: $0)
+    }
+
     /// - Parameters:
     ///   - transport: the wire. This session becomes the sole consumer of its
     ///     inbound stream immediately.
@@ -614,9 +756,7 @@ public final class MatchSession: AppActivityListener {
         roster: [PlayerID],
         dictionary: any WordList,
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
-            try await Task.sleep(for: $0)
-        },
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = MatchSession.realSleep,
         now: @escaping @Sendable () -> Date = Date.init,
         observesPeerConnections: Bool = true
     ) {
@@ -655,9 +795,7 @@ public final class MatchSession: AppActivityListener {
         peerPlayerID: PlayerID,
         dictionary: any WordList,
         dictionaryHash: String = MatchOptions.standardDictionaryHash,
-        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
-            try await Task.sleep(for: $0)
-        },
+        sleepFor: @escaping @MainActor @Sendable (Duration) async throws -> Void = MatchSession.realSleep,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.init(
@@ -723,24 +861,92 @@ public final class MatchSession: AppActivityListener {
 
     /// Applies one connection-state change for one peer.
     ///
-    /// A state naming somebody off this match's roster, or naming this device,
-    /// is ignored rather than trusted.
+    /// A state naming somebody off this match's roster is ignored rather than
+    /// trusted. One naming this device is the transport's word on this
+    /// device's own link.
     private func apply(_ connection: PeerConnectionState) {
         switch connection {
         case let .connected(player):
+            if player == localPlayerID { ownLinkReturned() }
             guard isPeer(player) else { return }
             peerReturned(player)
         case let .disconnected(player):
+            if player == localPlayerID { ownLinkDropped() }
             guard isPeer(player) else { return }
             peerDropped(player)
         }
     }
 
+    // MARK: - This device out of touch
+
+    // A dead link looks, from inside, exactly like everybody else leaving. So
+    // this device also times itself: from when it went off screen or lost its
+    // link, to when its link is known to work again. Out of touch for
+    // ``reconnectGraceSeconds``, it takes the loss rather than the win.
+
+    /// A stretch out of touch begins: the app left the screen, or the link
+    /// went down.
+    ///
+    /// The app coming back does not end a stretch, because a link that died
+    /// off screen is only found dead a heartbeat or two later. `linkDied`
+    /// says that is what just happened, and the time back on screen then
+    /// counts. A second trip off screen does not count it: with no word of a
+    /// dead link, that time was spent in the match.
+    private func beginOutOfTouch(linkDied: Bool) {
+        if let back = time.cameBackAt {
+            let onScreen = now().timeIntervalSince(back)
+            if onScreen >= TimeInterval(Self.linkProbeSeconds) {
+                time.outOfTouchSince = nil  // long enough to know the link lived
+            } else if !linkDied {
+                time.outOfTouchSince = time.outOfTouchSince?.addingTimeInterval(onScreen)
+            }
+            time.cameBackAt = nil
+        }
+        guard hasStarted, !isMatchOver, time.outOfTouchSince == nil else { return }
+        time.outOfTouchSince = now()
+    }
+
+    private var outOfTouchTooLong: Bool {
+        guard let since = time.outOfTouchSince else { return false }
+        return now().timeIntervalSince(since) >= TimeInterval(Self.reconnectGraceSeconds)
+    }
+
+    /// The link is known to work, so the stretch is over and forgotten.
+    private func backInTouch() {
+        time.outOfTouchSince = nil
+        time.cameBackAt = nil
+    }
+
+    private func ownLinkDropped() {
+        beginOutOfTouch(linkDied: true)
+        time.linkDown = true
+    }
+
+    private func ownLinkReturned() {
+        let wasDown = time.linkDown
+        time.linkDown = false
+        // Off screen, the trip is still running: ``appCameBack()`` judges it.
+        guard !isAway else { return }
+        if wasDown, outOfTouchTooLong { forfeitByLosingTouch() }
+        backInTouch()
+        rearmSpentPauseLimit()
+    }
+
+    /// This device was the one out of touch, so it resigns. The message goes
+    /// out now if anybody can hear it, and again at the next contact either
+    /// way: a link can be dead for seconds before anything says so.
+    private func forfeitByLosingTouch() {
+        guard hasStarted, !isMatchOver else { return }
+        time.endedByDisconnect = true
+        send(.resign(player: localPlayerID))
+        depart(localPlayerID)
+        owesTerminalMessage = true
+    }
+
     /// Freezes the session and starts the wait for the peer to come back.
     ///
-    /// Nothing about the game moves here. No winner is declared — a dropped
-    /// peer is not a forfeit, and the only two messages that name a winner are
-    /// `.win` and `.resign`.
+    /// Nothing about the game moves here. Nobody has forfeited yet: that is
+    /// ``awayPeersAreGone()``, when the window runs out.
     ///
     /// ponytail: one reconnect window covers every away peer at once, so a
     /// second drop restarts it and hands the first peer extra grace. Give each
@@ -757,9 +963,16 @@ public final class MatchSession: AppActivityListener {
             heldCountdownSeconds = secondsRemaining
         }
 
-        guard !isFinished else {
-            // The match already has a winner, so there is nothing to wait for
-            // and a reconnecting banner over the end screen would be a lie.
+        guard !isSettled else {
+            // The match already ended, so there is nothing to wait for and a
+            // reconnecting banner over the end screen would be a lie.
+            peerPresences[player] = .gone
+            return
+        }
+        // A pause already past its limit was voided by the device that runs
+        // the pool, which then left before this device heard. Not a drop.
+        if storedPaused, let deadline = time.pauseDeadline, now() >= deadline {
+            voidMatch()
             peerPresences[player] = .gone
             return
         }
@@ -785,15 +998,15 @@ public final class MatchSession: AppActivityListener {
     /// Arms nothing while the app is away; ``appCameBack()`` arms it then.
     private func armReconnectWait(seconds: Int) {
         reconnectSecondsOwed = seconds
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        time.reconnectTask?.cancel()
+        time.reconnectTask = nil
         let deadline = now().addingTimeInterval(TimeInterval(seconds))
         for player in roster {
             guard case .reconnecting = presence(of: player) else { continue }
             peerPresences[player] = .reconnecting(deadline: deadline)
         }
         guard !isAway else { return }
-        reconnectTask = Task { @MainActor [weak self] in
+        time.reconnectTask = Task { @MainActor [weak self] in
             // The closure, not `self`: holding the session across the whole
             // window would keep a dropped session alive for it.
             guard let sleepFor = self?.sleepFor else { return }
@@ -858,9 +1071,10 @@ public final class MatchSession: AppActivityListener {
     public func appWentAway() {
         guard !isAway else { return }
         isAway = true
+        beginOutOfTouch(linkDied: false)
         guard reconnectSecondsOwed != nil else { return }
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        time.reconnectTask?.cancel()
+        time.reconnectTask = nil
         let furthest = peerPlayerIDs.compactMap { player -> Date? in
             guard case let .reconnecting(deadline) = presence(of: player) else { return nil }
             return deadline
@@ -884,26 +1098,39 @@ public final class MatchSession: AppActivityListener {
     public func appCameBack() {
         guard isAway else { return }
         isAway = false
+        // Off screen for the whole window is out of touch for the whole
+        // window, whatever became of the link meanwhile.
+        if outOfTouchTooLong {
+            forfeitByLosingTouch()
+            return
+        }
+        if !time.linkDown, time.outOfTouchSince != nil { time.cameBackAt = now() }
+        rearmSpentPauseLimit()
         guard let owed = reconnectSecondsOwed else { return }
         armReconnectWait(seconds: owed)
     }
 
-    /// The deadline passed. Every peer still away has left for good, and if
-    /// that leaves fewer than two players the match is over with nobody named.
+    /// The window ran out. Whoever was out of touch for it forfeits.
+    ///
+    /// That is this device when its own link is the one that is down: every
+    /// peer "left" only because nothing could be heard. Otherwise each peer
+    /// still away has left for good, exactly as if it had resigned, and the
+    /// last player standing wins.
     private func awayPeersAreGone() {
         reconnectSecondsOwed = nil
-        var anyLeft = false
+        guard !time.linkDown else {
+            forfeitByLosingTouch()
+            return
+        }
         for player in roster {
             guard case .reconnecting = presence(of: player) else { continue }
-            peerPresences[player] = .gone
-            anyLeft = true
+            depart(player)
         }
-        guard anyLeft, isMatchOver else { return }
-        // Over is over, so `receive` discards everything from here on: against a
-        // real stream, which never finishes, this task would go on decoding and
-        // dropping for the life of the session. The presence pump stays — a peer
-        // can still come back, and may still be owed a terminal message.
-        pump?.cancel()
+        guard isFinished else { return }
+        time.endedByDisconnect = true
+        // Nobody was there to hear it. A player who comes back is told then:
+        // see the finished branch of ``peerReturned(_:)``.
+        owesTerminalMessage = true
     }
 
     /// The peer came back inside the deadline. Everything is where it was.
@@ -960,8 +1187,9 @@ public final class MatchSession: AppActivityListener {
         if hostPool != nil, storedWasPaused {
             send(.pauseState(paused: storedPaused))
         }
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        rearmSpentPauseLimit()
+        time.reconnectTask?.cancel()
+        time.reconnectTask = nil
         // The second gate on the same window. Cancelling the task alone would
         // leave a budget behind that `appCameBack()` would happily re-arm, and
         // a peer that is back would be waited out all over again.
@@ -1063,7 +1291,8 @@ public final class MatchSession: AppActivityListener {
         pump?.cancel()
         presencePump?.cancel()
         countdownTask?.cancel()
-        reconnectTask?.cancel()
+        time.reconnectTask?.cancel()
+        time.pauseTask?.cancel()
         tail?.cancel()
         transport.leave()
     }
@@ -1076,7 +1305,8 @@ public final class MatchSession: AppActivityListener {
         pump?.cancel()
         presencePump?.cancel()
         countdownTask?.cancel()
-        reconnectTask?.cancel()
+        time.reconnectTask?.cancel()
+        time.pauseTask?.cancel()
         tail?.cancel()
     }
 
@@ -1265,12 +1495,15 @@ public final class MatchSession: AppActivityListener {
         // match either.
         if case let .finalBoard(player, placements) = message {
             // The first one stands: a board is a fact, sent once.
-            guard isFinished, isPeer(player), storedFinalBoards[player] == nil else { return }
+            guard isSettled, isPeer(player), storedFinalBoards[player] == nil else { return }
             withMutation(keyPath: \.peerFinalBoards) { storedFinalBoards[player] = placements }
             return
         }
         // Over is over, however it ended: nothing may move a settled match.
         guard !isMatchOver else { return }
+        // Anything heard on screen, with no word of a dead link, shows this
+        // device's link works.
+        if !isAway, !time.linkDown { backInTouch() }
         // Frozen, the two streams are a race — messages the peer sent before it
         // dropped can still be buffered behind the disconnect. A request to
         // begin or move play is dropped so the match stands still. What the
@@ -1352,7 +1585,12 @@ public final class MatchSession: AppActivityListener {
             // The placements are kept exactly as they arrived. Nothing here
             // trusts them enough to build a board out of: that can fail, and
             // this is a decode path.
-            finish(winner: player, placements: placements)
+            //
+            // A win with no board behind it is the one a player takes when
+            // this device was out of touch for the whole window, said on this
+            // device's return.
+            time.endedByDisconnect = placements.isEmpty
+            finish(winner: player, placements: placements.isEmpty ? nil : placements)
 
         case let .resign(player):
             // Only somebody else can resign to this device.
@@ -1395,7 +1633,15 @@ public final class MatchSession: AppActivityListener {
             // exactly as it takes no `.grant`. A message does not carry its
             // sender, so that is the one check there is.
             guard hasStarted, hostPool == nil else { break }
+            let wasPaused = storedPaused
             setPaused(paused)
+            pauseLimitFollows(wasPaused)
+
+        case .matchVoided:
+            // From the device that runs the pool, like `pauseState`, and only
+            // about a pause this device knows is in force.
+            guard hasStarted, hostPool == nil, storedPaused else { break }
+            voidMatch()
 
         case .finalBoard:
             // Taken above the guards, or not at all.
@@ -1648,17 +1894,7 @@ public final class MatchSession: AppActivityListener {
     private func finish(winner: PlayerID, placements: [Placement]?) {
         // Read before the loop below turns an absence into a departure.
         let somebodyIsAway = isFrozen
-        countdownTask?.cancel()
-        heldCountdownSeconds = nil
-        reconnectTask?.cancel()
-        reconnectSecondsOwed = nil
-        // The window that cancel just closed will never resolve, so a presence
-        // left at `.reconnecting` puts a banner and a countdown to a deadline
-        // nothing reaches over an end screen — the same lie `peerDropped()`
-        // guards against in the opposite ordering.
-        for player in roster {
-            if case .reconnecting = presence(of: player) { peerPresences[player] = .gone }
-        }
+        stopEveryClock()
         state.status = .finished(winner: winner)
         winningPlacements = placements
         // The inbound pump stays, for the one message still to come: the other
@@ -1676,10 +1912,31 @@ public final class MatchSession: AppActivityListener {
         send(.finalBoard(player: localPlayerID, placements: state.board.placementList))
     }
 
+    /// What every ending stops: the countdown, the reconnect window and the
+    /// pause limit.
+    private func stopEveryClock() {
+        countdownTask?.cancel()
+        heldCountdownSeconds = nil
+        time.reconnectTask?.cancel()
+        reconnectSecondsOwed = nil
+        time.pauseTask?.cancel()
+        time.pauseTask = nil
+        // The window that cancel just closed will never resolve, so a presence
+        // left at `.reconnecting` puts a banner and a countdown to a deadline
+        // nothing reaches over an end screen — the same lie `peerDropped()`
+        // guards against in the opposite ordering.
+        for player in roster {
+            if case .reconnecting = presence(of: player) { peerPresences[player] = .gone }
+        }
+    }
+
     private var isFinished: Bool {
         if case .finished = state.status { return true }
         return false
     }
+
+    /// The match ended with a result every device shares: a winner, or a void.
+    private var isSettled: Bool { isFinished || time.voided }
 
     /// Somebody is away and may yet come back, so nothing may be sent and
     /// nothing may move. A peer that already left for good does not freeze the
@@ -1721,7 +1978,7 @@ public final class MatchSession: AppActivityListener {
     private static func survivesAFreeze(_ message: MatchMessage) -> Bool {
         switch message {
         case .win, .resign, .grant, .obligation, .swapGrant, .poolExhausted, .poolCount, .rejected,
-             .drawRequest, .pauseVote, .pauseState:
+             .drawRequest, .pauseVote, .pauseState, .matchVoided:
             // The pause kinds too: one device can be frozen while the other
             // plays on, and a pause the two disagree about is the one thing a
             // pause must never be.
@@ -1820,7 +2077,9 @@ public final class MatchSession: AppActivityListener {
         // still there to read it. Held back only while the terminal message is
         // owed, because that means the peer is away and has not heard the match
         // is over; ``peerReturned(_:)`` sends both then.
-        if isFinished, !owesTerminalMessage, case .finalBoard = message { return false }
+        if isSettled, !owesTerminalMessage, case .finalBoard = message { return false }
+        // The void itself, from the session that just declared it.
+        if time.voided, case .matchVoided = message { return false }
         guard isLocked else { return false }
         // Frozen, with this device's own terminal message still on the chain —
         // the only way a terminal message reaches here, since `claimWin()` and
@@ -1883,4 +2142,29 @@ public final class MatchSession: AppActivityListener {
         default: return nil
         }
     }
+}
+
+/// What ``MatchSession`` remembers for its two rules about time: a player out
+/// of touch too long forfeits, and a pause that runs too long voids the match.
+///
+/// A class of its own only because `MatchSession` is at a stored-property
+/// limit of the toolchain. Touched on the main actor, and once more from
+/// `MatchSession.deinit`, which by then holds the only reference.
+private final class Timekeeping: @unchecked Sendable {
+    /// This device's own link to the match is reported down.
+    var linkDown = false
+    /// When this device's current stretch out of touch began: off screen, or
+    /// with its link down.
+    var outOfTouchSince: Date?
+    /// When the app last came back on screen with no word that its link had
+    /// died. A dead link reported soon after still counts from
+    /// ``outOfTouchSince``.
+    var cameBackAt: Date?
+    var endedByDisconnect = false
+    var voided = false
+    var pauseDeadline: Date?
+    var pauseTask: Task<Void, Never>?
+    /// Lives here only so that this box takes the place of a field the session
+    /// already had, and the session stays the size it was.
+    var reconnectTask: Task<Void, Never>?
 }

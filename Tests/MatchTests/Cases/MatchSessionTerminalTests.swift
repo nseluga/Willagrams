@@ -229,6 +229,12 @@ struct MatchSessionTerminalTests {
             """
     }
 
+    /// The tiles alone: ``snapshot(_:)`` without the status and the winner, for
+    /// a match that ended while nothing on the table may have moved.
+    static func tiles(_ session: MatchSession) -> String {
+        snapshot(session).components(separatedBy: " status[")[0]
+    }
+
     /// A guest for `bob` whose peer `alice` holds the pool, already playing, on
     /// a transport the test drives.
     ///
@@ -517,14 +523,14 @@ struct MatchSessionTerminalTests {
         try await Self.waitUntil("the clock to be idle") { clock.parkedCount == 0 }
     }
 
-    // MARK: - Criterion 4: the deadline passes and nobody won
+    // MARK: - Criterion 4: the deadline passes and the one who stayed wins
 
-    @Test("The reconnect deadline passing ends the match with no winner named")
-    func theDeadlinePassingEndsTheMatchWithNoWinner() async throws {
+    @Test("The reconnect deadline passing is a forfeit: the player who stayed wins")
+    func theDeadlinePassingIsAForfeit() async throws {
         let clock = HandCrankedClock()
         let (guest, wire) = try await Self.playingGuest(clock: clock)
         let tiles = try await Self.stock(guest, wire)
-        let before = Self.snapshot(guest)
+        let before = Self.tiles(guest)
 
         wire.drop(Self.alice)
         try await Self.waitUntil("the session to freeze") { guest.peerPresence != .present }
@@ -538,34 +544,39 @@ struct MatchSessionTerminalTests {
         clock.release(.seconds(MatchSession.reconnectGraceSeconds))
         try await Self.waitUntil("the deadline to pass") { guest.peerPresence == .gone }
 
-        // Over, with nobody named. `state.status` cannot say this — it has no
-        // terminal case without a winner — so the session says it.
+        // Over, and the player who stayed is the winner: thirty seconds out of
+        // touch is a forfeit by the one who dropped. There is no winning board,
+        // because nobody finished one.
         #expect(guest.isMatchOver)
-        #expect(guest.winner == nil)
+        #expect(guest.winner == Self.bob)
+        #expect(guest.endedByDisconnect)
         #expect(guest.winningPlacements == nil)
-        #expect(guest.state.status == .playing)
+        #expect(guest.state.status == .finished(winner: Self.bob))
 
-        // Still locked, and still exactly where it was.
+        // Locked, and no tile moved. Nothing is said yet: there is nobody there
+        // to hear it.
         #expect(guest.draw() == false)
         #expect(guest.claimWin() == false)
         #expect(guest.resign() == false)
         #expect(throws: BoardActionError.drawPending) {
             try guest.place(tileID: tiles[1].id, at: Coord(row: 0, col: 1))
         }
-        #expect(Self.snapshot(guest) == before)
+        #expect(Self.tiles(guest) == before)
         #expect(await wire.count == 0)
 
-        // Over is over: nothing arriving afterwards names a winner, and a peer
-        // that reappears cannot restart a match that has already ended.
+        // Over is over: nothing arriving afterwards names a different winner.
+        // A peer that reappears is told the result and its opponent's board,
+        // and cannot restart the match.
         wire.deliver(.win(player: Self.alice, placements: []))
         wire.deliver(.resign(player: Self.alice))
         wire.restore(Self.alice)
+        try await Self.waitUntil("the result to be said") { await wire.count == 2 }
         try await Self.settle()
-        #expect(guest.peerPresence == .gone)
-        #expect(guest.winner == nil)
+        #expect(guest.winner == Self.bob)
         #expect(guest.isMatchOver)
-        #expect(guest.state.status == .playing)
-        #expect(await wire.count == 0)
+        #expect(guest.state.status == .finished(winner: Self.bob))
+        #expect(Self.tiles(guest) == before)
+        #expect(await wire.count == 2)
 
         clock.releaseAll()
         try await Self.waitUntil("the clock to be idle") { clock.parkedCount == 0 }
