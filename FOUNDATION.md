@@ -634,3 +634,53 @@ gate, and reopens the gate with a real request still in flight.
         between two app versions, silently
   difficulty: low — one case, one associated value, a fixture regeneration
   status: done on `lane/final-polish`
+
+
+## Amendment — optional kinds on wire v5, no version bump (2026-11-22)
+
+Approved by Nate on 2026-11-22 for the first release after 1.0. 1.0 is public and
+speaks v5, so a bump would stop every new build from playing a 1.0 opponent.
+Pause and the end-of-match boards both need new messages. This amendment adds
+them without a bump, and corrects the rule the v4 and v5 entries state as their
+risk.
+
+The rule was "a case added or reordered breaks decode between two app
+versions". That is true only in one direction and only for the new message.
+Swift encodes each case under its own name, so a new case changes no existing
+payload. An older build fails to decode the new message and drops it:
+`RealtimeMatchTransport` decodes after ordering, so the dropped message still
+uses up its sequence number and nothing behind it waits. The match carries on.
+
+So a case may be added with no bump **only when the match stays correct with
+the other side ignoring it**. Anything that moves a tile, or decides who won,
+still needs a bump. So does any change to an existing case.
+
+- task: Add three optional kinds to `MatchMessage`
+  done when:
+    - `WireFormat.current == 5`, unchanged. `wire-v5.json` is unchanged and still
+      decodes into its 15 messages
+    - `MatchMessage` gains, after `poolCount`, `pauseVote(player:wanted:)`,
+      `pauseState(paused:)` and `finalBoard(player:placements:)`; no existing
+      case changes shape or position
+    - `MatchMessageTests` round-trips each new kind, decodes each from bytes
+      written by hand in the test file, and holds a 144-tile `finalBoard` under
+      the 16KB budget
+    - `RealtimeMatchTransportTests` sends an unknown kind between two known
+      messages and both arrive, in order
+    - `MatchSession.receive` accepts the three kinds and does nothing with them
+      yet. Pause and the results screen give them meaning in later PRs
+  guardrails:
+    - each kind states a fact, never a toggle, so a repeat or a re-send after a
+      reconnect changes nothing
+    - `pauseVote` is a wish. Only `pauseState` pauses or resumes, and only the
+      host sends it, for the same reason only the host runs the pool
+    - a peer that never answers a `pauseVote` (a 1.0 build cannot) must leave
+      the match playable and the request cancellable
+    - `finalBoard` is sent only after the match is over, and is untrusted like
+      the placements on `win`: the receiver rebuilds a board from it or shows
+      none, never its own board in its place
+    - nothing in these kinds may be needed for tiles, the pool or the result
+  risk: a later kind added under this rule that the match does depend on. An
+        older build drops it silently, and the two devices drift
+  difficulty: low — three cases, tests, one inert arm in `MatchSession.receive`
+  status: done on `feat/wire-optional-kinds`

@@ -39,9 +39,16 @@ public enum RejectionReason: Codable, Sendable, Equatable {
 /// actual tiles rather than letting each device draw from its own copy, so a
 /// dropped or reordered message can never leave the two bags disagreeing.
 ///
-/// **Adding or reordering a case is a wire break.** Two app versions that
-/// disagree here fail to decode, and the symptom is a match that silently
-/// stops rather than an error anyone sees.
+/// **Renaming a case or changing what it carries is a wire break. Adding an
+/// optional case is not.** Each case encodes under its own name, so a new case
+/// leaves every existing payload exactly as it was. A build that has never
+/// heard of a case fails to decode that one message and drops it, and the
+/// match carries on. So a case may be added without bumping ``WireFormat``
+/// only when the match stays correct with the other side ignoring it, which
+/// rules out anything that moves a tile or decides a winner. Those cases sit
+/// under "Optional kinds" at the foot of this enum. Any change to an existing
+/// case still needs a bump: two builds that disagree there fail to decode, and
+/// the symptom is a match that silently stops rather than an error anyone sees.
 public enum MatchMessage: Codable, Sendable, Equatable {
     /// Host opens the match. The seed makes the shuffle replayable.
     ///
@@ -116,6 +123,33 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     /// is untrusted — a receiver drops a negative count or one above
     /// ``MatchLimits/poolSize`` rather than showing it.
     case poolCount(remaining: Int)
+
+    // MARK: Optional kinds
+    //
+    // Added after wire v5 with no version bump. A v5 build that predates them
+    // drops each one on arrival, so nothing here may be needed for the match to
+    // stay correct. Each states a fact rather than flipping a switch, so a
+    // repeat, or a re-send after a reconnect, changes nothing.
+
+    /// What one player wants: the match paused (`wanted: true`) or running.
+    ///
+    /// From any player, to everyone. It is a wish, never the state: a match
+    /// pauses and resumes only on ``pauseState``.
+    case pauseVote(player: PlayerID, wanted: Bool)
+
+    /// Whether the match is paused. Sent by the host only.
+    ///
+    /// The host decides this for the same reason it runs the pool: one
+    /// authority, so two devices cannot end up disagreeing. A receiver ignores
+    /// it from anyone else.
+    case pauseState(paused: Bool)
+
+    /// A player's board as it stood when the match ended, so the other end
+    /// screen can show it. Never sent while the match is still being played.
+    ///
+    /// `placements` is `Board.placementList`, as on ``win``, and is untrusted
+    /// in the same way: the receiver rebuilds a board from it or shows none.
+    case finalBoard(player: PlayerID, placements: [Placement])
 }
 
 public extension MatchMessage {

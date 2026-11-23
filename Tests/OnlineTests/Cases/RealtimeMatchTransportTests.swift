@@ -735,6 +735,29 @@ struct RealtimeMatchTransportTests {
         host.leave()
     }
 
+    /// What a build sees when a newer one sends it an optional kind: bytes that
+    /// do not decode. They still hold a sequence number, so the message behind
+    /// them is neither held back nor moved. The gap window here is a minute, so
+    /// a payload dropped before the orderer saw it would time this case out.
+    @Test("A kind this build does not know is dropped, and its neighbours arrive in order")
+    func anUnknownKindBetweenTwoKnownOnesIsSkipped() async throws {
+        let bus = StubBus()
+        let channel = bus.channel()
+        let host = try await connect(hostID, channel: channel)
+        let before = MatchMessage.drawRequest(player: guestID)
+        let after = MatchMessage.resign(player: guestID)
+        let unknown = Data(#"{"tauntOpponent":{"player":{"rawValue":"guest"}}}"#.utf8)
+
+        channel.deliverWire(
+            WireEnvelope(sender: guestID, sequence: 0, payload: try MatchCodec.encode(before)))
+        channel.deliverWire(WireEnvelope(sender: guestID, sequence: 1, payload: unknown))
+        channel.deliverWire(
+            WireEnvelope(sender: guestID, sequence: 2, payload: try MatchCodec.encode(after)))
+
+        #expect(try await take(2, from: host.inboundMessages) == [before, after])
+        host.leave()
+    }
+
     /// The other half of the same seam: a receiver can only reorder by numbers
     /// the sender actually stamped, and they have to rise by one.
     @Test("Each send carries the next sequence number, starting at zero")

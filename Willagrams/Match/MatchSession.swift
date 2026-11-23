@@ -1199,6 +1199,12 @@ public final class MatchSession: AppActivityListener {
             guard hostPool == nil,
                   (0...MatchLimits.poolSize).contains(remaining) else { break }
             setPoolRemaining(min(storedPoolRemaining ?? remaining, remaining))
+
+        case .pauseVote, .pauseState, .finalBoard:
+            // Optional kinds. This build decodes them and does nothing, which
+            // is what a 1.0 build does by failing to decode them: the match
+            // must stay correct either way.
+            break
         }
     }
 
