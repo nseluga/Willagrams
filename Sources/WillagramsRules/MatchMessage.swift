@@ -150,6 +150,16 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     /// `placements` is `Board.placementList`, as on ``win``, and is untrusted
     /// in the same way: the receiver rebuilds a board from it or shows none.
     case finalBoard(player: PlayerID, placements: [Placement])
+
+    /// How long a game the player opening the match asked for: `half: true` is
+    /// a pool of half the standard size. Sent just before ``start``.
+    ///
+    /// Only the device that runs the pool acts on it, and only before the match
+    /// has started. A build that drops it deals a standard pool, and so does a
+    /// match where it never arrives: the game is then longer than was asked
+    /// for, and still correct, because there is one pool either way and every
+    /// other device learns its size from ``poolCount``.
+    case gameLength(half: Bool)
 }
 
 public extension MatchMessage {

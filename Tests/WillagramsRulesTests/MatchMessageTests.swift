@@ -31,6 +31,8 @@ struct MatchMessageTests {
             .pauseState(paused: true),
             .pauseState(paused: false),
             .finalBoard(player: peer, placements: Self.placements(21)),
+            .gameLength(half: true),
+            .gameLength(half: false),
         ]
     }
 
@@ -109,12 +111,14 @@ struct MatchMessageTests {
           {"finalBoard": {"player": {"rawValue": "G:9876543210"}, "placements": [
             {"tile": {"id": "00000000-0000-0000-0000-000000000001", "letter": "H"}, "coord": {"row": 0, "col": 0}},
             {"tile": {"id": "00000000-0000-0000-0000-000000000002", "letter": "I"}, "coord": {"row": 0, "col": 1}}
-          ]}}
+          ]}},
+          {"gameLength": {"half": true}}
         ]
         """#
         let decoded = try JSONDecoder().decode([MatchMessage].self, from: Data(json.utf8))
 
-        #expect(decoded.count == 3)
+        #expect(decoded.count == 4)
+        #expect(decoded[3] == .gameLength(half: true))
         #expect(decoded[0] == .pauseVote(player: Self.player, wanted: true))
         #expect(decoded[1] == .pauseState(paused: true))
         guard case let .finalBoard(player, placements) = decoded[2] else {
@@ -150,6 +154,7 @@ struct MatchMessageTests {
         #expect(MatchMessage.pauseVote(player: Self.player, wanted: true).validatedStart(for: Self.player) == nil)
         #expect(MatchMessage.pauseState(paused: true).validatedStart(for: Self.player) == nil)
         #expect(MatchMessage.finalBoard(player: Self.player, placements: []).validatedStart(for: Self.player) == nil)
+        #expect(MatchMessage.gameLength(half: true).validatedStart(for: Self.player) == nil)
     }
 
     @Test("A truncated payload fails to decode rather than decoding partially")
