@@ -40,6 +40,7 @@ struct WillagramsApp: App {
     var body: some Scene {
         WindowGroup {
             ShellRootView(shell: shell)
+                .overlay { WillaHeartsView(shell: shell) }
         }
     }
 }
