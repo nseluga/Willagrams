@@ -1159,7 +1159,7 @@ public final class MatchSession: AppActivityListener {
         // the tile down and read `hasPendingDraw`, `isMatchOver` and
         // `peerPresence` to find out which — so this reuses the one refusal
         // this type has rather than growing a case per reason.
-        guard pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        guard !storedPaused, pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
         try lay(tileID: tileID, at: coord)
     }
 
@@ -1175,9 +1175,11 @@ public final class MatchSession: AppActivityListener {
     /// moves — stays frozen until the queue is empty, which is where the
     /// obligation actually bites.
     ///
-    /// Still refused outright by a finished match or an absent peer.
+    /// Still refused outright by a finished match or an absent peer. Not by a
+    /// pause: a pause stops the player's own moves, and a tile the host already
+    /// took out of the pool still has to land on the board.
     public func lay(tileID: UUID, at coord: Coord) throws(BoardActionError) {
-        guard !refusesMoves else { throw BoardActionError.drawPending }
+        guard !isLocked else { throw BoardActionError.drawPending }
         do {
             try state.place(tileID: tileID, at: coord)
         } catch {
@@ -1189,7 +1191,7 @@ public final class MatchSession: AppActivityListener {
     ///
     /// - Throws: ``BoardActionError/drawPending`` while a tile is waiting.
     public func recall(from coord: Coord) throws(BoardActionError) {
-        guard pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
+        guard !storedPaused, pendingDrawTiles.isEmpty else { throw BoardActionError.drawPending }
         try unlay(from: coord)
     }
 
@@ -1197,7 +1199,7 @@ public final class MatchSession: AppActivityListener {
     /// delivery that was refused part way. A delivery that could be laid must be
     /// undoable on the same terms, or half of it is stranded on the board.
     public func unlay(from coord: Coord) throws(BoardActionError) {
-        guard !refusesMoves else { throw BoardActionError.drawPending }
+        guard !isLocked else { throw BoardActionError.drawPending }
         state.recall(from: coord)
     }
 

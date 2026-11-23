@@ -440,6 +440,11 @@ public actor BotBrain {
             // floor fires. A refusal that *did* move the state — a grant
             // landing mid-search — moves the fingerprint too, so the next tick
             // searches anyway.
+            //
+            // A pause refuses a good plan without moving anything. Marking that
+            // rack barren would leave the bot idle after the resume until the
+            // stall floor fired.
+            if await MainActor.run(body: { [session] in session.isPaused }) { return .stuck }
             barren = fingerprint
             stalledTicks += 1
             return .stuck

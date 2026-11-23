@@ -70,6 +70,16 @@ struct MatchPauseTests {
     static func table() async throws -> (
         host: MatchHUDModel, guest: MatchHUDModel, sessions: [MatchSession], shells: [ShellModel]
     ) {
+        let wired = try await wiredTable()
+        return (wired.host, wired.guest, wired.sessions, wired.shells)
+    }
+
+    /// The same table, with the two boards and the guest's end of the wire for
+    /// a test that has to look under the HUD.
+    static func wiredTable() async throws -> (
+        host: MatchHUDModel, guest: MatchHUDModel, sessions: [MatchSession], shells: [ShellModel],
+        boards: [MatchBoard], guestWire: FakeTransport
+    ) {
         let (first, second) = FakeTransport.pair(alice, bob)
         let sessions = [
             MatchSession(
@@ -82,15 +92,13 @@ struct MatchPauseTests {
             sessions.allSatisfy { $0.state.status == .playing && $0.state.hand.count == 2 }
         }
         let shells = sessions.map { _ in ShellModel(route: .match(MatchBoardTests.setup)) }
-        let huds = zip(sessions, shells).map { session, shell in
-            MatchHUDModel(
-                shell: shell, session: session,
-                board: MatchBoard(
-                    session: session, dictionary: EveryWordIsReal(), audio: SilentAudioPlayer()),
-                audio: SilentAudioPlayer()
-            )
+        let boards = sessions.map {
+            MatchBoard(session: $0, dictionary: EveryWordIsReal(), audio: SilentAudioPlayer())
         }
-        return (huds[0], huds[1], sessions, shells)
+        let huds = zip(zip(sessions, shells), boards).map { pair, board in
+            MatchHUDModel(shell: pair.1, session: pair.0, board: board, audio: SilentAudioPlayer())
+        }
+        return (huds[0], huds[1], sessions, shells, boards, second)
     }
 
     @Test("One player asks, the other is told, and the match pauses only when both agree")
@@ -135,6 +143,34 @@ struct MatchPauseTests {
         }
         #expect(host.pauseLabel == "Pause" && guest.pauseLabel == "Pause")
         #expect(host.isMatchLive && guest.isMatchLive)
+    }
+
+    /// A round the host serves while both devices are paused. The session puts
+    /// each tile in the hand; this checks the step after that, which is the
+    /// one the player sees.
+    @Test("A tile that arrives during a pause is laid on the board, on both devices")
+    func aTileArrivingDuringAPauseReachesTheBoard() async throws {
+        let (host, guest, sessions, shells, boards, wire) = try await Self.wiredTable()
+        defer { sessions.forEach { $0.leave() } }
+        _ = shells
+        #expect(boards.allSatisfy { $0.board.placementList.count == 2 })
+
+        guest.pausePressed()
+        try await SoloMatchTests.waitUntil("the host to be told") { host.pauseLabel == "Agree to pause" }
+        host.pausePressed()
+        try await SoloMatchTests.waitUntil("both players paused") { host.isPaused && guest.isPaused }
+
+        // The guest's request was already on its way when the pause landed. A
+        // paused guest cannot press Draw, so the test sends what that press sent.
+        try await wire.send(.drawRequest(player: Self.bob), delivery: .reliable)
+        try await SoloMatchTests.waitUntil("the round to reach both hands") {
+            sessions.allSatisfy { $0.state.hand.count + $0.state.board.placementList.count == 3 }
+        }
+        try await SoloMatchTests.waitUntil("the round to reach both boards") {
+            boards.allSatisfy { $0.board.placementList.count == 3 }
+        }
+        #expect(sessions.allSatisfy { $0.state.hand.isEmpty })
+        #expect(host.isPaused && guest.isPaused)
     }
 
     @Test("A request nobody answers leaves the match playable, and a second press takes it back")
