@@ -118,4 +118,17 @@ struct SettingsStoreTests {
                 == MatchOptions.lengthRange.upperBound
         )
     }
+
+    @Test("the game is half length until a player chooses the full one, and the choice survives a fresh store")
+    func gameLengthDefaultsToHalfAndPersists() {
+        let suite = TemporarySuite()
+        #expect(SettingsStore(defaults: suite.defaults).loadHalfGame())
+
+        SettingsStore(defaults: suite.defaults).saveHalfGame(false)
+        // A second store over the same suite, as in the round trip above.
+        #expect(SettingsStore(defaults: suite.defaults).loadHalfGame() == false)
+
+        SettingsStore(defaults: suite.defaults).saveHalfGame(true)
+        #expect(SettingsStore(defaults: suite.defaults).loadHalfGame())
+    }
 }

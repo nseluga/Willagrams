@@ -460,12 +460,13 @@ public final class OnlineMatch {
     ///     `.start` is the only thing either device reads them from.
     public func start(
         handSize: Int = OnlineMatch.startingHandSize,
-        options: MatchOptions? = nil
+        options: MatchOptions? = nil,
+        halfGame: Bool = false
     ) async throws -> MatchSession {
         guard lobby.count == 2 else { throw OnlineMatchError.lobbyNotReady(lobby.count) }
         let roster = Self.roster(from: lobby)
         let session = makeSession(roster: roster)
-        open(session, handSize: handSize, options: options ?? record.options)
+        open(session, handSize: handSize, options: options ?? record.options, halfGame: halfGame)
         attachRecorder(to: session)
         return session
     }
@@ -491,12 +492,13 @@ public final class OnlineMatch {
     ///
     /// The seed and the countdown are read here, in one place; the hand size
     /// and the options are the host's, resolved by ``start(handSize:options:)``.
-    private func open(_ session: MatchSession, handSize: Int, options: MatchOptions) {
+    private func open(_ session: MatchSession, handSize: Int, options: MatchOptions, halfGame: Bool) {
         session.startMatch(
             seed: record.poolSeed,
             startingHandSize: handSize,
             countdownSeconds: Self.countdownSeconds,
-            options: options
+            options: options,
+            halfGame: halfGame
         )
     }
 

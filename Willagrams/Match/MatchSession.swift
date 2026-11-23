@@ -370,6 +370,11 @@ public final class MatchSession: AppActivityListener {
     @ObservationIgnored private var reconnectTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
 
+    /// Whether this match is the half-length game. Set by the device that opens
+    /// the match, or by `gameLength` off the wire before the start. Only the
+    /// device that builds the pool ever reads it.
+    @ObservationIgnored private var halfGame = false
+
     /// The opening deal has not happened yet on this device.
     ///
     /// Host-side only: it stops a second deal, because a peer returning restarts
@@ -861,7 +866,8 @@ public final class MatchSession: AppActivityListener {
         seed: UInt64,
         startingHandSize: Int,
         countdownSeconds: Int,
-        options: MatchOptions = .standard
+        options: MatchOptions = .standard,
+        halfGame: Bool = false
     ) {
         // Any player in the match may send the `.start` — online, that is the
         // lobby creator, which need not be `roster[0]`. The pool still goes to
@@ -871,6 +877,11 @@ public final class MatchSession: AppActivityListener {
             return
         }
         guard !isLocked else { return }
+        // A half pool deals a smaller hand. Clamped here, by the opener, so
+        // every device reads the same hand size off `.start`.
+        let startingHandSize = halfGame
+            ? min(startingHandSize, LetterDistribution.halfTotalTiles / roster.count)
+            : startingHandSize
         let message = MatchMessage.start(
             version: WireFormat.current,
             seed: seed,
@@ -886,6 +897,12 @@ public final class MatchSession: AppActivityListener {
             lastNote = "these match settings cannot be played"
             return
         }
+        // The pool may be on the other device (`roster[0]`), so the choice has
+        // to travel, and ahead of the start that builds the pool. A build that
+        // drops this kind deals a full pool: a longer game, still one pool.
+        // The opener's own choice always wins over one heard off the wire.
+        if halfGame { send(.gameLength(half: true)) }
+        self.halfGame = halfGame
         send(message)
         applyStart(start)
     }
@@ -1200,7 +1217,13 @@ public final class MatchSession: AppActivityListener {
                   (0...MatchLimits.poolSize).contains(remaining) else { break }
             setPoolRemaining(min(storedPoolRemaining ?? remaining, remaining))
 
-        case .pauseVote, .pauseState, .finalBoard, .gameLength:
+        case .gameLength(let half):
+            // A request to the device that builds the pool, read only before
+            // the pool exists.
+            guard !hasStarted else { break }
+            halfGame = half
+
+        case .pauseVote, .pauseState, .finalBoard:
             // Optional kinds. This build decodes them and does nothing, which
             // is what a 1.0 build does by failing to decode them: the match
             // must stay correct either way.
@@ -1260,7 +1283,7 @@ public final class MatchSession: AppActivityListener {
         // dealless match instead of a clamped one.
         self.startingHandSize = min(
             max(0, start.startingHandSize),
-            LetterDistribution.totalTiles / roster.count
+            (halfGame ? LetterDistribution.halfTotalTiles : LetterDistribution.totalTiles) / roster.count
         )
         // Only the device holding the pool has a deal to owe: everyone else's
         // opening hand arrives as a `.grant`. Armed on those devices too, and
@@ -1272,7 +1295,7 @@ public final class MatchSession: AppActivityListener {
         self.awaitingOpeningDeal = self.startingHandSize > 0 && start.host == localPlayerID
 
         if start.host == localPlayerID {
-            let pool = Pool.standard(seed: start.seed)
+            let pool = halfGame ? Pool.half(seed: start.seed) : Pool.standard(seed: start.seed)
             hostPool = HostPool(
                 players: roster,
                 pool: pool,

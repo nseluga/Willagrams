@@ -151,7 +151,16 @@ struct TwoPlayerView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignTokens.Space.m) {
-                    Stepper(value: $lobby.handSize, in: SoloSetup.handSizeRange) {
+                    Picker(SoloSetup.gameLengthLabel, selection: $lobby.halfGame) {
+                        Text(SoloSetup.halfGameLabel).tag(true)
+                        Text(SoloSetup.fullGameLabel).tag(false)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Stepper(
+                        value: $lobby.handSize,
+                        in: SoloSetup.handSizeRange(halfGame: lobby.halfGame)
+                    ) {
                         HStack {
                             Text(SoloSetup.handSizeLabel)
                                 .foregroundStyle(DesignTokens.Palette.textPrimary)

@@ -58,6 +58,18 @@ public struct SettingsStore {
     /// the same way out of `UserDefaults`, and zero is not a hand anyone chose.
     public static let defaultHandSize = 21
 
+    private static let halfGameKey = "halfGame"
+
+    /// Whether the next match is the half-length game. Half until a player
+    /// chooses the full one.
+    public func loadHalfGame() -> Bool {
+        defaults.object(forKey: Self.halfGameKey) as? Bool ?? true
+    }
+
+    public func saveHalfGame(_ half: Bool) {
+        defaults.set(half, forKey: Self.halfGameKey)
+    }
+
     /// The stored starting hand, or ``defaultHandSize``. Bounds are the
     /// caller's — the same rule ``load()`` follows by deferring to `validated`.
     public func loadHandSize() -> Int {

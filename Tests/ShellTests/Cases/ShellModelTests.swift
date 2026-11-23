@@ -35,7 +35,8 @@ struct ShellModelTests {
                 MatchSetup(
                     seed: 7,
                     startingHandSize: ShellModel.soloHandSize,
-                    countdownSeconds: ShellModel.soloCountdownSeconds
+                    countdownSeconds: ShellModel.soloCountdownSeconds,
+                    halfGame: true  // the game a new player gets
                 )
             )
         )

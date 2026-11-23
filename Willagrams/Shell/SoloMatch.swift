@@ -76,8 +76,8 @@ public final class SoloMatch {
     /// `ShellModel.soloHandSize` of 21 that is 51 further rounds — a full-length
     /// game, because a solo player is spending the same half of the pool a real
     /// opponent would have left them.
-    public static func drawsAvailable(handSize: Int) -> Int {
-        (LetterDistribution.totalTiles - handSize * 2) / 2
+    public static func drawsAvailable(handSize: Int, halfGame: Bool = false) -> Int {
+        ((halfGame ? LetterDistribution.halfTotalTiles : LetterDistribution.totalTiles) - handSize * 2) / 2
     }
 
     /// The local end. Everything the shell renders reads off this.
@@ -157,7 +157,8 @@ public final class SoloMatch {
             // The rules the setup screen chose, carried by the setup itself —
             // so the match is played under what the player picked rather than
             // under whatever `startMatch` assumes when nobody says.
-            options: setup.options
+            options: setup.options,
+            halfGame: setup.halfGame
         )
         guard let difficulty, brainTask == nil else { return }
         let brain = BotBrain(match: bot, difficulty: difficulty)

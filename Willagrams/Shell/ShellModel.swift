@@ -1124,7 +1124,8 @@ public final class ShellModel {
                 seed: fresh,
                 startingHandSize: handSize ?? soloSetup.handSize,
                 countdownSeconds: Self.soloCountdownSeconds,
-                options: chosen
+                options: chosen,
+                halfGame: soloSetup.halfGame
             )
         )
         return install { setup, dictionary, generation in
