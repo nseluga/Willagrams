@@ -4,7 +4,9 @@ import Foundation
 /// read it from here, so there is no second copy of the address to go stale.
 public enum AppStoreLink {
     public static let urlString = "https://apps.apple.com/app/id6812609905"
-    public static let url = URL(string: urlString)!
+    /// The literal above is a valid URL (a test pins it); the fallback only
+    /// keeps this free of a force unwrap, which the Match audit forbids.
+    public static var url: URL { URL(string: urlString) ?? URL(fileURLWithPath: "/") }
 
     /// What a share sheet sends: the caller's line, then the link so a friend
     /// who has no app can install it. Copy never goes through this; it puts
