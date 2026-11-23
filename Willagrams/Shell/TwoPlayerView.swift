@@ -446,7 +446,11 @@ struct TwoPlayerView: View {
                 .buttonStyle(.brandPrimary)
                 .disabled(!lobby.canStart || lobby.phase != .waiting)
             case .join(let join):
-                Button { join.join() } label: {
+                Button {
+                    // The keyboard would otherwise stay up over "Waiting for host".
+                    codeFieldFocused = false
+                    join.join()
+                } label: {
                     Text(Self.joinLabel).frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.brandPrimary)

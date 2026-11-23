@@ -83,6 +83,63 @@ struct UpdateGateTests {
         shell.returnToMenu()
     }
 
+    // 1.1: the prompt at app open
+    private static func launched(blocked: Bool) async -> ShellModel {
+        let backend = FakeBackend()
+        let shell = ShellModel(
+            services: ShellServices(backend: backend, signIn: backend),
+            updateCheck: { blocked }
+        )
+        await shell.signInTask?.value
+        shell.launch()
+        return shell
+    }
+
+    @Test("Blocked at open: the prompt is up once the loader is down, with no tap, in either order")
+    func promptAtOpen() async {
+        // The store answers while the loader is still up.
+        let early = await Self.launched(blocked: true)
+        await early.updateTask?.value
+        #expect(!early.showsUpdatePrompt, "nothing may cover the loading screen")
+        early.finishLaunch()
+        #expect(early.showsUpdatePrompt)
+
+        // The store answers after the menu is already showing.
+        let late = await Self.launched(blocked: true)
+        late.finishLaunch()
+        #expect(!late.showsUpdatePrompt)
+        await late.updateTask?.value
+        #expect(late.showsUpdatePrompt)
+
+        // "Not now" holds, also across a trip away from the menu, until an
+        // online button is tapped. (Solo still starting is `onlyOnlineIsGated`.)
+        late.showsUpdatePrompt = false
+        late.showHowToPlay()
+        late.returnToMenu()
+        #expect(!late.showsUpdatePrompt)
+        #expect(!late.playAFriend())
+        #expect(late.showsUpdatePrompt)
+    }
+
+    @Test("Not blocked at open: no prompt, whatever the order")
+    func noPromptAtOpenWhenCurrent() async {
+        let shell = await Self.launched(blocked: false)
+        await shell.updateTask?.value
+        shell.finishLaunch()
+        #expect(!shell.showsUpdatePrompt)
+    }
+
+    @Test("An answer that lands after the player left the menu covers nothing")
+    func lateAnswerCoversNoOtherScreen() async {
+        let shell = await Self.launched(blocked: true)
+        shell.finishLaunch()
+        shell.showHowToPlay()
+        #expect(shell.route == .howToPlay)
+        await shell.updateTask?.value
+        #expect(shell.updateRequired)
+        #expect(!shell.showsUpdatePrompt)
+    }
+
     // 8c
     @Test("The Update button goes to the one shared store link")
     func updateLink() {

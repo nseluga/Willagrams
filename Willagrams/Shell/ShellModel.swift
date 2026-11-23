@@ -133,6 +133,16 @@ public final class ShellModel {
         return updateRequired
     }
 
+    /// Raises the prompt at app open, with no tap. Called from the two moments
+    /// that can come in either order, the store answering and the loading
+    /// screen coming down, and it is the later one that passes. Each happens
+    /// once per launch, so "Not now" holds until an online button is tapped.
+    /// Only on the menu: an answer that lands late covers no game.
+    private func promptForUpdateAtOpen() {
+        guard updateRequired, !showsLaunchScreen, route == .menu else { return }
+        showsUpdatePrompt = true
+    }
+
     // MARK: - Launch
 
     /// Whether the loading screen is still up. True for exactly one cold
@@ -175,12 +185,16 @@ public final class ShellModel {
             updateTask = Task { @MainActor [weak self] in
                 let blocked = await updateCheck()
                 self?.updateRequired = blocked
+                self?.promptForUpdateAtOpen()
             }
         }
     }
 
     /// The loading screen's last cycle has finished. The one way it comes down.
-    public func finishLaunch() { showsLaunchScreen = false }
+    public func finishLaunch() {
+        showsLaunchScreen = false
+        promptForUpdateAtOpen()
+    }
 
     public static let signingInReason = "Signing in…"
     public static let noSignInReason = "Online play is unavailable in this build."
