@@ -45,8 +45,8 @@ public enum RejectionReason: Codable, Sendable, Equatable {
 /// heard of a case fails to decode that one message and drops it, and the
 /// match carries on. So a case may be added without bumping ``WireFormat``
 /// only when the match stays correct with the other side ignoring it, which
-/// rules out anything that moves a tile or decides a winner. Those cases sit
-/// under "Optional kinds" at the foot of this enum. Any change to an existing
+/// rules out anything that moves a tile or decides a winner. The optional cases
+/// sit under "Optional kinds" at the foot of this enum. Any change to an existing
 /// case still needs a bump: two builds that disagree there fail to decode, and
 /// the symptom is a match that silently stops rather than an error anyone sees.
 public enum MatchMessage: Codable, Sendable, Equatable {
@@ -140,8 +140,13 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     /// Whether the match is paused. Sent by the host only.
     ///
     /// The host decides this for the same reason it runs the pool: one
-    /// authority, so two devices cannot end up disagreeing. A receiver ignores
-    /// it from anyone else.
+    /// authority, so two devices cannot end up disagreeing. A message does not
+    /// carry its sender, so the one check a receiver can make is the host's:
+    /// the host drops any `pauseState` it receives, as it drops a `grant`.
+    ///
+    /// The host sends `paused: true` only once every player in the roster has a
+    /// `pauseVote(wanted: true)` on record. A build that drops these kinds never
+    /// votes, so it is never paused against while it plays on.
     case pauseState(paused: Bool)
 
     /// A player's board as it stood when the match ended, so the other end
@@ -159,6 +164,12 @@ public enum MatchMessage: Codable, Sendable, Equatable {
     /// match where it never arrives: the game is then longer than was asked
     /// for, and still correct, because there is one pool either way and every
     /// other device learns its size from ``poolCount``.
+    ///
+    /// The device that opens the match uses its own choice and ignores this
+    /// kind off the wire, so a peer cannot override the opener there. The
+    /// sender cannot be checked beyond that. A half pool covers a smaller
+    /// opening hand: the opener offers only hands a half pool can deal, and the
+    /// device that runs the pool clamps the hand to the pool it builds.
     case gameLength(half: Bool)
 }
 

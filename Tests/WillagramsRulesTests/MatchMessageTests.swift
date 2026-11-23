@@ -143,7 +143,15 @@ struct MatchMessageTests {
     /// budget check ``winMessageFitsPayloadLimit`` gives a win.
     @Test("A full 144-tile final board stays inside the 16KB transport budget")
     func finalBoardFitsPayloadLimit() throws {
-        let message = MatchMessage.finalBoard(player: Self.player, placements: Self.placements(144))
+        // The widest board a player can reach, not the tidiest: a backend
+        // player id is a UUID, and a board dragged far from the origin has
+        // long, negative coordinates.
+        let far = (0..<144).map {
+            Placement(tile: Tile(letter: "A"), coord: Coord(row: -1000 - $0, col: -1000 - $0))
+        }
+        let message = MatchMessage.finalBoard(
+            player: PlayerID(rawValue: UUID().uuidString), placements: far
+        )
 
         let size = try JSONEncoder().encode(message).count
         #expect(size < 16_384, "a maximal final-board payload is \(size) bytes, over the 16KB budget")

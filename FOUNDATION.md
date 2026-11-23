@@ -641,8 +641,8 @@ gate, and reopens the gate with a real request still in flight.
 Approved by Nate on 2026-11-22 for the first release after 1.0. 1.0 is public and
 speaks v5, so a bump would stop every new build from playing a 1.0 opponent.
 Pause, the end-of-match boards and the shorter game all need new messages. This
-amendment adds them without a bump, and corrects the rule the v4 and v5 entries state as their
-risk.
+amendment adds them without a bump, and corrects the rule the v1, v2, v4 and v5
+entries state as their risk.
 
 The rule was "a case added or reordered breaks decode between two app
 versions". That is true only in one direction and only for the new message.
@@ -677,6 +677,13 @@ still needs a bump. So does any change to an existing case.
       host sends it, for the same reason only the host runs the pool
     - a peer that never answers a `pauseVote` (a 1.0 build cannot) must leave
       the match playable and the request cancellable
+    - the host sends `pauseState(paused: true)` only once every player in the
+      roster has a `pauseVote(wanted: true)` on record. A 1.0 build never
+      votes, so a match against one never pauses and nobody plays on against a
+      paused opponent
+    - a message does not carry its sender. The only check a receiver can make
+      on `pauseState` is the host's: it drops any it receives, as it drops a
+      `grant`
     - `finalBoard` is sent only after the match is over, and is untrusted like
       the placements on `win`: the receiver rebuilds a board from it or shows
       none, never its own board in its place
@@ -685,6 +692,11 @@ still needs a bump. So does any change to an existing case.
       the player who runs the pool (`roster[0]`), which is why the choice has
       to travel. A build that drops it deals a standard pool: a longer game
       than was asked for, with one pool and one authority as before
+    - the device that opens the match uses its own choice and ignores
+      `gameLength` off the wire. The sender cannot be checked beyond that
+    - a half pool covers a smaller opening hand. The opener offers only hands
+      a half pool can deal, and the device that runs the pool clamps the hand
+      to the pool it builds, so the opening deal can never come back empty
     - nothing in these kinds may be needed for two devices to agree about
       tiles, the pool or the result
   risk: a later kind added under this rule that the match does depend on. An
