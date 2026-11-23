@@ -139,7 +139,7 @@ struct ResultsBoardsTests {
     }
 
     @Test("Solo shows the bot's board, read from its own session")
-    func soloShowsBotBoard() throws {
+    func soloShowsBotBoard() async throws {
         let shell = ShellModel(dictionary: { EveryWordIsReal() }, sleepFor: { _ in })
         let bot = Self.placements("BOT")
         var made: StubOpponent?
@@ -147,10 +147,19 @@ struct ResultsBoardsTests {
         _ = try #require(made)
         let run = try #require(shell.run)
         #expect(run.results().opponentBoard?.placementList.count == 3)
-        // The real solo far end reads the bot session's own board.
-        let solo = SoloMatch(setup: SoloMatchTests.setup, dictionary: EveryWordIsReal(), sleepFor: { _ in })
-        #expect(solo.peerBoardPlacements == solo.bot.session.state.board.placementList)
         run.leave()
+
+        // The real solo far end reads the bot session's own board, and never
+        // the player's: a tile the player laid is not on it.
+        let solo = SoloMatch(setup: SoloMatchTests.setup, dictionary: EveryWordIsReal(), sleepFor: { _ in })
+        defer { solo.leave() }
+        solo.start()
+        try await SoloMatchTests.waitUntil("the opening hand") { !solo.session.state.hand.isEmpty }
+        let tile = try #require(solo.session.state.hand.first)
+        try solo.session.place(tileID: tile.id, at: Coord(row: 9, col: 9))
+        let shown = try #require(solo.peerBoardPlacements)
+        #expect(shown == solo.bot.session.state.board.placementList)
+        #expect(!shown.contains { $0.tile.id == tile.id })
     }
 
     @Test("Boards are read-only and pannable")
@@ -193,6 +202,34 @@ struct ResultsBoardsTests {
             #expect(results.shownBoard == nil)
         }
         #expect(ResultsModel.opponentBoardMissing.isEmpty == false)
+    }
+
+    @Test("A payload that could stop the app is refused before it is drawn",
+          arguments: [
+            [Placement(tile: Tile(letter: "A"), coord: Coord(row: .max, col: 0))],
+            [Placement(tile: Tile(letter: "A"), coord: Coord(row: 0, col: .min))],
+            [Placement(tile: Tile(letter: "A"), coord: Coord(row: ResultsModel.coordinateLimit + 1, col: 0))],
+            (0...MatchLimits.poolSize).map { Placement(tile: Tile(letter: "A"), coord: Coord(row: 0, col: $0)) },
+            { let twice = Tile(letter: "A")
+              return [Placement(tile: twice, coord: Coord(row: 0, col: 0)),
+                      Placement(tile: twice, coord: Coord(row: 0, col: 1))] }(),
+          ])
+    func hostilePayload(_ placements: [Placement]) {
+        #expect(ResultsModel.strictBoard(placements) == nil)
+        for winner in [Self.me, Self.them] {
+            let results = Self.model(winner: winner, opponent: placements, winning: placements)
+            results.show(.opponents)
+            #expect(results.shownBoard == nil)
+        }
+    }
+
+    @Test("A whole pool laid at the edge of the allowed range is still a board")
+    func largestHonestBoard() {
+        let edge = ResultsModel.coordinateLimit
+        let full = (0..<MatchLimits.poolSize).map {
+            Placement(tile: Tile(letter: "A"), coord: Coord(row: -edge, col: edge - $0))
+        }
+        #expect(ResultsModel.strictBoard(full)?.placementList.count == MatchLimits.poolSize)
     }
 
     // MARK: - 7e

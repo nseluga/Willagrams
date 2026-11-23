@@ -74,6 +74,7 @@ struct MatchSessionFlushLossTests {
 
         // Identity, not a count: the message the peer is owed, naming this device.
         #expect(await wire.wire.dropLast().last == .resign(player: Self.bob))
+        #expect(await wire.wire.last == .finalBoard(player: Self.bob, placements: guest.state.board.placementList))
         // And the outcome never moved.
         #expect(guest.winner == Self.alice)
         #expect(guest.state.status == .finished(winner: Self.alice))
