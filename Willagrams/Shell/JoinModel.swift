@@ -113,6 +113,9 @@ public final class JoinModel {
 
     /// What a code that is not six characters says. Not an error from anywhere:
     /// no call is made, so there is nothing to map.
+    /// Shown when the host's start speaks another wire version.
+    public static let versionMismatchMessage = "Both players need the latest version of Willagrams."
+
     public static let shortCodeMessage = "Enter the six-character code."
 
     init(
@@ -239,8 +242,10 @@ public final class JoinModel {
         guard !Self.hasBegun(session) else {
             return begin(match: match, session: session)
         }
+        if case .unsupportedVersion = session.optionsRefusal { message = Self.versionMismatchMessage }
         withObservationTracking {
             _ = session.state.status
+            _ = session.optionsRefusal
         // `match` and `session` are captured weakly for the same reason `self`
         // is: `onChange` is escaping and the session's own registrar holds it,
         // so strong captures close session → registrar → closure → session. A

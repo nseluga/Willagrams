@@ -274,8 +274,19 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
             for payload in payloads {
                 // A peer can send anything. Undecodable bytes are dropped, not
                 // trapped on — `MatchCodec.decode` is the trust boundary.
-                guard let message = try? MatchCodec.decode(payload) else { continue }
-                inbound.yield(message)
+                do {
+                    inbound.yield(try MatchCodec.decode(payload))
+                } catch let MatchCodecError.unsupportedVersion(received, _) {
+                    // Surfaced rather than dropped, so the guest does not wait
+                    // in silence: an empty start of that version makes the
+                    // session refuse it and say why.
+                    inbound.yield(.start(
+                        version: received, seed: 0, startingHandSize: 0,
+                        countdownSeconds: 0, options: .standard, roster: []
+                    ))
+                } catch {
+                    continue
+                }
             }
         }
 
