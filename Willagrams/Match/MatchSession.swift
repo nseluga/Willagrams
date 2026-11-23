@@ -2166,7 +2166,7 @@ public final class MatchSession: AppActivityListener {
 private final class Timekeeping: @unchecked Sendable {
     /// This device's own link to the match is reported down.
     var linkDown = false
-    /// This device's link went down and no peer has been seen present since.
+    /// This device's link went down and no peer has been seen or heard since.
     /// While it is set, a reconnect window that runs out is this device's loss.
     var lostLinkSincePeerSeen = false
     /// When this device's current stretch out of touch began: off screen, or

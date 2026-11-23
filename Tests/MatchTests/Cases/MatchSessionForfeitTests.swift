@@ -310,6 +310,31 @@ struct MatchSessionForfeitTests {
         clock.releaseAll()
     }
 
+    @Test("A message heard after the link is back proves the peer is there")
+    func aPeerHeardAgainCanStillForfeit() async throws {
+        let clock = Terminal.HandCrankedClock()
+        let wall = Wall()
+        let (guest, wire) = try await Self.timedGuest(clock: clock, wall: wall)
+
+        wire.drop(Self.bob)
+        wall.advance(5)
+        wire.restore(Self.bob)
+        // Presence and messages are two streams: the link must be back first.
+        try await Terminal.settle()
+        // No presence event for the peer: only its voice.
+        wire.deliver(.poolCount(remaining: 50))
+        try await Terminal.waitUntil("the message to land") { guest.poolRemaining == 50 }
+
+        wire.drop(Self.alice)
+        try await Terminal.waitUntil("the window") { clock.requested.contains(Self.window) }
+        clock.release(Self.window)
+        try await Terminal.waitUntil("the forfeit") { guest.isMatchOver }
+
+        #expect(guest.winner == Self.bob)
+        guest.leave()
+        clock.releaseAll()
+    }
+
     // MARK: - A1e: the player who dropped lands on a result
 
     @Test("Back after thirty seconds off screen: a loss, said to the peer, never a stuck board")
