@@ -106,4 +106,44 @@ struct UpdateGateTests {
         #expect(model.phase == .waiting)
         model.cancel()
     }
+
+    @Test("A stray foreign start on a session that has begun leaves no refusal")
+    func foreignStartAfterTheMatchBeganIsIgnored() async throws {
+        let f = try await JoinTests.make(
+            sleepFor: { _ in try await Task.sleep(for: .milliseconds(500)) })
+        let model = try await JoinTests.joinTheLobby(f)
+        for _ in 0..<500 { await Task.yield() }
+        f.hostWire.announce(.connected(f.guest.playerID))
+        await JoinTests.until("two in the host's lobby") { f.hostMatch.lobby.count == 2 }
+        let hostSession = try await f.hostMatch.start()
+        await JoinTests.until("the guest left the join screen") { f.shell.route != .join }
+        let session = try #require(f.shell.run).session
+
+        f.guestWire.deliver(.start(
+            version: WireFormat.current + 1, seed: 1, startingHandSize: 21,
+            countdownSeconds: 3, options: .standard, roster: []
+        ))
+        for _ in 0..<500 { await Task.yield() }
+        #expect(session.optionsRefusal == nil)
+        withExtendedLifetime((model, hostSession)) {}
+    }
+
+    // The app root and the prompt are SwiftUI, so the wiring is pinned in text.
+    @Test("The root passes updateCheck and mounts the prompt; the prompt opens the shell's link")
+    func updateWiringIsPinned() throws {
+        let src = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("ShellSrc").resolvingSymlinksInPath()
+            .deletingLastPathComponent().appendingPathComponent("App")
+        func code(_ name: String) throws -> String {
+            try String(contentsOf: src.appendingPathComponent(name), encoding: .utf8)
+                .components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+        let root = try code("WillagramsApp.swift")
+        #expect(root.contains("updateCheck:"))
+        #expect(root.contains("UpdatePromptView(shell: shell)"))
+        #expect(try code("UpdatePromptView.swift").contains("UIApplication.shared.open(shell.updateLink)"))
+    }
 }

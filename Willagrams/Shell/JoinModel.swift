@@ -111,11 +111,11 @@ public final class JoinModel {
     /// What the guest sees while the host has not pressed Start yet.
     public static let waitingTitle = "Waiting for host"
 
-    /// What a code that is not six characters says. Not an error from anywhere:
-    /// no call is made, so there is nothing to map.
     /// Shown when the host's start speaks another wire version.
     public static let versionMismatchMessage = "Both players need the latest version of Willagrams."
 
+    /// What a code that is not six characters says. Not an error from anywhere:
+    /// no call is made, so there is nothing to map.
     public static let shortCodeMessage = "Enter the six-character code."
 
     init(

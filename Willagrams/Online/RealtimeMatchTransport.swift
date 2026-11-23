@@ -214,6 +214,25 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
         self.states = states.continuation
     }
 
+    /// Surfaced rather than dropped, so a guest does not wait in silence: an
+    /// empty start of the foreign version makes the session refuse it and say why.
+    private static func foreignStart(version: Int) -> MatchMessage {
+        .start(
+            version: version, seed: 0, startingHandSize: 0,
+            countdownSeconds: 0, options: .standard, roster: []
+        )
+    }
+
+    /// The version of a `{"start":{"version":N,...}}` payload, whatever else the
+    /// start carries; nil for anything that is not that.
+    private static func startVersion(in payload: Data) -> Int? {
+        struct Minimal: Decodable {
+            struct Start: Decodable { let version: Int }
+            let start: Start
+        }
+        return (try? JSONDecoder().decode(Minimal.self, from: payload))?.start.version
+    }
+
     /// Opens the last-peer window — or closes immediately when there is no
     /// window to open. Shared by the three ways a roster can empty: the peer
     /// leaving, this endpoint losing its socket, and this endpoint coming back
@@ -277,15 +296,13 @@ public actor RealtimeMatchTransport: MatchTransport, AppActivityListener {
                 do {
                     inbound.yield(try MatchCodec.decode(payload))
                 } catch let MatchCodecError.unsupportedVersion(received, _) {
-                    // Surfaced rather than dropped, so the guest does not wait
-                    // in silence: an empty start of that version makes the
-                    // session refuse it and say why.
-                    inbound.yield(.start(
-                        version: received, seed: 0, startingHandSize: 0,
-                        countdownSeconds: 0, options: .standard, roster: []
-                    ))
+                    inbound.yield(Self.foreignStart(version: received))
                 } catch {
-                    continue
+                    // A start of another version may have another shape too, so
+                    // the full decode fails. Its version is still readable.
+                    if let received = Self.startVersion(in: payload), received != WireFormat.current {
+                        inbound.yield(Self.foreignStart(version: received))
+                    }
                 }
             }
         }

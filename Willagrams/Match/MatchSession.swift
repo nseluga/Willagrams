@@ -1123,7 +1123,7 @@ public final class MatchSession: AppActivityListener {
             // membership, and a deal the pool can cover. Everything past it is
             // inside its documented bounds.
             guard let start = message.validatedStart(for: localPlayerID) else {
-                if version != WireFormat.current { storedOptionsRefusal = .unsupportedVersion(received: version) }
+                if version != WireFormat.current, !hasStarted { storedOptionsRefusal = .unsupportedVersion(received: version) }
                 lastNote = version == WireFormat.current
                     ? "this start message cannot be played"
                     : "unsupported wire version \(version)"

@@ -715,6 +715,71 @@ struct RealtimeMatchTransportTests {
         host.leave()
     }
 
+    // MARK: - A start from another wire version still reaches the session
+
+    private func foreignStartEnvelope(
+        version: Int, edit: (inout [String: Any]) -> Void = { _ in }
+    ) throws -> WireEnvelope {
+        let start = MatchMessage.start(
+            version: version, seed: 1, startingHandSize: 7, countdownSeconds: 3,
+            options: .standard, roster: [])
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: MatchCodec.encode(start)) as? [String: Any])
+        var body = try #require(json["start"] as? [String: Any])
+        edit(&body)
+        json["start"] = body
+        return WireEnvelope(
+            sender: guestID, sequence: 0, payload: try JSONSerialization.data(withJSONObject: json))
+    }
+
+    private func isStart(_ message: MatchMessage, version: Int) -> Bool {
+        if case let .start(received, _, _, _, _, _) = message { return received == version }
+        return false
+    }
+
+    @Test("A start of another wire version is surfaced as a start of that version")
+    func foreignVersionStartIsSurfaced() async throws {
+        let channel = StubBus().channel()
+        let host = try await connect(hostID, channel: channel)
+        let foreign = WireFormat.current + 1
+
+        channel.deliverWire(try foreignStartEnvelope(version: foreign))
+
+        let got = try await take(1, from: host.inboundMessages)
+        #expect(isStart(try #require(got.first), version: foreign))
+        host.leave()
+    }
+
+    @Test("A foreign start whose shape also changed is still surfaced by its version")
+    func foreignVersionWithChangedShapeIsSurfaced() async throws {
+        let channel = StubBus().channel()
+        let host = try await connect(hostID, channel: channel)
+        let foreign = WireFormat.current + 1
+
+        // The required `seed` is gone: the full decode cannot succeed.
+        channel.deliverWire(try foreignStartEnvelope(version: foreign) { $0["seed"] = nil })
+
+        let got = try await take(1, from: host.inboundMessages)
+        #expect(isStart(try #require(got.first), version: foreign))
+        host.leave()
+    }
+
+    @Test("A malformed start of the current version, and junk, are still dropped")
+    func malformedCurrentVersionIsDropped() async throws {
+        let channel = StubBus().channel()
+        let host = try await connect(hostID, channel: channel, gap: .zero)
+
+        var envelope = try foreignStartEnvelope(version: WireFormat.current) { $0["seed"] = nil }
+        channel.deliverWire(envelope)
+        envelope = WireEnvelope(sender: guestID, sequence: 1, payload: Data("not json".utf8))
+        channel.deliverWire(envelope)
+        channel.deliverWire(WireEnvelope(
+            sender: guestID, sequence: 2, payload: try MatchCodec.encode(carrier)))
+
+        #expect(try await take(1, from: host.inboundMessages) == [carrier])
+        host.leave()
+    }
+
     /// Holding a gap open forever turns one lost broadcast into a game that
     /// stops with nothing on screen. The window bounds it: what is held is
     /// released, and only the message that never arrived is lost.
