@@ -59,6 +59,13 @@ public protocol MatchOpponent: AnyObject {
     /// The opponent's final board when it is readable locally (a bot's own
     /// session); nil when it is not (a network peer).
     var peerBoardPlacements: [Placement]? { get }
+
+    /// Says whether the local player wants the match paused.
+    ///
+    /// Asked of the opponent for the reason ``offersRematch`` is: against a
+    /// person this is a request the other player has to agree to, and against a
+    /// bot there is nobody to ask, and the run never learns which it holds.
+    func setPause(_ wanted: Bool)
 }
 
 extension MatchOpponent {
@@ -72,6 +79,10 @@ extension MatchOpponent {
     public var localPlayerID: PlayerID { session.localPlayerID }
 
     public var peerBoardPlacements: [Placement]? { nil }
+
+    /// A vote, unless the conformer says otherwise: the match pauses when every
+    /// player wants it paused and resumes when every player wants it resumed.
+    public func setPause(_ wanted: Bool) { session.votePause(wanted) }
 }
 
 /// Solo is just one kind of far end. Declared here rather than on the type so

@@ -283,6 +283,38 @@ struct MatchOutcomeRecorderTests {
         #expect(await store.profileUpdates.first?.stats.fastestWinSeconds == 40)
     }
 
+    /// The stopwatch runs through a pause, so the time it would give is not how
+    /// long the win took. The win still counts; only the record is left alone.
+    @Test("A claimed win in a match that was paused sets no fastest-win time")
+    func aPausedMatchIsNotTimed() async throws {
+        let store = RecordingOutcomeStore(profiles: [Self.bobUUID: Self.profile(Self.bobUUID)])
+        let clock = TestClock(start: Date(timeIntervalSince1970: 0))
+        let (host, guest) = try await Self.playingPair()
+
+        let recorder = MatchOutcomeRecorder(
+            record: Self.lobby(), localPlayer: Self.bob, session: guest,
+            store: store, now: clock.now
+        )
+        await recorder.sync()
+
+        host.votePause(true)
+        guest.votePause(true)
+        try await Self.waitUntil("both players paused") { host.isPaused && guest.isPaused }
+        clock.advance(600)
+        host.votePause(false)
+        guest.votePause(false)
+        try await Self.waitUntil("both players playing again") { !host.isPaused && !guest.isPaused }
+
+        clock.advance(40)
+        guest.claimWin()
+        try await Self.waitUntil("the guest has won") { guest.winner == Self.bob }
+        await recorder.sync()
+
+        let update = try #require(await store.profileUpdates.first)
+        #expect(update.stats.matchesWon == 1)
+        #expect(update.stats.fastestWinSeconds == nil)
+    }
+
     // MARK: - fastest_win_seconds, all four branches
 
     @Test("A win lower than the record replaces it")

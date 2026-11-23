@@ -165,6 +165,14 @@ public final class SoloMatch {
         brainTask = Task { @MainActor in await brain.run() }
     }
 
+    /// Pauses or resumes at once. Nobody sits at the far end to agree, so there
+    /// is no vote: both ends are held, which is what stops the bot playing on
+    /// while the player is away.
+    public func setPause(_ wanted: Bool) {
+        session.setPausedLocally(wanted)
+        bot.session.setPausedLocally(wanted)
+    }
+
     /// Ends the session, the brain and the far end with it.
     ///
     /// Every part is idempotent, so tearing a run down twice cannot reach a live

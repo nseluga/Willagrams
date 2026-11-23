@@ -34,6 +34,13 @@ struct MatchSessionGameLengthTests {
         return (a, b, aliceWire, bobWire)
     }
 
+    static func start(hand: Int, roster: [PlayerID]? = nil) -> MatchMessage {
+        .start(
+            version: WireFormat.current, seed: 5, startingHandSize: hand, countdownSeconds: 0,
+            options: .standard, roster: roster ?? [alice, bob]
+        )
+    }
+
     // MARK: - The half pool itself
 
     @Test("The half pool is 72 tiles, and every letter is within one of half its count")
@@ -114,6 +121,32 @@ struct MatchSessionGameLengthTests {
         // And once the pool exists, the kind changes nothing.
         table.aliceWire.deliver(.gameLength(half: true))
         try await Terminal.settle()
+        #expect(table.alice.poolRemaining == LetterDistribution.totalTiles - 6)
+        table.alice.leave()
+        table.bob.leave()
+    }
+
+    /// The pool holder clamps for itself. A start built by a device that did
+    /// not clamp, a modified one for instance, asks a 72-tile pool for 80 tiles,
+    /// and an opening deal is all or nothing.
+    @Test("The pool holder clamps a hand the opener did not")
+    func thePoolHolderClampsForItself() async throws {
+        let table = Self.pair()
+        table.aliceWire.deliver(.gameLength(half: true))
+        table.aliceWire.deliver(Self.start(hand: 40))
+        try await Terminal.waitUntil("alice's deal") { table.alice.state.hand.count == 36 }
+        #expect(table.alice.poolRemaining == 0)
+        table.alice.leave()
+        table.bob.leave()
+    }
+
+    @Test("A game length heard ahead of a refused start does not shape a later match")
+    func aRefusedStartClearsTheChoice() async throws {
+        let table = Self.pair()
+        table.aliceWire.deliver(.gameLength(half: true))
+        table.aliceWire.deliver(Self.start(hand: 3, roster: [Self.alice, PlayerID(rawValue: "zed")]))
+        table.aliceWire.deliver(Self.start(hand: 3))
+        try await Terminal.waitUntil("alice's deal") { table.alice.state.hand.count == 3 }
         #expect(table.alice.poolRemaining == LetterDistribution.totalTiles - 6)
         table.alice.leave()
         table.bob.leave()
