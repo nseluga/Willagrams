@@ -368,7 +368,7 @@ public final class FriendsModel {
     public var myFriendCode: String { me.friendCode }
 
     /// What the share sheet sends for this player's own code.
-    public var shareMessage: String { "\(Self.shareLead) \(myFriendCode)" }
+    public var shareMessage: String { AppStoreLink.shareText("\(Self.shareLead) \(myFriendCode)") }
 
     /// One line under the lookup field, tracking progress toward the eight
     /// characters a code needs — not a refusal, just where the player stands.

@@ -187,7 +187,7 @@ public final class ProfileModel {
 
     /// What the share sheet sends. Built here so the view carries no copy.
     public var shareMessage: String {
-        "\(Self.shareLead) \(profile.friendCode)"
+        AppStoreLink.shareText("\(Self.shareLead) \(profile.friendCode)")
     }
 
     // MARK: - Copy
