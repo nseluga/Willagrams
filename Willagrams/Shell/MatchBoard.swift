@@ -217,6 +217,13 @@ public final class MatchBoard {
               session.peerPresence == .present
         else { return }
 
+        // A tile swapped away goes back into the pool with the id it left with,
+        // and the pool can hand it to this device again. Forget every id no
+        // longer held, or that tile reads as already laid and stays in the hand.
+        laidTileIDs.formIntersection(
+            session.state.hand.map(\.id) + session.state.board.placementList.map(\.tile.id)
+        )
+
         let arrivals = session.state.hand.filter { !laidTileIDs.contains($0.id) }
         guard !arrivals.isEmpty else { return }
         let arriving = Set(arrivals.map(\.id))

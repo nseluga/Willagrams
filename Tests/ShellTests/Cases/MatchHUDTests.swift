@@ -167,6 +167,36 @@ struct MatchHUDTests {
         solo.leave()
     }
 
+    /// A swapped tile goes back into the pool with the id it left with, so a
+    /// later swap can hand this player the same tile again. It must land on the
+    /// board like any other arrival.
+    @Test("A tile swapped away and handed back later lands on the board again")
+    func aTileThatComesBackIsLaidAgain() async throws {
+        // The HUD holds the shell unowned, so it is kept alive by name.
+        let (solo, wiring, shell, hud) = try await Self.hud()
+        defer { withExtendedLifetime(shell) {} }
+        var returned: Set<UUID> = []
+        var cameBack = false
+        // The pool is seeded, so the number of swaps this takes is fixed.
+        while !cameBack {
+            let out = try #require(wiring.board.placementList.first)
+            Self.select(out, on: wiring)
+            try #require(hud.swap(out.tile), "swap \(returned.count + 1) was refused before any tile came back")
+            returned.insert(out.tile.id)
+            // End the sweep, then tap empty space: the way out of selection.
+            wiring.model.endedPainting()
+            wiring.model.endedPainting()
+            try await SoloMatchTests.waitUntil("the grant for swap \(returned.count)") {
+                !solo.session.state.hand.contains { $0.id == out.tile.id }
+            }
+            try await SoloMatchTests.waitUntil("every held tile on the board after swap \(returned.count)", within: .seconds(2)) {
+                solo.session.state.hand.isEmpty
+            }
+            cameBack = wiring.board.placementList.contains { returned.contains($0.tile.id) }
+        }
+        solo.leave()
+    }
+
     @Test("Swap is refused, and disturbs nothing, once too few tiles remain")
     func swapIsRefusedWhenTooFewTilesRemain() async throws {
         let (solo, wiring, _, hud) = try await Self.hud()
