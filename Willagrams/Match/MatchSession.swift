@@ -1134,6 +1134,9 @@ public final class MatchSession: AppActivityListener {
         switch message {
 
         case let .start(version, _, _, _, _, _):
+            // A game length heard ahead of a start that is refused belongs to
+            // that start. Kept, it would shape the pool of a later match.
+            defer { if !hasStarted { halfGame = false } }
             // One gate for six checks — version, roster shape, roster
             // membership, and a deal the pool can cover. Everything past it is
             // inside its documented bounds.
