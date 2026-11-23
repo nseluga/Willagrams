@@ -13,8 +13,10 @@ public enum AppStoreLink {
     /// the bare code on the pasteboard because that text is pasted into Join.
     public static func shareText(_ line: String) -> String { "\(line)\n\(urlString)" }
 
-    /// The invite for a match code.
+    /// The invite for a match code. The code leads, so pasting the whole text into
+    /// Join still sanitises down to it (the field keeps the first six letters
+    /// and digits).
     public static func inviteText(code: String) -> String {
-        shareText("Join my Willagrams match with code \(code)")
+        shareText("\(code) is my Willagrams match code.")
     }
 }
