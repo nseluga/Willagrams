@@ -223,6 +223,93 @@ struct MatchSessionForfeitTests {
         clock.releaseAll()
     }
 
+    /// The link coming back is not the peer coming back. The peer shows up a
+    /// moment later, or never: it may have waited out its own window and gone.
+    @Test("A link of one's own back, with the peer still unseen, cannot take the win")
+    func ownLinkBackAloneCannotTakeTheWin() async throws {
+        let clock = Terminal.HandCrankedClock()
+        let wall = Wall()
+        let (guest, wire) = try await Self.timedGuest(clock: clock, wall: wall)
+
+        wire.drop(Self.bob)
+        wire.drop(Self.alice)
+        try await Terminal.waitUntil("the window to ask for its time") { clock.parkedCount == 1 }
+        wall.advance(29)
+        wire.restore(Self.bob)
+        try await Terminal.settle()
+        #expect(guest.isMatchOver == false)
+
+        clock.release(Self.window)
+        try await Terminal.waitUntil("the end") { guest.isMatchOver }
+        #expect(guest.winner == Self.alice)
+        #expect(guest.endedByDisconnect)
+
+        wire.restore(Self.alice)
+        try await Terminal.waitUntil("the loss to be said") {
+            await wire.wire.contains(.resign(player: Self.bob))
+        }
+        #expect(await wire.wire.contains(.win(player: Self.bob, placements: [])) == false)
+        guest.leave()
+    }
+
+    /// The other ordering. The peer noticed first, waited its window out, won
+    /// and went. The link then returns to an empty room.
+    @Test("A link back after the peer gave up wins nothing: one winner on both devices")
+    func aLinkBackAfterThePeerGaveUpWinsNothing() async throws {
+        let table = try await Flow.dealtTable()
+
+        table.hostWire.drop(Self.bob)
+        table.guestWire.drop(Self.bob)
+        table.guestWire.drop(Self.alice)
+        try await Terminal.waitUntil("both windows") {
+            table.hostClock.requested.contains(Self.window)
+                && table.guestClock.requested.contains(Self.window)
+        }
+        table.hostClock.release(Self.window)
+        try await Terminal.waitUntil("the host's win") { table.host.winner == Self.alice }
+
+        table.guestWire.restore(Self.bob)
+        try await Terminal.settle()
+        #expect(table.guest.isMatchOver == false)
+        table.guestClock.release(Self.window)
+        try await Terminal.waitUntil("the guest's end") { table.guest.isMatchOver }
+
+        #expect(table.guest.winner == Self.alice)
+        #expect(table.host.winner == Self.alice)
+        await table.leave()
+    }
+
+    @Test("Once the peer is seen again, a later drop is the peer's")
+    func aPeerSeenAgainCanStillForfeit() async throws {
+        let clock = Terminal.HandCrankedClock()
+        let wall = Wall()
+        let (guest, wire) = try await Self.timedGuest(clock: clock, wall: wall)
+
+        wire.drop(Self.bob)
+        wire.drop(Self.alice)
+        try await Terminal.waitUntil("the freeze") { guest.peerPresence != .present }
+        wall.advance(5)
+        wire.restore(Self.bob)
+        wire.restore(Self.alice)
+        try await Terminal.waitUntil("the return") { guest.peerPresence == .present }
+        try await Terminal.resume(guest, on: clock)
+        // The first window's sleeper, cancelled by the return.
+        clock.release(Self.window)
+        try await Terminal.settle()
+        #expect(guest.isMatchOver == false)
+
+        wire.drop(Self.alice)
+        try await Terminal.waitUntil("a second window") {
+            clock.requested.filter { $0 == Self.window }.count == 2
+        }
+        clock.release(Self.window)
+        try await Terminal.waitUntil("the forfeit") { guest.isMatchOver }
+
+        #expect(guest.winner == Self.bob)
+        guest.leave()
+        clock.releaseAll()
+    }
+
     // MARK: - A1e: the player who dropped lands on a result
 
     @Test("Back after thirty seconds off screen: a loss, said to the peer, never a stuck board")
@@ -237,7 +324,7 @@ struct MatchSessionForfeitTests {
         #expect(guest.isMatchOver == false)
 
         guest.appWentAway()
-        wall.advance(1)
+        wall.advance(30)
         guest.appCameBack()
 
         #expect(guest.isMatchOver)
@@ -299,6 +386,27 @@ struct MatchSessionForfeitTests {
         #expect(guest.isMatchOver == false)
         #expect(guest.winner == nil)
         guest.leave()
+    }
+
+    /// During a pause nothing is said, so nothing shows a device its link is
+    /// alive. Trips off screen must not add up there, or two looks at another
+    /// app would forfeit a match nobody left.
+    @Test("Two short trips off screen during a pause, close together, are two short trips")
+    func twoShortSwitchesInAPauseDoNotAddUp() async throws {
+        let wall = Wall()
+        let table = try await Pause.pausedTable(now: { wall.date })
+
+        table.host.appWentAway()
+        wall.advance(16)
+        table.host.appCameBack()
+        wall.advance(20)
+        table.host.appWentAway()
+        wall.advance(15)
+        table.host.appCameBack()
+
+        #expect(table.host.isMatchOver == false)
+        #expect(table.host.isPaused)
+        await table.leave()
     }
 
     @Test(
@@ -442,6 +550,30 @@ struct MatchSessionForfeitTests {
         try await Terminal.waitUntil("the forfeit") { table.host.isMatchOver }
         #expect(table.host.winner == Self.alice)
         #expect(table.host.isVoided == false)
+        await table.leave()
+    }
+
+    /// The host was frozen when the limit passed and could not void. The guest
+    /// only then finds its own link dead: that is the guest's drop, and the
+    /// host will call it a forfeit, so the guest must not call it a void.
+    @Test("A link of one's own found dead past the pause limit is a drop, not a void")
+    func aDeadLinkPastThePauseLimitIsNotAVoid() async throws {
+        let wall = Wall()
+        let table = try await Pause.pausedTable(now: { wall.date })
+
+        wall.advance(TimeInterval(MatchSession.pauseLimitSeconds + 20))
+        table.guestWire.drop(Self.bob)
+        table.guestWire.drop(Self.alice)
+        try await Terminal.waitUntil("the guest's window") {
+            table.guestClock.requested.contains(Self.window)
+        }
+        #expect(table.guest.isVoided == false)
+        #expect(table.guest.isMatchOver == false)
+
+        table.guestClock.release(Self.window)
+        try await Terminal.waitUntil("the forfeit") { table.guest.isMatchOver }
+        #expect(table.guest.winner == Self.alice)
+        #expect(table.guest.isVoided == false)
         await table.leave()
     }
 

@@ -889,17 +889,15 @@ public final class MatchSession: AppActivityListener {
     ///
     /// The app coming back does not end a stretch, because a link that died
     /// off screen is only found dead a heartbeat or two later. `linkDied`
-    /// says that is what just happened, and the time back on screen then
-    /// counts. A second trip off screen does not count it: with no word of a
-    /// dead link, that time was spent in the match.
+    /// says that is what just happened: the trip and the time back on screen
+    /// were one outage, and count as one. A second trip off screen with no
+    /// word of a dead link is a trip of its own. Short trips do not add up,
+    /// or two looks at another app during a pause, when nothing is said that
+    /// could show the link alive, would forfeit the match.
     private func beginOutOfTouch(linkDied: Bool) {
         if let back = time.cameBackAt {
-            let onScreen = now().timeIntervalSince(back)
-            if onScreen >= TimeInterval(Self.linkProbeSeconds) {
-                time.outOfTouchSince = nil  // long enough to know the link lived
-            } else if !linkDied {
-                time.outOfTouchSince = time.outOfTouchSince?.addingTimeInterval(onScreen)
-            }
+            let lived = now().timeIntervalSince(back) >= TimeInterval(Self.linkProbeSeconds)
+            if lived || !linkDied { time.outOfTouchSince = nil }
             time.cameBackAt = nil
         }
         guard hasStarted, !isMatchOver, time.outOfTouchSince == nil else { return }
@@ -911,7 +909,7 @@ public final class MatchSession: AppActivityListener {
         return now().timeIntervalSince(since) >= TimeInterval(Self.reconnectGraceSeconds)
     }
 
-    /// The link is known to work, so the stretch is over and forgotten.
+    /// A peer was heard, so the link works and the stretch is over.
     private func backInTouch() {
         time.outOfTouchSince = nil
         time.cameBackAt = nil
@@ -920,15 +918,19 @@ public final class MatchSession: AppActivityListener {
     private func ownLinkDropped() {
         beginOutOfTouch(linkDied: true)
         time.linkDown = true
+        time.lostLinkSincePeerSeen = true
     }
 
+    /// The link is back, which is not yet being back in the match: the peers
+    /// only reappear a moment later, and until one does this device cannot
+    /// tell a peer who left from a peer it simply cannot see yet. So the
+    /// stretch stays open, and ``awayPeersAreGone()`` will not take a win.
     private func ownLinkReturned() {
         let wasDown = time.linkDown
         time.linkDown = false
         // Off screen, the trip is still running: ``appCameBack()`` judges it.
         guard !isAway else { return }
         if wasDown, outOfTouchTooLong { forfeitByLosingTouch() }
-        backInTouch()
         rearmSpentPauseLimit()
     }
 
@@ -971,7 +973,8 @@ public final class MatchSession: AppActivityListener {
         }
         // A pause already past its limit was voided by the device that runs
         // the pool, which then left before this device heard. Not a drop.
-        if storedPaused, let deadline = time.pauseDeadline, now() >= deadline {
+        // With this device's own link down it is a drop, and this device's.
+        if storedPaused, !time.linkDown, let deadline = time.pauseDeadline, now() >= deadline {
             voidMatch()
             peerPresences[player] = .gone
             return
@@ -1112,13 +1115,15 @@ public final class MatchSession: AppActivityListener {
 
     /// The window ran out. Whoever was out of touch for it forfeits.
     ///
-    /// That is this device when its own link is the one that is down: every
-    /// peer "left" only because nothing could be heard. Otherwise each peer
-    /// still away has left for good, exactly as if it had resigned, and the
-    /// last player standing wins.
+    /// That is this device when its own link is the one that went down: every
+    /// peer "left" only because nothing could be heard. A link that came back
+    /// since does not change that until a peer has been seen again, because
+    /// the peer may have waited out its own window and gone. Otherwise each
+    /// peer still away has left for good, exactly as if it had resigned, and
+    /// the last player standing wins.
     private func awayPeersAreGone() {
         reconnectSecondsOwed = nil
-        guard !time.linkDown else {
+        guard !time.linkDown, !time.lostLinkSincePeerSeen else {
             forfeitByLosingTouch()
             return
         }
@@ -1146,6 +1151,11 @@ public final class MatchSession: AppActivityListener {
     /// back into play. It is the only chance to hand the returning peer the
     /// outcome it never heard.
     private func peerReturned(_ player: PlayerID) {
+        // Seeing a peer is the proof that this device is back in the match.
+        if !time.linkDown {
+            time.lostLinkSincePeerSeen = false
+            if !isAway { backInTouch() }
+        }
         if isFinished {
             guard owesTerminalMessage, let outcome = winner else { return }
             owesTerminalMessage = false
@@ -1503,7 +1513,10 @@ public final class MatchSession: AppActivityListener {
         guard !isMatchOver else { return }
         // Anything heard on screen, with no word of a dead link, shows this
         // device's link works.
-        if !isAway, !time.linkDown { backInTouch() }
+        if !time.linkDown {
+            time.lostLinkSincePeerSeen = false
+            if !isAway { backInTouch() }
+        }
         // Frozen, the two streams are a race — messages the peer sent before it
         // dropped can still be buffered behind the disconnect. A request to
         // begin or move play is dropped so the match stands still. What the
@@ -2153,6 +2166,9 @@ public final class MatchSession: AppActivityListener {
 private final class Timekeeping: @unchecked Sendable {
     /// This device's own link to the match is reported down.
     var linkDown = false
+    /// This device's link went down and no peer has been seen present since.
+    /// While it is set, a reconnect window that runs out is this device's loss.
+    var lostLinkSincePeerSeen = false
     /// When this device's current stretch out of touch began: off screen, or
     /// with its link down.
     var outOfTouchSince: Date?

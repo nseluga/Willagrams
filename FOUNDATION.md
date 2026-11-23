@@ -735,12 +735,16 @@ correct with the other side ignoring it, in both cases there are:
     - it states a fact, never a toggle. A repeat changes nothing
     - only the host sends it, and the host drops any it receives, as it drops a
       `pauseState`
-    - a guest believes it only while paused, so it cannot end a match that is
-      being played
+    - a guest believes it only while paused. A pause is the host's word
+      (`pauseState`), so this adds no trust the host did not already have
     - it names no winner and nothing is recorded for a voided match. A kind
       that names a winner still needs a bump
   risk: a message does not carry its sender, so a modified peer can void a
         paused match. That is the trust `pauseState` already has: the same peer
-        could refuse to resume and reach the same end five minutes later
+        could refuse to resume and reach the same end five minutes later. A
+        modified host can also send `pauseState` with no vote behind it and
+        then this, which ends a match with no result. Closing that needs the
+        guest to check a pause against its own vote, which `pauseState` does
+        not do today
   difficulty: low — one case, tests, one arm in `MatchSession.receive`
   status: done on `feat/forfeit-and-pause-limit`
