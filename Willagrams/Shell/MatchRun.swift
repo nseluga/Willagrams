@@ -178,8 +178,8 @@ public final class MatchRun {
         return ResultsModel(
             shell: shell,
             session: session,
-            // Solo: the bot's own board. Online: nil until the orchestrator wires
-            // the final board the peer sent.
+            // Solo: the bot's own board. Online: the board the other device
+            // sent once the match was over, or nil if none has arrived.
             opponentFinalPlacements: opponent.peerBoardPlacements,
             board: board,
             state: resultsState,

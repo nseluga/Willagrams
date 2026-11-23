@@ -89,6 +89,51 @@ struct ResultsBoardsTests {
         #expect(results.opponentBoard?.placementList.count == 3)
     }
 
+    /// A far end over a session that is already playing, which is what
+    /// `OnlineOpponent` is without the backend behind it.
+    final class SessionOpponent: MatchOpponent {
+        let session: MatchSession
+        init(_ session: MatchSession) { self.session = session }
+        func start() {}
+        func leave() { session.leave() }
+        var offersRematch: Bool { false }
+    }
+
+    @Test("Online shows the board the other device sent after the end, and 'not available' until it arrives")
+    func onlineShowsTheBoardThatArrived() async throws {
+        let (host, guest) = try await ResultsModelTests.playingPair()
+        defer { host.leave() }
+        let tile = try #require(host.state.hand.first)
+        try host.place(tileID: tile.id, at: Coord(row: 4, col: 4))
+
+        let shell = ShellModel(dictionary: { EveryWordIsReal() }, sleepFor: { _ in })
+        shell.startMatch(SoloMatchTests.setup) { SessionOpponent(guest) }
+        let run = try #require(shell.run)
+        #expect(run.results().opponentBoard == nil)
+
+        // Over on this device, and the other device has not answered yet. This
+        // is also all a 1.0 opponent ever gives: nothing, so "not available".
+        #expect(guest.claimWin())
+        let early = run.results(board: run.board.board)
+        #expect(early.board.placementList.isEmpty == false)
+        #expect(early.opponentBoard == nil)
+        early.show(.opponents)
+        #expect(early.shownBoard == nil)
+
+        try await SoloMatchTests.waitUntil("the other device's board to arrive") {
+            run.results().opponentBoard != nil
+        }
+        let shown = try #require(run.results(board: run.board.board).opponentBoard).placementList
+        #expect(shown.map(\.tile.id) == [tile.id])
+        #expect(shown.map(\.coord) == [Coord(row: 4, col: 4)])
+        // The loser's device holds the winner's board the same way.
+        try await SoloMatchTests.waitUntil("the winner's board to arrive") {
+            host.peerFinalBoards[guest.localPlayerID] != nil
+        }
+        #expect(host.peerFinalBoards[guest.localPlayerID] == guest.state.board.placementList)
+        run.leave()
+    }
+
     @Test("Solo shows the bot's board, read from its own session")
     func soloShowsBotBoard() throws {
         let shell = ShellModel(dictionary: { EveryWordIsReal() }, sleepFor: { _ in })
