@@ -45,6 +45,8 @@ struct WillagramsApp: App {
         WindowGroup {
             ShellRootView(shell: shell)
                 .overlay { UpdatePromptView(shell: shell) }
+                // Last, so the hearts draw above every screen. They take no touches.
+                .overlay { WillaHeartsView(shell: shell) }
         }
     }
 }

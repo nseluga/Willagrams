@@ -37,4 +37,20 @@ final class WillaRunsTests: XCTestCase {
         model.seed(moved, against: dictionary)
         XCTAssertEqual(model.willaSparkles, 1)
     }
+
+    func testNoSparkleForOtherWords() throws {
+        var model = BoardModel()
+        for word in ["WILAL", "WILLAS", "AWILLA", "HELLO"] {
+            model.seed(try board(word, down: false), against: dictionary)
+        }
+        XCTAssertEqual(model.willaSparkles, 0)
+    }
+
+    func testASecondWillaRunIsASecondBurst() throws {
+        var model = BoardModel()
+        model.seed(try board("WILLA", down: false), against: dictionary)
+        model.seed(Board(), against: dictionary)
+        model.seed(try board("WILLA", down: true), against: dictionary)
+        XCTAssertEqual(model.willaSparkles, 2)
+    }
 }
