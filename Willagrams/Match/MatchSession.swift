@@ -375,6 +375,92 @@ public final class MatchSession: AppActivityListener {
     /// device that builds the pool ever reads it.
     @ObservationIgnored private var halfGame = false
 
+    // MARK: - Pause
+
+    /// Who wants the match paused right now, this device included. A wish list,
+    /// never the state: see ``isPaused``.
+    @ObservationIgnored private var pauseWanted: [PlayerID] = []
+    @ObservationIgnored private var storedPaused = false
+    @ObservationIgnored private var storedWasPaused = false
+    /// This device has voted at least once, so its vote is worth re-sending
+    /// after a reconnect.
+    @ObservationIgnored private var hasVotedOnPause = false
+
+    /// The match is paused: nobody may draw, swap, move a tile or claim a win.
+    ///
+    /// Online, the device that runs the pool decides this and everyone else
+    /// takes its word, so two devices cannot disagree. It turns on when every
+    /// player wants a pause and off when none does; in between it keeps its
+    /// value, which is what makes pausing and resuming both need everyone.
+    ///
+    /// A pause shuts this device's own moves and nothing else. Tiles the host
+    /// has already taken out of the pool still arrive and still land.
+    public var isPaused: Bool {
+        access(keyPath: \.isPaused)
+        return storedPaused
+    }
+
+    /// The players who want the match paused. Online screens read it to show a
+    /// request the other player has made and has not been answered yet.
+    public var playersWantingPause: [PlayerID] {
+        access(keyPath: \.playersWantingPause)
+        return pauseWanted
+    }
+
+    /// The match was paused at some point, so its length is not a playing time.
+    public var wasPaused: Bool { storedWasPaused }
+
+    /// Says whether this player wants the match paused. Asking to pause and
+    /// agreeing to one are the same vote, and so are cancelling and resuming.
+    ///
+    /// Nothing pauses here. The vote goes to the device that runs the pool,
+    /// and a peer that never answers (a 1.0 build cannot) leaves the match
+    /// running with the vote free to take back.
+    public func votePause(_ wanted: Bool) {
+        guard hasStarted, !isMatchOver else { return }
+        hasVotedOnPause = true
+        send(.pauseVote(player: localPlayerID, wanted: wanted))
+        recordPauseVote(localPlayerID, wanted: wanted)
+    }
+
+    /// Pauses or resumes this session alone, with nothing sent. For a match
+    /// with no second person to ask: solo play pauses both of its sessions
+    /// this way, at once.
+    public func setPausedLocally(_ paused: Bool) {
+        guard hasStarted, !isMatchOver else { return }
+        setPaused(paused)
+    }
+
+    private func recordPauseVote(_ player: PlayerID, wanted: Bool) {
+        withMutation(keyPath: \.playersWantingPause) {
+            pauseWanted.removeAll { $0 == player }
+            if wanted { pauseWanted.append(player) }
+        }
+        // Only the device that runs the pool decides.
+        guard hostPool != nil else { return }
+        // ponytail: a player leaving does not re-run this, so with three or
+        // more players a vote that became unanimous by a departure waits for
+        // the next vote. Two-player matches end on a departure instead.
+        let present = presentPlayers
+        let wanting = present.filter(pauseWanted.contains)
+        if wanting.count == present.count {
+            setPaused(true)
+        } else if wanting.isEmpty {
+            setPaused(false)
+        }
+        // A fact, so sending it again after every vote changes nothing.
+        send(.pauseState(paused: storedPaused))
+    }
+
+    private func setPaused(_ paused: Bool) {
+        guard paused != storedPaused else { return }
+        withMutation(keyPath: \.isPaused) { storedPaused = paused }
+        if paused { storedWasPaused = true }
+    }
+
+    /// The board is shut to this player's own moves.
+    private var refusesMoves: Bool { isLocked || storedPaused }
+
     /// The opening deal has not happened yet on this device.
     ///
     /// Host-side only: it stops a second deal, because a peer returning restarts
@@ -845,6 +931,16 @@ public final class MatchSession: AppActivityListener {
         // running: resuming the countdown now would move game state nobody is
         // playing through.
         guard !isFrozen else { return }
+        // Anything about a pause said while somebody was away may not have
+        // arrived, in either direction. Both kinds are facts, so saying them
+        // again is harmless, and it is what puts the two devices back on the
+        // same answer.
+        if hasVotedOnPause {
+            send(.pauseVote(player: localPlayerID, wanted: pauseWanted.contains(localPlayerID)))
+        }
+        if hostPool != nil, storedWasPaused {
+            send(.pauseState(paused: storedPaused))
+        }
         reconnectTask?.cancel()
         reconnectTask = nil
         // The second gate on the same window. Cancelling the task alone would
@@ -987,7 +1083,7 @@ public final class MatchSession: AppActivityListener {
     /// - Returns: whether the press did anything.
     @discardableResult
     public func draw() -> Bool {
-        guard !isLocked else { return false }
+        guard !refusesMoves else { return false }
         if !pendingDrawTiles.isEmpty {
             state.hand.append(pendingDrawTiles.removeFirst())
             return true
@@ -1029,7 +1125,7 @@ public final class MatchSession: AppActivityListener {
             lastNote = "swap is off for this match"
             return false
         }
-        guard !isLocked, pendingDrawTiles.isEmpty else { return false }
+        guard !refusesMoves, pendingDrawTiles.isEmpty else { return false }
         guard state.hand.contains(where: { $0.id == tile.id }) else { return false }
         request(.swapRequest(player: localPlayerID, returning: tile))
         return true
@@ -1064,7 +1160,7 @@ public final class MatchSession: AppActivityListener {
     ///
     /// Still refused outright by a finished match or an absent peer.
     public func lay(tileID: UUID, at coord: Coord) throws(BoardActionError) {
-        guard !isLocked else { throw BoardActionError.drawPending }
+        guard !refusesMoves else { throw BoardActionError.drawPending }
         do {
             try state.place(tileID: tileID, at: coord)
         } catch {
@@ -1084,7 +1180,7 @@ public final class MatchSession: AppActivityListener {
     /// delivery that was refused part way. A delivery that could be laid must be
     /// undoable on the same terms, or half of it is stranded on the board.
     public func unlay(from coord: Coord) throws(BoardActionError) {
-        guard !isLocked else { throw BoardActionError.drawPending }
+        guard !refusesMoves else { throw BoardActionError.drawPending }
         state.recall(from: coord)
     }
 
@@ -1103,7 +1199,7 @@ public final class MatchSession: AppActivityListener {
     /// - Returns: whether the claim was made.
     @discardableResult
     public func claimWin() -> Bool {
-        guard !isLocked else { return false }
+        guard !refusesMoves else { return false }
         let placements = state.board.placementList
         send(.win(player: localPlayerID, placements: placements))
         finish(winner: localPlayerID, placements: placements)
@@ -1257,10 +1353,21 @@ public final class MatchSession: AppActivityListener {
             guard !hasStarted else { break }
             halfGame = half
 
-        case .pauseVote, .pauseState, .finalBoard:
-            // Optional kinds. This build decodes them and does nothing, which
-            // is what a 1.0 build does by failing to decode them: the match
-            // must stay correct either way.
+        case let .pauseVote(player, wanted):
+            // Somebody else's wish. This device records its own in `votePause`.
+            guard hasStarted, isPeer(player) else { break }
+            recordPauseVote(player, wanted: wanted)
+
+        case let .pauseState(paused):
+            // The device that runs the pool decides, and takes this from nobody,
+            // exactly as it takes no `.grant`. A message does not carry its
+            // sender, so that is the one check there is.
+            guard hasStarted, hostPool == nil else { break }
+            setPaused(paused)
+
+        case .finalBoard:
+            // Optional kind. This build decodes it and does nothing, which is
+            // what a 1.0 build does by failing to decode it.
             break
         }
     }
@@ -1572,7 +1679,10 @@ public final class MatchSession: AppActivityListener {
     private static func survivesAFreeze(_ message: MatchMessage) -> Bool {
         switch message {
         case .win, .resign, .grant, .obligation, .swapGrant, .poolExhausted, .poolCount, .rejected,
-             .drawRequest:
+             .drawRequest, .pauseVote, .pauseState:
+            // The pause kinds too: one device can be frozen while the other
+            // plays on, and a pause the two disagree about is the one thing a
+            // pause must never be.
             return true
         default:
             return false
