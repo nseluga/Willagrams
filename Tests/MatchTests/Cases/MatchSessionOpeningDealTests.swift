@@ -94,7 +94,7 @@ struct MatchSessionOpeningDealTests {
         #expect(guest.pendingDrawTiles.isEmpty)
     }
 
-    @Test("A grant lands in hand and an obligation lands behind the Draw gate, same tiles either way")
+    @Test("A grant and an obligation both land in the hand, the same letters twice over")
     func theWireDecidesWhereTilesLand() async throws {
         let gate = Gate()
         let (wire, endpoint) = FakeTransport.pair(Self.alice, Self.bob)
@@ -133,17 +133,12 @@ struct MatchSessionOpeningDealTests {
         try await Self.waitUntil("the guest to be playing") { guest.state.status == .playing }
 
         try await wire.send(.obligation(player: Self.bob, tiles: drawn), delivery: .reliable)
-        try await Self.waitUntil("the peer's round to be waiting") { guest.hasPendingDraw }
-        // The peer's round: held behind the obligation, not taken. Same tiles as
-        // the deal, and the wire — not the phase — is what tells them apart.
-        #expect(guest.pendingDrawTiles.map(\.id) == drawn.map(\.id))
-        #expect(guest.state.hand.map(\.id) == dealt.map(\.id))
-
-        // And the obligation still resolves the way it always did, one press
-        // per waiting tile.
-        while guest.hasPendingDraw { #expect(guest.draw()) }
+        try await Self.waitUntil("the peer's round in hand") { guest.state.hand.count == 4 }
+        // The peer's round: in the rack beside the deal, nothing waiting. Same
+        // letters as the deal, told apart by their ids.
+        #expect(guest.state.hand.map(\.id) == dealt.map(\.id) + drawn.map(\.id))
         #expect(guest.pendingDrawTiles.isEmpty)
-        #expect(guest.state.hand.count == 4)
+        #expect(guest.hasPendingDraw == false)
     }
 
     @Test("One deal takes both hands out of one pool")

@@ -101,14 +101,24 @@ public final class HostLobbyModel {
     public var handSize: Int {
         get { storedHandSize }
         set {
-            storedHandSize = min(
-                max(SoloSetup.handSizeRange.lowerBound, newValue),
-                SoloSetup.handSizeRange.upperBound
-            )
+            let range = SoloSetup.handSizeRange(halfGame: storedHalfGame)
+            storedHandSize = min(max(range.lowerBound, newValue), range.upperBound)
         }
     }
 
     private var storedHandSize: Int
+
+    /// Whether this lobby opens the half-length game. Setting it re-clamps the
+    /// hand, as ``SoloSetup/halfGame`` does.
+    public var halfGame: Bool {
+        get { storedHalfGame }
+        set {
+            storedHalfGame = newValue
+            handSize = storedHandSize
+        }
+    }
+
+    private var storedHalfGame: Bool
 
     /// Whether the settings are still open: exactly when the lobby is up and
     /// nothing is in flight.
@@ -196,6 +206,7 @@ public final class HostLobbyModel {
         let stored = store?.load() ?? .standard
         self.storedOptions = stored
         self.storedHandSize = store?.loadHandSize() ?? SettingsStore.defaultHandSize
+        self.storedHalfGame = store?.loadHalfGame() ?? true
         self.dictionary = dictionary
         self.sleepFor = sleepFor
         // The local player's name is already in hand; only a guest costs a read.
@@ -322,15 +333,17 @@ public final class HostLobbyModel {
         phase = .starting
         let chosen = chosenOptions
         let hand = handSize
+        let half = halfGame
         // Start is where the choices are written back, so the next lobby opens
         // on what this match is about to be played under. The same rule
         // `startSoloPractice` follows.
         store?.save(chosen)
         store?.saveHandSize(hand)
+        store?.saveHalfGame(half)
         work = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let session = try await match.start(handSize: hand, options: chosen)
+                let session = try await match.start(handSize: hand, options: chosen, halfGame: half)
                 guard !Task.isCancelled else {
                     session.leave()
                     match.leave()
@@ -344,7 +357,8 @@ public final class HostLobbyModel {
                         seed: record.poolSeed,
                         startingHandSize: hand,
                         countdownSeconds: OnlineMatch.countdownSeconds,
-                        options: chosen
+                        options: chosen,
+                        halfGame: half
                     ),
                     opponent: { OnlineOpponent(match: match, session: session) }
                 )

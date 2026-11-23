@@ -69,12 +69,35 @@ public final class SoloSetup {
     /// setter is the same rule with no recursion to have.
     public var handSize: Int {
         get { storedHandSize }
-        set { storedHandSize = min(max(Self.handSizeRange.lowerBound, newValue), Self.handSizeRange.upperBound) }
+        set {
+            let range = Self.handSizeRange(halfGame: storedHalfGame)
+            storedHandSize = min(max(range.lowerBound, newValue), range.upperBound)
+        }
     }
 
     private var storedHandSize = ShellModel.soloHandSize
 
     public static let handSizeRange = 5...40
+
+    /// The hands on offer for a game of this length. A half pool is 72 tiles
+    /// for two players, so its ceiling is lower: 30 each leaves six rounds of
+    /// drawing behind the deal.
+    public static func handSizeRange(halfGame: Bool) -> ClosedRange<Int> {
+        halfGame ? 5...30 : handSizeRange
+    }
+
+    /// Whether the next match is the half-length game. Half until a player
+    /// picks the full one. Setting it re-clamps the hand, so a full-game hand
+    /// of 40 cannot be carried into a half game.
+    public var halfGame: Bool {
+        get { storedHalfGame }
+        set {
+            storedHalfGame = newValue
+            handSize = storedHandSize
+        }
+    }
+
+    private var storedHalfGame: Bool
 
     /// The rules half of the screen, as the settings lane models it. Nil only
     /// before the first entry, and after a bundled-word-list read that failed —
@@ -91,6 +114,7 @@ public final class SoloSetup {
 
     public init(store: SettingsStore? = nil) {
         self.store = store
+        self.storedHalfGame = store?.loadHalfGame() ?? true
     }
 
     /// Entry: builds the form the first time and seeds it from the store.
@@ -107,6 +131,7 @@ public final class SoloSetup {
     /// host lobby — opens with.
     public func saveOptions(_ options: MatchOptions) {
         store?.save(options)
+        store?.saveHalfGame(storedHalfGame)
     }
 
     /// The rules these choices add up to, ready to travel on `.start`.
@@ -128,4 +153,7 @@ public final class SoloSetup {
     public static let backLabel = "Back"
     public static let opponentLabel = "Opponent"
     public static let handSizeLabel = "Starting tiles"
+    public static let gameLengthLabel = "Game length"
+    public static let halfGameLabel = "Half"
+    public static let fullGameLabel = "Full"
 }

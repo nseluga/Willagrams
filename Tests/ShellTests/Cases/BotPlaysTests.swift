@@ -54,7 +54,12 @@ struct BotPlaysTests {
 
         let board = solo.bot.session.state.board
         #expect(board.clusters.count == 1, "the bot left its tiles scattered")
-        #expect(solo.session.pendingDrawTiles.isEmpty == false, "the bot's draw owed this end nothing")
+        // The bot's draw takes one tile per player, so this end is handed one it
+        // never asked for. It lands at once: nothing waits behind a button.
+        try await SoloMatchTests.waitUntil("the bot's draw to reach this end") {
+            SoloMatchTests.localTileIDs(solo).count > ShellModel.soloHandSize
+        }
+        #expect(solo.session.pendingDrawTiles.isEmpty, "the bot's draw left a tile waiting")
 
         solo.leave()
     }

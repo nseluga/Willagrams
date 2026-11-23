@@ -26,6 +26,13 @@ struct MatchMessageTests {
             .rejected(reason: .unknownPlayer),
             .poolCount(remaining: 98),
             .obligation(player: peer, tiles: tiles),
+            .pauseVote(player: player, wanted: true),
+            .pauseVote(player: peer, wanted: false),
+            .pauseState(paused: true),
+            .pauseState(paused: false),
+            .finalBoard(player: peer, placements: Self.placements(21)),
+            .gameLength(half: true),
+            .gameLength(half: false),
         ]
     }
 
@@ -87,6 +94,75 @@ struct MatchMessageTests {
 
         let size = try JSONEncoder().encode(message).count
         #expect(size < 16_384, "a maximal win payload is \(size) bytes, over the 16KB budget")
+    }
+
+    // MARK: - Optional kinds, added after v5 with no version bump
+
+    /// The round trip only proves this build agrees with itself. These bytes
+    /// are written by hand, so renaming an optional case or one of its labels
+    /// fails here. They live in this file because the v5 golden file is the
+    /// record of what a 1.0 build knows, and it must not change.
+    @Test("Each optional kind decodes from hand-written bytes")
+    func optionalKindsDecodeFromHandWrittenBytes() throws {
+        let json = #"""
+        [
+          {"pauseVote": {"player": {"rawValue": "G:1234567890"}, "wanted": true}},
+          {"pauseState": {"paused": true}},
+          {"finalBoard": {"player": {"rawValue": "G:9876543210"}, "placements": [
+            {"tile": {"id": "00000000-0000-0000-0000-000000000001", "letter": "H"}, "coord": {"row": 0, "col": 0}},
+            {"tile": {"id": "00000000-0000-0000-0000-000000000002", "letter": "I"}, "coord": {"row": 0, "col": 1}}
+          ]}},
+          {"gameLength": {"half": true}}
+        ]
+        """#
+        let decoded = try JSONDecoder().decode([MatchMessage].self, from: Data(json.utf8))
+
+        #expect(decoded.count == 4)
+        #expect(decoded[3] == .gameLength(half: true))
+        #expect(decoded[0] == .pauseVote(player: Self.player, wanted: true))
+        #expect(decoded[1] == .pauseState(paused: true))
+        guard case let .finalBoard(player, placements) = decoded[2] else {
+            Issue.record("third message should be .finalBoard, got \(decoded[2])")
+            return
+        }
+        #expect(player == Self.peer)
+        #expect(placements.map(\.tile.letter) == ["H", "I"], "a final board must carry letters, not just ids")
+        #expect(placements[1].coord == Coord(row: 0, col: 1))
+    }
+
+    /// The whole reason no version bump is needed: an optional kind sits beside
+    /// the v5 kinds without changing a byte of them.
+    @Test("Adding the optional kinds left the wire version and the v5 payloads alone")
+    func optionalKindsDoNotMoveTheWireVersion() throws {
+        #expect(WireFormat.current == 5)
+        let draw = try JSONEncoder().encode(MatchMessage.drawRequest(player: Self.player))
+        #expect(String(decoding: draw, as: UTF8.self) == #"{"drawRequest":{"player":{"rawValue":"G:1234567890"}}}"#)
+    }
+
+    /// The loser's board can be as large as the winner's, so it gets the same
+    /// budget check ``winMessageFitsPayloadLimit`` gives a win.
+    @Test("A full 144-tile final board stays inside the 16KB transport budget")
+    func finalBoardFitsPayloadLimit() throws {
+        // The widest board a player can reach, not the tidiest: a backend
+        // player id is a UUID, and a board dragged far from the origin has
+        // long, negative coordinates.
+        let far = (0..<144).map {
+            Placement(tile: Tile(letter: "A"), coord: Coord(row: -1000 - $0, col: -1000 - $0))
+        }
+        let message = MatchMessage.finalBoard(
+            player: PlayerID(rawValue: UUID().uuidString), placements: far
+        )
+
+        let size = try JSONEncoder().encode(message).count
+        #expect(size < 16_384, "a maximal final-board payload is \(size) bytes, over the 16KB budget")
+    }
+
+    @Test("An optional kind is never a start")
+    func optionalKindsDoNotValidateAsAStart() {
+        #expect(MatchMessage.pauseVote(player: Self.player, wanted: true).validatedStart(for: Self.player) == nil)
+        #expect(MatchMessage.pauseState(paused: true).validatedStart(for: Self.player) == nil)
+        #expect(MatchMessage.finalBoard(player: Self.player, placements: []).validatedStart(for: Self.player) == nil)
+        #expect(MatchMessage.gameLength(half: true).validatedStart(for: Self.player) == nil)
     }
 
     @Test("A truncated payload fails to decode rather than decoding partially")

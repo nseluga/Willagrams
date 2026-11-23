@@ -253,7 +253,9 @@ public final class MatchOutcomeRecorder {
         // Only a win the winner claimed is a timed win. `winningPlacements` is
         // nil exactly when `finish` came from `depart` — a resign or abandon —
         // and a resign-by-opponent must not set the fastest-win record.
-        let elapsed: Int? = session.winningPlacements == nil
+        // Nor is a match that was ever paused: the clock ran through the pause,
+        // so the time it gives is not how long the win took.
+        let elapsed: Int? = session.winningPlacements == nil || session.wasPaused
             ? nil : Int(now().timeIntervalSince(startedAt).rounded())
         let won = winner == localPlayer
         // Each player's board is their own private table, so this is this

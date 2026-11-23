@@ -83,9 +83,56 @@ struct MatchHUD: View {
 
             resign
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+
+            // Top centre, the one corner nothing else has. While the match is
+            // held the same control moves to the middle of the board, on the
+            // card that says so.
+            pause
+                .frame(
+                    maxWidth: .infinity, maxHeight: .infinity,
+                    alignment: hud.isPaused ? .center : .top
+                )
         }
         .padding(DesignTokens.Space.m)
     }
+
+    /// One button that says what a press would do, with the line that says what
+    /// the other player has asked for or still has to do.
+    ///
+    /// A bare button while nobody has asked for anything. Once somebody has, a
+    /// card, dropped below the bag so it covers neither the bag nor the
+    /// recenter control on a narrow phone.
+    @ViewBuilder private var pause: some View {
+        if hud.isPauseOffered {
+            if hud.isPaused || hud.pauseStatus != nil {
+                VStack(spacing: DesignTokens.Space.s) {
+                    if hud.isPaused {
+                        Text(hud.pausedTitle)
+                            .monoLabel()
+                            .textCase(.uppercase)
+                    }
+                    if let status = hud.pauseStatus {
+                        Text(status)
+                            .font(DesignTokens.Typography.body)
+                            .foregroundStyle(DesignTokens.Palette.textPrimary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Button(hud.pauseLabel) { hud.pausePressed() }
+                        .buttonStyle(.brandQuiet)
+                }
+                .frame(maxWidth: Self.pauseCardWidth)
+                .padding(DesignTokens.Space.m)
+                .brandCard()
+                .padding(.top, hud.isPaused ? 0 : hudLayout.bagSize)
+            } else {
+                Button(hud.pauseLabel) { hud.pausePressed() }
+                    .buttonStyle(.brandText)
+            }
+        }
+    }
+
+    private static let pauseCardWidth: CGFloat = 280
 
     /// The supply, as a bag with its count on it.
     ///

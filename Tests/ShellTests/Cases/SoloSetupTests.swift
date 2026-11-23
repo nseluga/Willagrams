@@ -38,10 +38,45 @@ struct SoloSetupTests {
     func boundsClampOnWrite() {
         let settings = SoloSetup()
 
+        // A setup with no store opens on the half game, and its ceiling is the
+        // half game's.
+        #expect(settings.halfGame)
         settings.handSize = 1
-        #expect(settings.handSize == SoloSetup.handSizeRange.lowerBound)
+        #expect(settings.handSize == SoloSetup.handSizeRange(halfGame: true).lowerBound)
+        settings.handSize = 999
+        #expect(settings.handSize == SoloSetup.handSizeRange(halfGame: true).upperBound)
+
+        settings.halfGame = false
         settings.handSize = 999
         #expect(settings.handSize == SoloSetup.handSizeRange.upperBound)
+    }
+
+    @Test("Choosing the half game pulls a full-game hand back inside what a half pool can deal")
+    func theGameLengthReclampsTheHand() {
+        let settings = SoloSetup()
+        settings.halfGame = false
+        settings.handSize = 40
+        #expect(settings.handSize == 40)
+
+        settings.halfGame = true
+        #expect(settings.handSize == 30)
+        // Two players, 72 tiles: 30 each is dealt whole with tiles to draw.
+        #expect(SoloMatch.drawsAvailable(handSize: settings.handSize, halfGame: true) == 6)
+    }
+
+    @Test("The game length a solo player chose is written back at Start and read by the next setup")
+    func theGameLengthPersistsThroughStart() {
+        let suite = "solo-setup-game-length-tests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let first = SoloSetup(store: SettingsStore(defaults: defaults))
+        #expect(first.halfGame)
+        first.halfGame = false
+        first.saveOptions(.standard)  // what `startSoloPractice` calls
+
+        #expect(SoloSetup(store: SettingsStore(defaults: defaults)).halfGame == false)
     }
 
     /// The rules half is the settings lane's form, not a second model of the

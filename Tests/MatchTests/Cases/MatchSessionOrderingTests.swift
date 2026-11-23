@@ -236,15 +236,14 @@ struct MatchSessionOrderingTests {
         let late = Tile(letter: "Q")
         wire.deliver(.poolExhausted(requester: bob))
         wire.deliver(.obligation(player: bob, tiles: [late]))
-        try await Self.waitUntil("the reordered grant to land") { guest.hasPendingDraw }
+        try await Self.waitUntil("the reordered grant to land") { guest.state.hand.count == 1 }
 
         #expect(guest.poolIsExhausted)
         #expect(guest.state.status == .playing)
-        #expect(guest.pendingDrawTiles.map(\.id) == [late.id])
-
-        // Still a live match: the tile can be taken and played.
-        #expect(guest.draw())
         #expect(guest.state.hand.map(\.id) == [late.id])
+        #expect(guest.pendingDrawTiles.isEmpty)
+
+        // Still a live match: the tile can be played.
         try guest.place(tileID: late.id, at: Coord(row: 0, col: 0))
         #expect(guest.state.board.tile(at: Coord(row: 0, col: 0))?.id == late.id)
         // The latch does not lift.
@@ -281,9 +280,11 @@ struct MatchSessionOrderingTests {
 
         // The peer's half of the traffic, and the only thing that ever arrives.
         wire.deliver(.drawRequest(player: bob))
-        try await Self.waitUntil("this device to owe a tile") { host.hasPendingDraw }
-        #expect(host.draw())
+        try await Self.waitUntil("this device to take its half of the peer's round") {
+            host.state.hand.count == 2
+        }
 
+        #expect(host.hasPendingDraw == false)
         #expect(host.state.hand.count == 2)
         #expect(Set(host.state.hand.map(\.id)).count == 2)
         #expect(host.state.status == .playing)

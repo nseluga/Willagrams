@@ -93,6 +93,10 @@ public final class MatchRun {
     /// next run is a different deal, and by tests to prove it.
     public let seed: UInt64
 
+    /// Card and board-tab state for the end screen. Here, not on `ResultsModel`,
+    /// because that is rebuilt on every re-render.
+    public let resultsState = ResultsState()
+
     /// The one session. The opponent owns it; this is the short way to it.
     public var session: MatchSession { opponent.session }
 
@@ -129,7 +133,8 @@ public final class MatchRun {
         )
         self.board = board
         self.hud = MatchHUDModel(
-            shell: shell, session: opponent.session, board: board, audio: shell.services.audio
+            shell: shell, session: opponent.session, board: board, audio: shell.services.audio,
+            setPause: { [opponent] in opponent.setPause($0) }
         )
     }
 
@@ -173,7 +178,11 @@ public final class MatchRun {
         return ResultsModel(
             shell: shell,
             session: session,
+            // Solo: the bot's own board. Online: the board the other device
+            // sent once the match was over, or nil if none has arrived.
+            opponentFinalPlacements: opponent.peerBoardPlacements,
             board: board,
+            state: resultsState,
             teardown: { [weak shell] in
                 // A gone shell owns no live run, so there is nothing to hold the
                 // route back for — only a stale generation declines.

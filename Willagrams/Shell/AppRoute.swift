@@ -22,17 +22,23 @@ public struct MatchSetup: Hashable, Sendable {
     public let startingHandSize: Int
     public let countdownSeconds: Int
     public let options: MatchOptions
+    /// Whether the pool is the half-length one. Not a `MatchOptions` field:
+    /// those are rules both devices check a board against, and this is only
+    /// how many tiles the one pool starts with.
+    public let halfGame: Bool
 
     public init(
         seed: UInt64,
         startingHandSize: Int,
         countdownSeconds: Int,
-        options: MatchOptions = .standard
+        options: MatchOptions = .standard,
+        halfGame: Bool = false
     ) {
         self.seed = seed
         self.startingHandSize = startingHandSize
         self.countdownSeconds = countdownSeconds
         self.options = options
+        self.halfGame = halfGame
     }
 }
 

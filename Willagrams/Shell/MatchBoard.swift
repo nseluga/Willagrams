@@ -193,6 +193,7 @@ public final class MatchBoard {
         sync()
         track()
         trackBoard()
+        trackPause()
     }
 
     /// Lays whatever the session has handed this device and not yet had laid.
@@ -336,6 +337,24 @@ public final class MatchBoard {
                 guard let self else { return }
                 self.mirror()
                 self.trackBoard()
+            }
+        }
+    }
+
+    /// Re-runs ``mirror()`` when a pause starts or ends.
+    ///
+    /// A drag that commits in the same turn a pause lands is refused by the
+    /// session and stays on the surface only. No change to the board follows a
+    /// resume, so without this the session would keep the old layout until the
+    /// next drag, and a win claimed first would send that old layout.
+    private func trackPause() {
+        withObservationTracking {
+            _ = session.isPaused
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.mirror()
+                self.trackPause()
             }
         }
     }

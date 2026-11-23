@@ -268,12 +268,9 @@ struct MatchSessionTerminalTests {
     static func stock(_ guest: MatchSession, _ wire: PresenceTransport) async throws -> [Tile] {
         let tiles = [Tile(letter: "W"), Tile(letter: "I"), Tile(letter: "N")]
         // `obligation`, not `grant`: these are tiles the peer's draws owe this
-        // device, which is what puts them behind the Draw gate.
+        // device, which land in the rack on arrival.
         wire.deliver(.obligation(player: bob, tiles: tiles))
-        try await waitUntil("the tiles to be offered") { guest.pendingDrawTiles.count == 3 }
-        // One tile per press, so three tiles is three presses. The board stays
-        // shut until the last of them is taken.
-        while guest.hasPendingDraw { #expect(guest.draw()) }
+        try await waitUntil("the tiles to land in the rack") { guest.state.hand.count == 3 }
         try guest.place(tileID: tiles[0].id, at: Coord(row: 0, col: 0))
         return tiles
     }
@@ -402,9 +399,9 @@ struct MatchSessionTerminalTests {
         #expect(guest.claimWin() == false)
         #expect(guest.resign() == false)
 
-        // And what the peer said before it left cannot move the game either.
-        wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "X")]))
-        wire.deliver(.poolExhausted(requester: Self.bob))
+        // And a fresh start cannot move the game either. Pool results the host
+        // already paid out (an obligation, a grant) are kept through a freeze, so
+        // they are not part of this list.
         wire.deliver(.start(version: WireFormat.current, seed: 9, startingHandSize: 0, countdownSeconds: 5, options: .standard, roster: [Self.alice, Self.bob]))
         try await Self.settle()
 
@@ -501,9 +498,9 @@ struct MatchSessionTerminalTests {
         #expect(guest.pendingDrawTiles.isEmpty)
         #expect(guest.state.status == .playing)
 
-        // No request ever left, so the grant is the opponent's round and becomes
-        // an obligation rather than being swallowed as an answer this device
-        // never earned. Now that only one request may be in flight at a time, a
+        // No request ever left, so the grant is the opponent's round and lands
+        // in the rack as an obligation rather than being swallowed as an answer
+        // this device never earned. Now that only one request may be in flight at a time, a
         // credit left standing here would latch Draw shut for the rest of the
         // match rather than merely skipping one freeze.
         //
@@ -511,11 +508,10 @@ struct MatchSessionTerminalTests {
         // also zeroes the counter, so the reset above would mask a leak. The
         // return is pinned on its own in "Draw refuses a second request".
         wire.deliver(.obligation(player: Self.bob, tiles: [Tile(letter: "A")]))
-        try await Self.waitUntil("the opponent's round") { guest.hasPendingDraw }
+        try await Self.waitUntil("the opponent's round") { guest.state.hand.count == 3 }
 
-        #expect(guest.state.hand.count == 2)
-        #expect(guest.pendingDrawTiles.count == 1)
-        #expect(guest.pendingDrawTiles[0].letter == "A")
+        #expect(guest.pendingDrawTiles.isEmpty)
+        #expect(guest.state.hand.last?.letter == "A")
 
         clock.releaseAll()
         try await Self.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

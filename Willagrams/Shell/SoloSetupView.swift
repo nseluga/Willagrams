@@ -70,10 +70,15 @@ struct SoloSetupView: View {
     private func rules(setup: SoloSetup) -> some View {
         @Bindable var setup = setup
         return VStack(alignment: .leading, spacing: DesignTokens.Space.l) {
+            Picker(SoloSetup.gameLengthLabel, selection: $setup.halfGame) {
+                Text(SoloSetup.halfGameLabel).tag(true)
+                Text(SoloSetup.fullGameLabel).tag(false)
+            }
+            .pickerStyle(.segmented)
             stepper(
                 SoloSetup.handSizeLabel,
                 value: $setup.handSize,
-                in: SoloSetup.handSizeRange
+                in: SoloSetup.handSizeRange(halfGame: setup.halfGame)
             )
             if let form = Binding($setup.optionsForm) {
                 MatchOptionsView(form: form)

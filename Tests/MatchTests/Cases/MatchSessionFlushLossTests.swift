@@ -69,10 +69,11 @@ struct MatchSessionFlushLossTests {
         wire.drop(Self.alice)
         try await Terminal.waitUntil("the peer to be gone again") { guest.peerPresence == .gone }
         wire.restore(Self.alice)
-        try await Terminal.waitUntil("the resignation to reach the wire") { await wire.count == 2 }
+        // The resignation, and this device's final board behind it.
+        try await Terminal.waitUntil("the resignation to reach the wire") { await wire.count == 3 }
 
         // Identity, not a count: the message the peer is owed, naming this device.
-        #expect(await wire.wire.last == .resign(player: Self.bob))
+        #expect(await wire.wire.dropLast().last == .resign(player: Self.bob))
         // And the outcome never moved.
         #expect(guest.winner == Self.alice)
         #expect(guest.state.status == .finished(winner: Self.alice))

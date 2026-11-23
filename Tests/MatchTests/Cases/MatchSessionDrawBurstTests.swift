@@ -94,11 +94,12 @@ struct MatchSessionDrawBurstTests {
     /// for two reasons, and they used to be the same message. The receiver told
     /// them apart by its own count of unanswered requests, which is wrong
     /// exactly when the two cross — the opponent's round was taken as the answer
-    /// to this device's request, spent the credit, landed in the rack instead of
-    /// behind the Draw gate, and reopened the gate with a real request still in
-    /// flight. That is the burst, and the reason it only showed up late in a
-    /// match: a full rack and a low bag is when both players draw at once.
-    @Test("A peer's round crossing this device's request is held, and the answer still lands")
+    /// to this device's request, spent the credit, and reopened Draw with a
+    /// real request still in flight. That is the burst, and the reason it only
+    /// showed up late in a match: a full rack and a low bag is when both players
+    /// draw at once. The opponent's tile lands in the rack either way, so what
+    /// pins the two apart is the credit.
+    @Test("A peer's round crossing this device's request does not spend the credit, and the answer still lands")
     func aPeersRoundDoesNotAnswerThisDevicesRequest() async throws {
         let clock = Terminal.HandCrankedClock()
         let (guest, wire) = try await Terminal.playingGuest(clock: clock)
@@ -109,22 +110,26 @@ struct MatchSessionDrawBurstTests {
 
         // The opponent's round, arriving first. The wire says whose it is.
         wire.deliver(.obligation(player: Terminal.bob, tiles: [Tile(letter: "A")]))
-        try await Terminal.waitUntil("the peer's round to be held") { guest.hasPendingDraw }
-        #expect(guest.state.hand.isEmpty, "a peer's round was taken into the rack")
+        try await Terminal.waitUntil("the peer's round to land") { guest.state.hand.count == 1 }
+        #expect(guest.state.hand.first?.letter == "A")
+        #expect(guest.hasPendingDraw == false)
+        // The request is still unanswered, so the round did not spend its credit.
+        #expect(guest.draw() == false, "a peer's round answered this device's request")
+        try await Terminal.settle()
+        #expect(await wire.drawRequests == 1)
 
-        // And then the real answer, which is the one that goes to the rack.
+        // And then the real answer, which lands beside it.
         wire.deliver(.grant(player: Terminal.bob, tiles: [Tile(letter: "B")]))
-        try await Terminal.waitUntil("the answer to land") { guest.state.hand.count == 1 }
-        #expect(guest.state.hand.first?.letter == "B")
-        #expect(guest.pendingDrawTiles.count == 1, "the obligation was swallowed by the answer")
+        try await Terminal.waitUntil("the answer to land") { guest.state.hand.count == 2 }
+        #expect(guest.state.hand.map(\.letter) == ["A", "B"])
+        #expect(guest.pendingDrawTiles.isEmpty)
 
         // The credit was spent by the answer and by nothing else, so the press
-        // after it is offered — it takes the tile owed rather than asking again.
+        // after it is a new request.
         #expect(guest.draw())
-        #expect(guest.hasPendingDraw == false)
-        #expect(guest.state.hand.count == 2)
-        try await Terminal.settle()
-        #expect(await wire.drawRequests == 1, "accepting an obligation asked for a second round")
+        try await Terminal.waitUntil("the second request to reach the wire") {
+            await wire.drawRequests == 2
+        }
 
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

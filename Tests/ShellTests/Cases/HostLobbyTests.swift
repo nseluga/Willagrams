@@ -312,6 +312,58 @@ struct HostLobbyTests {
         f.shell.returnToMenu()
     }
 
+    /// The lobby opens the half game unless the host chose otherwise, and the
+    /// choice goes out ahead of the start: the pool may be on the guest's
+    /// device, and the start is what builds it.
+    @Test("A lobby asks for the half game ahead of its start, and a full game asks for nothing")
+    func theGameLengthTravelsAheadOfTheStart() async throws {
+        let suite = "host-lobby-game-length-tests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(defaults: defaults)
+
+        let f = try await Self.make(settings: settings)
+        #expect(f.shell.playAFriend())
+        let lobby = try #require(f.shell.hostLobby)
+        await Self.until("the lobby exists") { lobby.phase == .waiting }
+        #expect(lobby.halfGame)
+        f.wire.announce(.connected(f.guest.playerID))
+        await Self.until("two in the lobby") { lobby.canStart }
+
+        lobby.start()
+        await Self.until("the run is installed") { f.shell.run != nil }
+        await Self.until("the start is on the wire") { f.wire.sent.count >= 2 }
+        #expect(f.wire.sent.first == .gameLength(half: true))
+        guard case .start = f.wire.sent[1] else {
+            Issue.record("the second message is \(f.wire.sent[1]), not the start")
+            return
+        }
+        // The countdown here is instant, so the route may already be the match.
+        switch f.shell.route {
+        case .countdown(let setup), .match(let setup): #expect(setup.halfGame)
+        default: Issue.record("route is \(f.shell.route), not a started match")
+        }
+        f.shell.returnToMenu()
+
+        // The full game, chosen in a second lobby over its own wire.
+        let g = try await Self.make(settings: settings)
+        #expect(g.shell.playAFriend())
+        let full = try #require(g.shell.hostLobby)
+        await Self.until("the second lobby exists") { full.phase == .waiting }
+        full.halfGame = false
+        g.wire.announce(.connected(g.guest.playerID))
+        await Self.until("two in the second lobby") { full.canStart }
+        full.start()
+        await Self.until("the second run is installed") { g.shell.run != nil }
+        await Self.until("the second start is on the wire") { !g.wire.sent.isEmpty }
+        #expect(!g.wire.sent.contains(.gameLength(half: true)))
+        g.shell.returnToMenu()
+
+        // And the choice is what the next lobby opens on.
+        #expect(settings.loadHalfGame() == false)
+    }
+
     /// A start that fails hands the screen back, gear and all.
     ///
     /// `canStart` stays true after a throw so the host may press Start again —

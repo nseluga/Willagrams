@@ -55,8 +55,8 @@ struct SoloMatchTests {
         return solo
     }
 
-    /// Every tile the local end holds anywhere: rack, board, and the tiles it
-    /// owes a press for.
+    /// Every tile the local end holds anywhere: rack, board, and anything
+    /// still waiting.
     static func localTileIDs(_ solo: SoloMatch) -> Set<UUID> {
         var ids = Set(solo.session.state.hand.map(\.id))
         ids.formUnion(solo.session.pendingDrawTiles.map(\.id))
@@ -157,6 +157,42 @@ struct SoloMatchTests {
         solo.session.draw()
         try await Self.waitUntil("the pool to run out") { solo.session.poolIsExhausted }
 
+        #expect(solo.session.claimWin())
+        #expect(solo.session.winner == SoloMatch.localPlayerID)
+        solo.leave()
+    }
+
+    /// The same walk at half length: the game a player gets by default.
+    @Test("A half-length solo match deals from 72 tiles and plays to a win claim")
+    func aHalfGamePlaysToAWin() async throws {
+        let setup = MatchSetup(
+            seed: 20260817,
+            startingHandSize: ShellModel.soloHandSize,
+            countdownSeconds: ShellModel.soloCountdownSeconds,
+            halfGame: true
+        )
+        let solo = SoloMatch(setup: setup, dictionary: EveryWordIsReal(), sleepFor: { _ in })
+        solo.start()
+        try await Self.waitUntil("the opening hand") {
+            solo.session.state.hand.count == setup.startingHandSize
+        }
+        #expect(solo.session.poolRemaining == 72 - setup.startingHandSize * 2)
+
+        let rounds = SoloMatch.drawsAvailable(handSize: setup.startingHandSize, halfGame: true)
+        #expect(rounds == 15)
+        for round in 1...rounds {
+            #expect(solo.session.poolIsExhausted == false, "pool ran out at round \(round)")
+            #expect(solo.session.draw())
+            try await Self.waitUntil("the tile from round \(round)") {
+                solo.session.state.hand.count == setup.startingHandSize + round
+            }
+        }
+
+        let local = Self.localTileIDs(solo)
+        #expect(local.count + solo.peerTileIDs.count == LetterDistribution.halfTotalTiles)
+
+        solo.session.draw()
+        try await Self.waitUntil("the pool to run out") { solo.session.poolIsExhausted }
         #expect(solo.session.claimWin())
         #expect(solo.session.winner == SoloMatch.localPlayerID)
         solo.leave()

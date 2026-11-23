@@ -3,8 +3,9 @@ import Testing
 import WillagramsRules
 @testable import Match
 
-/// Smoke coverage for the client-side state machine: the countdown, the Draw
-/// obligation, and the host taking its own tile from the pool it holds.
+/// Smoke coverage for the client-side state machine: the countdown, the tile
+/// the opponent's draw owes this device, and the host taking its own tile from
+/// the pool it holds.
 ///
 /// Every cross-device wait is a bounded poll, never an open `await` on a stream:
 /// this suite runs unattended, so a message that never arrives has to fail in
@@ -105,16 +106,14 @@ struct MatchSessionTests {
 
     /// Draws a round and waits for both devices to be settled.
     ///
-    /// A device under obligation takes the tile it owes first: while one is
-    /// waiting, pressing Draw accepts it instead of asking for a round.
+    /// The tile a round owes the other device lands in its rack on arrival, so
+    /// both hands grow by one with no second press.
     static func drawRound(by drawer: MatchSession, other: MatchSession) async throws {
-        if drawer.hasPendingDraw { drawer.draw() }
         let handBefore = drawer.state.hand.count
-        let owedBefore = other.pendingDrawTiles.count + other.state.hand.count
+        let otherBefore = other.state.hand.count
         drawer.draw()
         try await waitUntil("both devices took a tile") {
-            drawer.state.hand.count > handBefore
-                && other.pendingDrawTiles.count + other.state.hand.count > owedBefore
+            drawer.state.hand.count > handBefore && other.state.hand.count > otherBefore
         }
     }
 
@@ -147,14 +146,15 @@ struct MatchSessionTests {
 
         host.draw()
         try await Self.waitUntil("the host to hold a tile") { host.state.hand.count == 1 }
-        try await Self.waitUntil("the guest to owe a tile") { guest.hasPendingDraw }
+        try await Self.waitUntil("the guest to receive its tile") { guest.state.hand.count == 1 }
 
+        // The host's own tile never travelled, and the guest's is a different one.
         #expect(host.pendingDrawTiles.isEmpty)
-        #expect(guest.state.hand.isEmpty)
+        #expect(host.state.hand.map(\.id) != guest.state.hand.map(\.id))
     }
 
-    @Test("A tile waiting from the opponent's draw freezes the board until it is taken")
-    func obligationFreezesTheBoard() async throws {
+    @Test("A tile owed by the opponent's draw lands in the rack at once and leaves the board open")
+    func obligationLandsAtOnce() async throws {
         let (host, guest) = try await Self.startedPair()
 
         // The guest asks for its own round first, so it has a tile to move.
@@ -162,26 +162,20 @@ struct MatchSessionTests {
         let mine = try #require(guest.state.hand.first)
         #expect(guest.hasPendingDraw == false)
 
-        // Now the host draws, which is what puts the guest under obligation.
+        // Now the host draws, which is what owes the guest a tile. It is in the
+        // rack by the time the round settles, with no press of Draw.
         try await Self.drawRound(by: host, other: guest)
-        #expect(guest.hasPendingDraw)
-
-        #expect(throws: BoardActionError.drawPending) {
-            try guest.place(tileID: mine.id, at: Coord(row: 0, col: 0))
-        }
-        #expect(guest.state.board.placementList.isEmpty)
-        #expect(guest.state.hand.map(\.id) == [mine.id])
-
-        #expect(throws: BoardActionError.drawPending) {
-            try guest.recall(from: Coord(row: 0, col: 0))
-        }
-
-        // Pressing Draw takes the waiting tile and unfreezes the board.
-        guest.draw()
         #expect(guest.hasPendingDraw == false)
+        #expect(guest.pendingDrawTiles.isEmpty)
         #expect(guest.state.hand.count == 2)
+        #expect(guest.state.hand.contains { $0.id == mine.id })
+
+        // The board is not frozen: place and recall both go through.
         try guest.place(tileID: mine.id, at: Coord(row: 0, col: 0))
         #expect(guest.state.board.tile(at: Coord(row: 0, col: 0))?.id == mine.id)
+        try guest.recall(from: Coord(row: 0, col: 0))
+        #expect(guest.state.board.placementList.isEmpty)
+        #expect(guest.state.hand.count == 2)
     }
 
     @Test("canDraw is the frozen predicate over this session's own state")
@@ -222,7 +216,7 @@ struct MatchSessionTests {
         }
 
         try await Self.waitUntil("every round to be answered") {
-            host.pendingDrawTiles.count == rounds
+            host.state.hand.count == rounds
         }
         let sent = await probe.sent
         let mostInFlight = await probe.mostInFlight
@@ -281,7 +275,7 @@ struct MatchSessionTests {
             .obligation(player: PlayerID(rawValue: "bob"), tiles: [late]),
             delivery: .reliable
         )
-        try await Self.waitUntil("the late grant") { guest.hasPendingDraw }
-        #expect(guest.pendingDrawTiles.map(\.id) == [late.id])
+        try await Self.waitUntil("the late grant") { guest.state.hand.count == 1 }
+        #expect(guest.state.hand.map(\.id) == [late.id])
     }
 }

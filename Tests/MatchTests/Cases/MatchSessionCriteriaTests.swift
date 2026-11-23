@@ -105,13 +105,15 @@ struct MatchSessionCriteriaTests {
         return HostPool.host(of: [alice, bob]) == alice ? (one, two) : (two, one)
     }
 
-    /// A guest holding one tile in hand, one on the board, and owing a tile
-    /// because the *opponent* drew.
+    /// A guest holding one tile in hand, one on the board, and one more that
+    /// reached its rack because the *opponent* drew.
     struct Obligated {
         let host: MatchSession
         let guest: MatchSession
-        /// Still in the guest's hand.
+        /// Still in the guest's hand, from the guest's own round.
         let held: Tile
+        /// In the guest's hand, from the opponent's round.
+        let owed: Tile
         /// On the guest's board.
         let placed: Tile
         let placedAt = Coord(row: 0, col: 0)
@@ -120,7 +122,7 @@ struct MatchSessionCriteriaTests {
     /// Runs real rounds in both directions over the real wire.
     ///
     /// The guest draws twice so it has tiles to move, then the host draws — that
-    /// last round is the one that leaves the guest owing a tile.
+    /// last round is the one that puts a tile in the guest's rack unasked.
     static func obligatedGuest() async throws -> Obligated {
         let (host, guest) = try await startedPair()
 
@@ -134,19 +136,16 @@ struct MatchSessionCriteriaTests {
         try guest.place(tileID: placed.id, at: Coord(row: 0, col: 0))
         #expect(guest.state.hand.map(\.id) == [held.id])
 
-        // The host owes two tiles from the guest's rounds, and a press takes
-        // one, so it owes a press each.
-        try await waitUntil("the host to owe its tiles") { host.pendingDrawTiles.count == 2 }
-        host.draw()
-        #expect(host.pendingDrawTiles.count == 1)
-        host.draw()
+        // The host's half of the guest's two rounds went straight into its rack.
+        try await waitUntil("the host to hold its tiles") { host.state.hand.count == 2 }
         #expect(host.hasPendingDraw == false)
 
-        // Now the opponent draws. This is the event that freezes the guest.
+        // Now the opponent draws. The guest's half lands in its rack unasked.
         host.draw()
-        try await waitUntil("the guest to owe a tile") { guest.hasPendingDraw }
+        try await waitUntil("the guest to receive a tile") { guest.state.hand.count == 2 }
+        let owed = try #require(guest.state.hand.first { $0.id != held.id })
 
-        return Obligated(host: host, guest: guest, held: held, placed: placed)
+        return Obligated(host: host, guest: guest, held: held, owed: owed, placed: placed)
     }
 
     // MARK: - Criterion 1
@@ -199,60 +198,40 @@ struct MatchSessionCriteriaTests {
 
     // MARK: - Criterion 2
 
-    @Test("A grant from the opponent's draw freezes the board at both entry points")
-    func opponentGrantFreezesTheBoard() async throws {
+    @Test("A grant from the opponent's draw lands in the hand and leaves both entry points open")
+    func opponentGrantLeavesTheBoardOpen() async throws {
         let fixture = try await Self.obligatedGuest()
         let guest = fixture.guest
 
-        #expect(guest.hasPendingDraw)
-        #expect(guest.pendingDrawTiles.count == 1)
-
-        let stateBefore = guest.state
-        let textBefore = Self.snapshot(guest.state)
-        let waitingBefore = guest.pendingDrawTiles.map(\.id)
-
-        // The real entry points, refusing for the real reason.
-        #expect(throws: BoardActionError.drawPending) {
-            try guest.place(tileID: fixture.held.id, at: Coord(row: 0, col: 1))
-        }
-        #expect(throws: BoardActionError.drawPending) {
-            try guest.recall(from: fixture.placedAt)
-        }
-
-        // And every observable field is identical afterwards, order included.
-        #expect(Self.snapshot(guest.state) == textBefore)
-        #expect(guest.state == stateBefore)
-        #expect(guest.pendingDrawTiles.map(\.id) == waitingBefore)
-        #expect(guest.state.hand.map(\.id) == [fixture.held.id])
+        #expect(guest.hasPendingDraw == false)
+        #expect(guest.pendingDrawTiles.isEmpty)
+        #expect(Set(guest.state.hand.map(\.id)) == [fixture.held.id, fixture.owed.id])
         #expect(guest.state.board.tile(at: fixture.placedAt)?.id == fixture.placed.id)
-        #expect(guest.state.board.placementList.count == 1)
-        #expect(guest.hasPendingDraw)
+
+        // The real entry points, working for the tile that just arrived too.
+        try guest.place(tileID: fixture.owed.id, at: Coord(row: 0, col: 1))
+        #expect(guest.state.board.tile(at: Coord(row: 0, col: 1))?.id == fixture.owed.id)
+        try guest.recall(from: fixture.placedAt)
+        #expect(guest.state.board.tile(at: fixture.placedAt) == nil)
+        #expect(Set(guest.state.hand.map(\.id)) == [fixture.held.id, fixture.placed.id])
     }
 
     // MARK: - Criterion 3
 
-    @Test("Taking the waiting tile clears the flag, lands it in hand and reopens the board")
-    func takingTheWaitingTileReopensTheBoard() async throws {
+    @Test("A press of Draw after the opponent's tile landed asks for a round and takes the tile only once")
+    func drawAfterAnArrivedTileTakesNothingTwice() async throws {
         let fixture = try await Self.obligatedGuest()
         let guest = fixture.guest
-
-        let waiting = guest.pendingDrawTiles
-        #expect(waiting.count == 1)
         let handBefore = guest.state.hand.map(\.id)
 
         #expect(guest.draw())
+        try await Self.waitUntil("the answer to land") { guest.state.hand.count == handBefore.count + 1 }
+        #expect(Array(guest.state.hand.map(\.id).prefix(handBefore.count)) == handBefore)
 
-        #expect(guest.hasPendingDraw == false)
+        // One press is one tile: nothing else turns up behind it.
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(guest.state.hand.count == handBefore.count + 1)
         #expect(guest.pendingDrawTiles.isEmpty)
-        #expect(guest.state.hand.map(\.id) == handBefore + waiting.map(\.id))
-
-        // Both entry points work again, and the board really moves.
-        try guest.place(tileID: fixture.held.id, at: Coord(row: 0, col: 1))
-        #expect(guest.state.board.tile(at: Coord(row: 0, col: 1))?.id == fixture.held.id)
-
-        try guest.recall(from: fixture.placedAt)
-        #expect(guest.state.board.tile(at: fixture.placedAt) == nil)
-        #expect(guest.state.hand.contains { $0.id == fixture.placed.id })
     }
 
     // MARK: - Criterion 4
@@ -268,8 +247,8 @@ struct MatchSessionCriteriaTests {
                 guest.state.hand.count == expected
             }
         }
-        // The other half of each round landed on the opponent.
-        #expect(host.pendingDrawTiles.count == 3)
+        // The other half of each round landed in the opponent's rack.
+        #expect(host.state.hand.count == 3)
 
         let tiles = guest.state.hand
         #expect(guest.canDraw == false)

@@ -55,6 +55,18 @@ public protocol MatchOpponent: AnyObject {
     /// on the spot; a network peer cannot — that needs a new match row and a
     /// fresh invite, which is a lobby's job and not this screen's.
     var offersRematch: Bool { get }
+
+    /// The opponent's final board: read locally from a bot's own session, and
+    /// from what a network peer sent after the match ended. Nil when there is
+    /// none to show. Untrusted either way; the end screen validates it.
+    var peerBoardPlacements: [Placement]? { get }
+
+    /// Says whether the local player wants the match paused.
+    ///
+    /// Asked of the opponent for the reason ``offersRematch`` is: against a
+    /// person this is a request the other player has to agree to, and against a
+    /// bot there is nobody to ask, and the run never learns which it holds.
+    func setPause(_ wanted: Bool)
 }
 
 extension MatchOpponent {
@@ -66,8 +78,21 @@ extension MatchOpponent {
     /// The session already elected a local player; asking it is how the two
     /// answers cannot start to disagree.
     public var localPlayerID: PlayerID { session.localPlayerID }
+
+    /// What the far end sent once the match was over, or nothing if it never
+    /// did (a 1.0 build does not).
+    // ponytail: the first board that arrived. Only two-player lobbies ship; a
+    // larger table needs a board per opponent on the end screen first.
+    public var peerBoardPlacements: [Placement]? { session.peerFinalBoards.values.first }
+
+    /// A vote, unless the conformer says otherwise: the match pauses when every
+    /// player wants it paused and resumes when every player wants it resumed.
+    public func setPause(_ wanted: Bool) { session.votePause(wanted) }
 }
 
 /// Solo is just one kind of far end. Declared here rather than on the type so
 /// `SoloMatch` keeps saying only what solo means.
-extension SoloMatch: MatchOpponent {}
+extension SoloMatch: MatchOpponent {
+    /// The bot's own session board, read locally.
+    public var peerBoardPlacements: [Placement]? { bot.session.state.board.placementList }
+}

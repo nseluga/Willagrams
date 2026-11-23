@@ -76,8 +76,8 @@ public final class SoloMatch {
     /// `ShellModel.soloHandSize` of 21 that is 51 further rounds — a full-length
     /// game, because a solo player is spending the same half of the pool a real
     /// opponent would have left them.
-    public static func drawsAvailable(handSize: Int) -> Int {
-        (LetterDistribution.totalTiles - handSize * 2) / 2
+    public static func drawsAvailable(handSize: Int, halfGame: Bool = false) -> Int {
+        ((halfGame ? LetterDistribution.halfTotalTiles : LetterDistribution.totalTiles) - handSize * 2) / 2
     }
 
     /// The local end. Everything the shell renders reads off this.
@@ -157,11 +157,20 @@ public final class SoloMatch {
             // The rules the setup screen chose, carried by the setup itself —
             // so the match is played under what the player picked rather than
             // under whatever `startMatch` assumes when nobody says.
-            options: setup.options
+            options: setup.options,
+            halfGame: setup.halfGame
         )
         guard let difficulty, brainTask == nil else { return }
         let brain = BotBrain(match: bot, difficulty: difficulty)
         brainTask = Task { @MainActor in await brain.run() }
+    }
+
+    /// Pauses or resumes at once. Nobody sits at the far end to agree, so there
+    /// is no vote: both ends are held, which is what stops the bot playing on
+    /// while the player is away.
+    public func setPause(_ wanted: Bool) {
+        session.setPausedLocally(wanted)
+        bot.session.setPausedLocally(wanted)
     }
 
     /// Ends the session, the brain and the far end with it.
