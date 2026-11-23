@@ -56,8 +56,9 @@ public protocol MatchOpponent: AnyObject {
     /// fresh invite, which is a lobby's job and not this screen's.
     var offersRematch: Bool { get }
 
-    /// The opponent's final board when it is readable locally (a bot's own
-    /// session); nil when it is not (a network peer).
+    /// The opponent's final board: read locally from a bot's own session, and
+    /// from what a network peer sent after the match ended. Nil when there is
+    /// none to show. Untrusted either way; the end screen validates it.
     var peerBoardPlacements: [Placement]? { get }
 
     /// Says whether the local player wants the match paused.
@@ -78,7 +79,11 @@ extension MatchOpponent {
     /// answers cannot start to disagree.
     public var localPlayerID: PlayerID { session.localPlayerID }
 
-    public var peerBoardPlacements: [Placement]? { nil }
+    /// What the far end sent once the match was over, or nothing if it never
+    /// did (a 1.0 build does not).
+    // ponytail: the first board that arrived. Only two-player lobbies ship; a
+    // larger table needs a board per opponent on the end screen first.
+    public var peerBoardPlacements: [Placement]? { session.peerFinalBoards.values.first }
 
     /// A vote, unless the conformer says otherwise: the match pauses when every
     /// player wants it paused and resumes when every player wants it resumed.

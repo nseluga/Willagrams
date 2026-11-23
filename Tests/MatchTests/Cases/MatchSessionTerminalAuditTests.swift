@@ -315,7 +315,9 @@ struct MatchSessionTerminalAuditTests {
         #expect(guest.poolIsExhausted == false)
         #expect(guest.hasPendingDraw == false)
         #expect(Terminal.snapshot(guest) == settled)
-        #expect(await wire.count == 0)
+        // One message, sent once: this device's final board, for the winner's
+        // end screen. Nothing delivered above drew an answer.
+        #expect(await wire.wire == [.finalBoard(player: Self.bob, placements: guest.state.board.placementList)])
 
         // And the board stays shut to this device too.
         #expect(guest.draw() == false)
@@ -326,7 +328,7 @@ struct MatchSessionTerminalAuditTests {
             try guest.place(tileID: tiles[1].id, at: Coord(row: 0, col: 1))
         }
         #expect(Terminal.snapshot(guest) == settled)
-        #expect(await wire.count == 0)
+        #expect(await wire.count == 1)
 
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }
@@ -541,8 +543,10 @@ struct MatchSessionTerminalAuditTests {
         #expect(host.winner == Self.alice)
         await wire.releaseAll()
         try await Terminal.settle()
-        // The start, then the one round's peer grant and its pool count.
-        #expect(await wire.count == 3)
+        // The start, then the one round's peer grant and its pool count, and
+        // after the end this device's final board and nothing else.
+        #expect(await wire.count == 4)
+        #expect(await wire.wire.last == .finalBoard(player: Self.alice, placements: host.state.board.placementList))
         #expect(host.state.hand.count == 1)
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

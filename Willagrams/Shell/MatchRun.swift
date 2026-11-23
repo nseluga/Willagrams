@@ -180,7 +180,7 @@ public final class MatchRun {
             session: session,
             // Solo: the bot's own board. Online: nil until the orchestrator wires
             // the final board the peer sent.
-            opponentFinalPlacements: opponent.peerBoardPlacements, // PR7-SEAM: orchestrator wires session final board here
+            opponentFinalPlacements: opponent.peerBoardPlacements,
             board: board,
             state: resultsState,
             teardown: { [weak shell] in

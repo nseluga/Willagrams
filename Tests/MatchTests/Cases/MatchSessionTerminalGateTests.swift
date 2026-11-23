@@ -61,7 +61,8 @@ struct MatchSessionTerminalGateTests {
         try await Terminal.stock(guest, wire)
 
         #expect(guest.claimWin())
-        try await Terminal.waitUntil("the win to reach the wire") { await wire.count == 1 }
+        // The win, and this device's final board behind it.
+        try await Terminal.waitUntil("the win to reach the wire") { await wire.count == 2 }
         #expect(guest.state.status == .finished(winner: Self.bob))
 
         // Every further press the shell could make on an end screen.
@@ -76,7 +77,7 @@ struct MatchSessionTerminalGateTests {
         let terminals = await Self.terminalsOnTheWire(wire)
         #expect(terminals.wins == 1)
         #expect(terminals.resignations == 0)
-        #expect(await wire.count == 1)
+        #expect(await wire.count == 2)
         #expect(guest.winner == Self.bob)
         #expect(guest.state.status == .finished(winner: Self.bob))
 
@@ -144,11 +145,13 @@ struct MatchSessionTerminalGateTests {
         }
         try await Terminal.settle()
 
-        // Exactly one, and nothing else: the flush is a send, not a resumption.
+        // Exactly one, and only the final board behind it: the flush is a send,
+        // not a resumption.
+        try await Terminal.waitUntil("the final board to follow the win") { await wire.count == 3 }
         let afterReturn = await Self.terminalsOnTheWire(wire)
         #expect(afterReturn.wins == 1)
         #expect(afterReturn.resignations == 0)
-        #expect(await wire.count == 2)
+        #expect(await wire.wire.last == .finalBoard(player: Self.bob, placements: guest.state.board.placementList))
         #expect(guest.winner == Self.bob)
         #expect(guest.state.status == .finished(winner: Self.bob))
         #expect(guest.isMatchOver)
@@ -156,7 +159,7 @@ struct MatchSessionTerminalGateTests {
         #expect(guest.draw() == false)
         #expect(guest.claimWin() == false)
         try await Terminal.settle()
-        #expect(await wire.count == 2)
+        #expect(await wire.count == 3)
 
         clock.releaseAll()
         try await Terminal.waitUntil("the clock to be idle") { clock.parkedCount == 0 }

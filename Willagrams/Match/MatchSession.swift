@@ -461,6 +461,22 @@ public final class MatchSession: AppActivityListener {
     /// The board is shut to this player's own moves.
     private var refusesMoves: Bool { isLocked || storedPaused }
 
+    // MARK: - Final boards
+
+    @ObservationIgnored private var storedFinalBoards: [PlayerID: [Placement]] = [:]
+
+    /// Each other player's board, as that player sent it once the match was
+    /// over.
+    ///
+    /// Peer input, kept exactly as it arrived for the reason
+    /// ``winningPlacements`` is: the end screen decides whether a board can be
+    /// built from it. Empty until a board arrives, and for good against a 1.0
+    /// build, which never sends one.
+    public var peerFinalBoards: [PlayerID: [Placement]] {
+        access(keyPath: \.peerFinalBoards)
+        return storedFinalBoards
+    }
+
     /// The opening deal has not happened yet on this device.
     ///
     /// Host-side only: it stops a second deal, because a peer returning restarts
@@ -915,6 +931,7 @@ public final class MatchSession: AppActivityListener {
                     ? .win(player: localPlayerID, placements: winningPlacements ?? [])
                     : .resign(player: localPlayerID)
             )
+            send(.finalBoard(player: localPlayerID, placements: state.board.placementList))
             return
         }
         guard case .reconnecting = presence(of: player) else { return }
@@ -1238,6 +1255,15 @@ public final class MatchSession: AppActivityListener {
     ///
     /// Nothing here traps: every value in it came off the wire.
     private func receive(_ message: MatchMessage) {
+        // The one kind taken after the end, and only after it: a board read
+        // while the match is still being played would be a look at the other
+        // player's hand. It moves nothing, so it is not a move on a settled
+        // match either.
+        if case let .finalBoard(player, placements) = message {
+            guard isFinished, isPeer(player) else { return }
+            withMutation(keyPath: \.peerFinalBoards) { storedFinalBoards[player] = placements }
+            return
+        }
         // Over is over, however it ended: nothing may move a settled match.
         guard !isMatchOver else { return }
         // Frozen, the two streams are a race — messages the peer sent before it
@@ -1366,8 +1392,7 @@ public final class MatchSession: AppActivityListener {
             setPaused(paused)
 
         case .finalBoard:
-            // Optional kind. This build decodes it and does nothing, which is
-            // what a 1.0 build does by failing to decode it.
+            // Taken above the guards, or not at all.
             break
         }
     }
@@ -1615,6 +1640,8 @@ public final class MatchSession: AppActivityListener {
     /// a tick still to come would set `.playing` and move a finished match back
     /// into play.
     private func finish(winner: PlayerID, placements: [Placement]?) {
+        // Read before the loop below turns an absence into a departure.
+        let somebodyIsAway = isFrozen
         countdownTask?.cancel()
         heldCountdownSeconds = nil
         reconnectTask?.cancel()
@@ -1628,10 +1655,19 @@ public final class MatchSession: AppActivityListener {
         }
         state.status = .finished(winner: winner)
         winningPlacements = placements
-        // Nothing may move a settled match, so every further inbound message is
-        // decoded and discarded. The presence pump stays: a peer coming back is
-        // how an unsent terminal message still gets out.
-        pump?.cancel()
+        // The inbound pump stays, for the one message still to come: the other
+        // player's final board. `receive` discards everything else from here
+        // on. The presence pump stays too: a peer coming back is how an unsent
+        // terminal message still gets out.
+        //
+        // This device's own board goes out now and never sooner. `claimWin()`
+        // and `resign()` put their terminal message on the chain before they
+        // call this, so the board always follows it.
+        // ponytail: not sent to a peer that is away right now, and not sent
+        // later either, so a winner who dropped at the moment of winning sees
+        // "not available". Send it from `peerReturned` if that shows up.
+        guard !somebodyIsAway else { return }
+        send(.finalBoard(player: localPlayerID, placements: state.board.placementList))
     }
 
     private var isFinished: Bool {
@@ -1773,6 +1809,12 @@ public final class MatchSession: AppActivityListener {
     /// `owesTerminalMessage` and flushed by ``peerReturned()``.
     private func blockedByLock(_ message: MatchMessage) -> Bool {
         if everyPeerIsPresent, Self.endsTheMatch(message) { return false }
+        // A final board is the one thing a finished session still sends. Not
+        // gated on presence: the player who resigned is marked gone and is
+        // still there to read it. Held back only while the terminal message is
+        // owed, because that means the peer is away and has not heard the match
+        // is over; ``peerReturned(_:)`` sends both then.
+        if isFinished, !owesTerminalMessage, case .finalBoard = message { return false }
         guard isLocked else { return false }
         // Frozen, with this device's own terminal message still on the chain —
         // the only way a terminal message reaches here, since `claimWin()` and
